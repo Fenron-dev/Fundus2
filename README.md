@@ -1,155 +1,82 @@
 # Fundus2
 
+Fundus ist eine lokale, portable Medienbibliothek für Desktop und Android —
+selbst gehostet, ohne Cloud. Die Desktop-App ist zugleich Server im Heimnetz;
+Android greift darauf zu, lädt Inhalte für unterwegs herunter und gleicht den
+Fortschritt zurück.
+
 > **Verhältnis zum Repo `Fundus`.** Dieses Repository ist am 2026-09-02 als
-> vollständige Kopie von [`Fenron-dev/Fundus`](https://github.com/Fenron-dev/Fundus)
-> angelegt worden. `Fundus` läuft unverändert weiter und wird von hier aus
+> Kopie von [`Fenron-dev/Fundus`](https://github.com/Fenron-dev/Fundus)
+> angelegt worden. `Fundus` läuft dort unverändert weiter und wird von hier aus
 > **nicht** angefasst. In `Fundus2` entsteht die Oberfläche neu auf Basis der
-> Designvorlage (Designsystem „Nocturne" + Kernbildschirme); Datenmodell,
-> Scanner, Import und Peer-Server aus `packages/core` und `packages/server`
-> werden übernommen und weiterentwickelt. Bestehende Bibliotheken sollen
-> übernehmbar bleiben — ein weiterentwickeltes Schema mit Migration ist
-> ausdrücklich erlaubt, Parallelbetrieb derselben Bibliothek mit `Fundus` ist
-> dann nicht mehr zugesichert.
+> Designvorlage; Datenmodell, Scanner, Import und Peer-Server werden
+> übernommen und weiterentwickelt.
 >
-> Der Text unterhalb beschreibt weiterhin den übernommenen Stand aus `Fundus`
-> und wird mit dem Umbau der Oberfläche fortgeschrieben.
-
----
-
-
-Fundus ist eine lokale, portable Medienbibliothek für Desktop und Android. Die
-Desktop-App soll Bibliotheken zusätzlich für gekoppelte Geräte im lokalen Netz
-bereitstellen.
+> Konzept, Designvorlagen und Umsetzungsplan liegen bewusst **nicht** im
+> Repository (`Dokumentation/` steht in `.gitignore`), weil es öffentlich ist.
 
 ## Workspace
 
-- `app/` — Flutter desktop and Android application
-- `packages/core/` — platform-independent model, database, scanner and import
-- `packages/server/` — embedded Shelf HTTP server
-- `Dokumentation/` — Konzept, Design-Vorlagen und Umsetzungsplan; **bewusst
-  nicht im Repository** (`.gitignore`), weil dieses öffentlich ist. Die
-  Unterlagen werden getrennt vom Code aufbewahrt.
+| Ordner | Inhalt |
+|---|---|
+| `app/` | Flutter-Client für macOS, Windows, Linux und Android |
+| `packages/core/` | Datenmodell, SQLite-Index, Scanner, Import, Publication Engine |
+| `packages/design/` | Nocturne als Flutter-Theme: Tokens und geteilte Komponenten |
+| `packages/server/` | Eingebetteter Shelf-Server für das lokale Netz |
+| `legacy/app/` | Der bisherige Client als Referenz — kein Workspace-Mitglied |
+
+## Zwei Leitsätze
+
+**Ansicht ≠ Ablage.** Ordner sind eine Ansicht auf dieselben Dateien, nicht die
+Wahrheit. Jeder Bereich hat einen „Ordnen nach"-Umschalter; Filter gelten in
+jeder Ansicht, auch im Ordnermodus.
+
+**Herkunft ist eine Eigenschaft des Werks, keine Ansicht.** Lokal, Stream,
+offline gesichert, nicht erreichbar und im Archiv sind Werte einer Spalte. Es
+gibt daher **eine** Bibliotheksansicht, und „offline verfügbar" ist ein Filter,
+kein eigener Bereich.
 
 ## Aktueller Stand
 
-Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
+Lauffähig als Einzelplatz-Bibliothek:
 
-- Bibliothek in einem Medienordner anlegen oder erneut öffnen
-- versioniertes Manifest unter `.library/version.json`
-- transaktionaler SQLite-Index unter `.library/index.db`
-- rekursiver, abbrechbarer Dateiscan mit portablen relativen Pfaden
-- Import der ABS-Struktur `Autor/Serie/01 - Titel`
-- lose Hörbücher direkt im Bibliothekswurzelordner oder unter einem einzelnen
-  frei benannten Unterordner werden ebenfalls als Werke erfasst
-- gemischte Bibliothekswurzel mit portablem `.library/config.yaml`; Hörbücher
-  funktionieren sowohl in der bisherigen Struktur als auch unter
-  `Audiobooks/Autor/Serie/01 - Titel`
-- persistierte Serien-, Cover- und Track-Zuordnung
-- durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
-- vergrößerbare Playeransicht mit Dateien, Chapters, Details und Playlist als
-  umschaltbarem Kontext
-- anspringbare Chapters aus M4B/M4A-`chpl`-Marken sowie Apple/QuickTime-
-  Kapitelspuren; bei Mehrdatei-Hörbüchern dienen die sortierten Tracks als
-  Kapitel
-- werkbezogener Resume-Punkt über Datei- und Hörbuchwechsel mit Revisionshistorie
-- Sync-Konfliktdialog mit Gerätenamen, Datei/Chapter, Zeit, Gesamtdauer und
-  Prozentwert; frühere Hörstände lassen sich einsehen und als neue Revision
-  wiederherstellen
-- Sleep-Timer mit festen und freien Laufzeiten, Ziel-Uhrzeit, Countdown sowie
-  Stopp am Kapitel- oder Trackende
-- optionaler Android-Schüttelneustart für laufende Zeittimer mit einstellbarer
-  Empfindlichkeit, Cooldown und haptischer Bestätigung; nach Ablauf bleiben
-  zwei Minuten zum Schütteln, erneuten Starten und Weiterhören
-- Android-Hintergrundwiedergabe mit nativer Medienbenachrichtigung,
-  Lockscreen-, Headset- und Bluetooth-Steuerung für lokale, gestreamte und
-  offline heruntergeladene Hörbücher
-- anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen
-- bearbeitbare Tags mit fuzzy gefilterten Vorschlägen und Markdown-Notizen
-- Kachel-/Tabellenansicht und Navigation nach Autor, Serie und Buch
-- kombinierbare Filter für Medientyp, Hörstatus, Offline-Verfügbarkeit,
-  Sprache, Autor, Sprecher, Serie und Tags sowie Sortierung nach Titel,
-  Datum, letzter Wiedergabe, Fortschritt und Dauer
-- benannte gespeicherte Ansichten: portabel pro lokaler Bibliothek und getrennt
-  nach Server/Bibliothek für Remote- und Offline-Bestände
-- bis zu zehn zuletzt verwendete Bibliotheken mit Verfügbarkeitsstatus
-- dauerhafte macOS-Freigabe zuletzt verwendeter Bibliotheken über
-  Security-Scoped Bookmarks
-- datierte Notiz-Historie mit portablem Markdown-Sidecar
-- sicherer Metadatenimport per Positivliste: Titel, Album, Autor, Serie,
-  Bandnummer und Sprache aus M4B/M4A- sowie MP3-Tags; portable Sidecars haben
-  Vorrang vor veränderten Dateitags
-- dateibezogenes Audio-Kompatibilitätsprofil für Desktop und Android mit
-  Container, Codec, Profil, Kanälen und Abtastrate; die AAC-Konfiguration in
-  M4B/M4A hat Vorrang vor ungenauen MP4-Headerwerten
-- Dokument-, Lese- und TTRPG-Bereiche werden als getrennte Navigation für
-  Manga/Comics, TTRPG, Webnovels, Bücher/E-Books, Dokumente, Fotos/Bilder und
-  Archive angeboten; PDF-, E-Book-, Bild- und Archivdateien unter
-  konfigurierten Medienwurzeln werden getrennt von Hörbüchern indexiert;
-  Produktordner bündeln PDFs, Karten und Handouts zu einem gemeinsamen Werk;
-  lokale Dateien lassen sich über die registrierte macOS- oder Android-App
-  öffnen; ZIP-Archive können ohne vollständiges Entpacken schreibgeschützt
-  durchlaufen und einzelne Einträge sicher temporär geöffnet werden; PDF- und
-  Rasterbilddateien besitzen zusätzlich eine interne, zoombare Vorschau; auch
-  Remote- und Offline-Dokumente nutzen dieselbe Dateiliste und Vorschau, wobei
-  Netzwerkdateien begrenzt und nur temporär zwischengespeichert werden; CBZ-
-  Comics öffnen als natürlich sortierte, zoombare Seitenfolge, unterstützen
-  Pfeiltasten und den Wechsel zwischen CBZ-Kapiteln und merken Chapter sowie
-  Seite im generischen Fundus-Fortschrittsmodell; ein Werk-Button öffnet oder
-  setzt Manga und PDFs fort, PDF-Cover werden aus der ersten Seite erzeugt
-- manueller Hörbuch-Metadateneditor für Titel, mehrere Autoren und Sprecher,
-  Serie/Band, Sprache, Verlag/Jahr und Beschreibung; Änderungen werden ohne
-  Eingriff in die Mediendatei portabel in `_fundus/meta.yaml` gespiegelt
-- Quelle und Änderungszeit pro Metadatenfeld; manuelle Angaben bleiben bei
-  späteren Scans vor ABS-, Sidecar-, Datei- und Ordnerwerten geschützt
-- portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
-- stabile `work_id` und `base_kind` im Sidecar; Verschieben und Index-Neuaufbau
-  erhalten Werkidentität, Resume, Tags, Notizen und Lesezeichen
-- responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
-- ein-/ausblendbare Detailleiste und Inline-Details bei mittleren Fensterbreiten
-- per Maus verstellbare Breite der linken und rechten Seitenleisten sowie
-  sichtbarer Werk-Dateipfad in den Details; Doppelklick setzt die Breite zurück
-- rotierendes, exportierbares JSONL-Diagnoseprotokoll ohne absolute Medienpfade
-- TLS- und token-geschützter LAN-Mehrbibliotheks-Server mit Werkliste, Details,
-  Cover, ID-basiertem `Range`-Streaming und idempotentem Fortschrittsabgleich;
-  absolute Medienpfade verlassen das Gerät nicht
-- zentrales Einstellungsmenü für Wiedergabe, Darstellung, Bibliothek, Suche,
-  Server und Diagnose mit sichtbaren Geltungsbereichen für Gerät, Bibliothek,
-  Server und Nutzerprofil
-- validierter Einstellungs-Export und -Import mit Vorschau; Bibliothekspfade,
-  Zertifikate, private Schlüssel und Pairing-Tokens werden nicht übertragen
-- Serverstatus und gleichzeitig freigegebene Bibliotheken, explizite
-  LAN-Freigabe und fünf Minuten gültiges QR/PIN-Pairing
-- stabile Peer-Identität, Zertifikats-Pinning, nur als Hash gespeicherte
-  Server-Tokens und widerrufbare Geräteberechtigungen
-- erster Remote-Client mit QR-Scanner, sicherem System-Schlüsselspeicher sowie
-  Server-, Bibliotheks-, Werk- und Coverübersicht
-- gepinnte Remote-Wiedergabe über eine nur auf Loopback gebundene Range-Brücke
-- pfadfreie Kapitelübertragung für Streaming und Offline-Downloads mit
-  Kapitelsprüngen und Sleep-Timer am Kapitelende
-  sowie Fortschrittssynchronisation im Fünf-Sekunden-Takt und beim Pausieren
-- atomare Offline-Downloads mit lokalem Manifest, eigener Offline-Übersicht,
-  lokaler Wiedergabe und lokalem Resume auch ohne erreichbaren Server
-- gekoppelte Serverbibliotheken in der regulären Bibliotheksauswahl, frei
-  benennbare Geräte und per mDNS sicher wiedergefundene Peers nach IP-Wechseln
-- automatische Wiederholung ausstehender Offline-Fortschritte, sobald der
-  gepinnte Ursprungsserver wieder erreichbar ist
+- Bibliothek anlegen oder öffnen, zuletzt verwendete Ordner mit
+  Verfügbarkeitsstatus
+- unterbrechbarer Scan mit sichtbarem Fortschritt; portable relative Pfade
+- eine Bibliotheksansicht mit Kacheln, Tabelle und Gruppierungen (Ordner,
+  Reihe, Urheber, System, Runde, Thema, Zeit) — je Medientyp konfiguriert
+- Filter nach Herkunft, Suche in der Ansicht, Sortierung; Leerzustände nennen
+  immer ihre Ursache
+- Werkdetail als ein Gerüst für alle Medientypen: Hero plus Bausteine
+  (Dateien, Eigenschaften, Notizen und Lesezeichen, Personen, Geräte)
+- Dashboard mit „Fortsetzen" und „Zuletzt hinzugefügt"
+- zweispaltige Shell mit einklappbarer Navigation und Pfadleiste; darunter
+  Bottom-Navigation für schmale Fenster und Android
+- Einstellungen mit Thema, Dichte, Bibliotheken, Geräten und Diagnose
+- Hell und Dunkel gleichwertig, Dichteumschaltung komfortabel/kompakt
+
+Datenmodell (Schema 8):
+
+- `sources` — die geöffnete Bibliothek ist selbst eine Quelle
+- `availability` auf Dateien und Werken; der Pfad ist nicht mehr die Identität
+- Geräteprofile portabel unter `_fundus/devices/`, damit eine Neuinstallation
+  keine Reader- und Darstellungseinstellungen kostet
+
+Noch nicht gebaut: Wiedergabe und Reader, Peer-Server-Anbindung, Katalog-Delta,
+Sync-Journal, Downloads, Metadaten-Abgleich, Schutzmodus.
 
 ## Entwicklung
 
 ```sh
 flutter pub get
 dart analyze
+dart format --output=none --set-exit-if-changed app packages
 (cd packages/core && dart test)
 (cd packages/server && dart test)
 (cd app && flutter test)
-(cd app && flutter run -d macos)
 ```
 
-Builds werden über GitHub Actions erzeugt, nicht lokal — die Workflows
-`Build macOS Preview` und `build-android` liefern die Artefakte. Die
-vollständige Produktspezifikation liegt außerhalb des Repositories (siehe
-oben, `Dokumentation/`).
-
-Ein nicht signierter macOS-Vorschaubuild kann außerdem manuell über den Workflow
-`Build macOS Preview` erzeugt und anschließend als Actions-Artefakt geladen
-werden.
+**Gebaut wird in GitHub Actions, nicht lokal.** Die Workflows
+`Build macOS Preview` und `Build Android Preview` erzeugen die Artefakte und
+lassen sich auch von Hand starten (`workflow_dispatch`); lokal laufen nur
+Analyse, Format und Tests.

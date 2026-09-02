@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 /// The app type scale. Nocturne's marketing scale stopped at display sizes;
 /// these are the seven sizes the interface actually uses.

@@ -3,7 +3,7 @@ name: Build macOS Preview
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
     paths:
       - 'app/**'
       - 'packages/**'

@@ -1,0 +1,215 @@
+import 'package:fundus_design/fundus_design.dart';
+
+import 'media_type.dart';
+import 'work_view.dart';
+
+enum WorkSort {
+  recentlyAdded('Zuletzt hinzugefügt'),
+  title('Titel A–Z'),
+  progress('Fortschritt'),
+  series('Reihe');
+
+  const WorkSort(this.label);
+
+  final String label;
+}
+
+/// What the content column is currently showing.
+///
+/// Filters apply in every grouping, the folder view included: real structure,
+/// but only the matching files.
+final class WorkFilter {
+  const WorkFilter({
+    this.text = '',
+    this.mediaTypeId,
+    this.origins = const {},
+    this.sort = WorkSort.recentlyAdded,
+    this.grouping = GroupingMode.tiles,
+    this.unassignedOnly = false,
+  });
+
+  final String text;
+  final String? mediaTypeId;
+
+  /// Empty means every origin — "offline verfügbar" is one of these, a filter
+  /// rather than a section of its own.
+  final Set<FundusOrigin> origins;
+  final WorkSort sort;
+  final GroupingMode grouping;
+
+  /// Works whose kind no type claims. They stay reachable instead of being
+  /// silently dropped.
+  final bool unassignedOnly;
+
+  bool get hasActiveFilters =>
+      text.isNotEmpty || origins.isNotEmpty || unassignedOnly;
+
+  int get activeFilterCount =>
+      (text.isEmpty ? 0 : 1) + origins.length + (unassignedOnly ? 1 : 0);
+
+  WorkFilter copyWith({
+    String? text,
+    String? mediaTypeId,
+    bool clearMediaType = false,
+    Set<FundusOrigin>? origins,
+    WorkSort? sort,
+    GroupingMode? grouping,
+    bool? unassignedOnly,
+  }) => WorkFilter(
+    text: text ?? this.text,
+    mediaTypeId: clearMediaType ? null : (mediaTypeId ?? this.mediaTypeId),
+    origins: origins ?? this.origins,
+    sort: sort ?? this.sort,
+    grouping: grouping ?? this.grouping,
+    unassignedOnly: unassignedOnly ?? this.unassignedOnly,
+  );
+
+  /// Why the result is empty. An empty state without a cause is a dead end,
+  /// so the screen always has this sentence to show.
+  String emptyReason() {
+    final reasons = <String>[];
+    if (text.isNotEmpty) reasons.add('die Suche „$text"');
+    if (origins.isNotEmpty) {
+      reasons.add(
+        'der Herkunftsfilter ${origins.map((o) => o.label).join(', ')}',
+      );
+    }
+    if (mediaTypeId != null) {
+      final type = MediaTypes.byId(mediaTypeId!);
+      if (type != null) reasons.add('der Bereich ${type.label}');
+    }
+    if (reasons.isEmpty) {
+      return 'In dieser Bibliothek ist noch nichts indexiert. '
+          'Ein Scan füllt sie.';
+    }
+    return 'Es filtern gerade: ${reasons.join(' und ')}.';
+  }
+
+  List<WorkView> apply(List<WorkView> works) {
+    final type = mediaTypeId == null ? null : MediaTypes.byId(mediaTypeId!);
+    final needle = text.trim().toLowerCase();
+
+    final matched = works.where((work) {
+      if (unassignedOnly && work.mediaType != null) return false;
+      if (type != null && work.mediaType?.id != type.id) return false;
+      if (origins.isNotEmpty && !origins.contains(work.origin)) return false;
+      if (needle.isEmpty) return true;
+      return work.title.toLowerCase().contains(needle) ||
+          work.subtitle.toLowerCase().contains(needle);
+    }).toList();
+
+    matched.sort(_comparator);
+    return matched;
+  }
+
+  int Function(WorkView, WorkView) get _comparator => switch (sort) {
+    WorkSort.title => (a, b) => a.title.toLowerCase().compareTo(
+      b.title.toLowerCase(),
+    ),
+    WorkSort.recentlyAdded => (a, b) => b.summary.addedAt.compareTo(
+      a.summary.addedAt,
+    ),
+    WorkSort.progress => (a, b) => (b.progressFraction ?? 0).compareTo(
+      a.progressFraction ?? 0,
+    ),
+    WorkSort.series => (a, b) {
+      final series = (a.summary.series ?? a.title).toLowerCase().compareTo(
+        (b.summary.series ?? b.title).toLowerCase(),
+      );
+      if (series != 0) return series;
+      return (a.summary.seriesSequence ?? 0).compareTo(
+        b.summary.seriesSequence ?? 0,
+      );
+    },
+  };
+}
+
+/// One row of a grouped view — a folder, a series, a system, a month.
+final class WorkGroup {
+  const WorkGroup({required this.label, required this.works});
+
+  final String label;
+  final List<WorkView> works;
+
+  int get count => works.length;
+}
+
+/// Groups works for the non-tile groupings.
+///
+/// These are queries over properties, never materialised tables: a work whose
+/// field changes simply lands in a different group next time, with nothing to
+/// keep consistent.
+abstract final class WorkGrouping {
+  static List<WorkGroup> group(List<WorkView> works, GroupingMode mode) {
+    String? Function(WorkView) key = switch (mode) {
+      GroupingMode.series => (work) => work.summary.series,
+      GroupingMode.author => (work) => work.summary.author,
+      GroupingMode.folder => (work) => _folderOf(work),
+      GroupingMode.fileType => (work) => work.kind,
+      GroupingMode.system => (work) => work.summary.series,
+      GroupingMode.round => (work) => work.summary.tags.firstOrNull,
+      GroupingMode.topic => (work) => work.summary.genres.firstOrNull,
+      GroupingMode.time => (work) => _monthOf(work),
+      GroupingMode.albums => (work) => work.summary.series,
+      GroupingMode.tiles || GroupingMode.table => (_) => null,
+    };
+
+    final buckets = <String, List<WorkView>>{};
+    for (final work in works) {
+      // A missing field is not an error: the work lands in an explicit
+      // "ohne …" group, from where the folder name can be adopted later.
+      final label = key(work)?.trim();
+      buckets
+          .putIfAbsent(
+            label == null || label.isEmpty ? _missingLabel(mode) : label,
+            () => [],
+          )
+          .add(work);
+    }
+
+    final groups =
+        buckets.entries
+            .map((entry) => WorkGroup(label: entry.key, works: entry.value))
+            .toList()
+          ..sort(
+            (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+          );
+    return groups;
+  }
+
+  static String _missingLabel(GroupingMode mode) => switch (mode) {
+    GroupingMode.system => 'Ohne System-Angabe',
+    GroupingMode.round => 'Ohne Runde',
+    GroupingMode.topic => 'Ohne Thema',
+    GroupingMode.author => 'Ohne Urheber',
+    GroupingMode.series => 'Einzeln',
+    GroupingMode.time => 'Ohne Datum',
+    _ => 'Ohne Zuordnung',
+  };
+
+  static String _folderOf(WorkView work) {
+    final path = work.summary.coverPath ?? '';
+    final separator = path.contains('/') ? '/' : r'\';
+    final parts = path.split(separator);
+    return parts.length > 1 ? parts[parts.length - 2] : 'Bibliothekswurzel';
+  }
+
+  static String _monthOf(WorkView work) {
+    final date = work.summary.addedAt;
+    const months = [
+      'Januar',
+      'Februar',
+      'März',
+      'April',
+      'Mai',
+      'Juni',
+      'Juli',
+      'August',
+      'September',
+      'Oktober',
+      'November',
+      'Dezember',
+    ];
+    return '${months[date.month - 1]} ${date.year}';
+  }
+}
