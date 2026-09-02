@@ -8,6 +8,7 @@ import '../import/document_importer.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
 import '../model/library_playlist.dart';
+import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
@@ -52,6 +53,8 @@ final class LibraryWorkSummary {
     this.offline = false,
     this.sourceServerName,
     this.sourceLibraryName,
+    this.sourceId = 'local',
+    this.availability = 'available',
   });
 
   final String id;
@@ -91,6 +94,16 @@ final class LibraryWorkSummary {
   final List<String> tags;
   final DateTime? lastListenedAt;
   final bool offline;
+
+  /// The source this work was catalogued from — the locally opened vault is
+  /// one of them, so this is never empty.
+  final String sourceId;
+
+  /// Where the bytes are: `available`, `offline_copy`, `remote`,
+  /// `unreachable` or `in_archive`. Origin is a property of the work, which is
+  /// why it travels with the summary rather than with the view showing it.
+  final String availability;
+
   final String? sourceServerName;
   final String? sourceLibraryName;
 
@@ -109,7 +122,12 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 7;
+  static const schemaVersion = 8;
+
+  /// The identifier of the vault that is open in this database file. The
+  /// locally opened vault is a source like any other — that is the point of
+  /// the `sources` table — and this is its row.
+  static const localSourceId = 'local';
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -155,6 +173,23 @@ final class FundusDatabase {
         .any((row) => row['name'] == column);
   }
 
+  /// Runs a statement against the index.
+  ///
+  /// Meant for migrations, diagnostics and tests — everything the app does
+  /// goes through a named method, so that the shape of a query stays
+  /// reviewable in one place.
+  void rawExecute(String sql, [List<Object?> parameters = const []]) =>
+      _database.execute(sql, parameters);
+
+  /// Reads rows from the index. Same caveat as [rawExecute].
+  List<Map<String, Object?>> rawQuery(
+    String sql, [
+    List<Object?> parameters = const [],
+  ]) => _database
+      .select(sql, parameters)
+      .map((row) => Map<String, Object?>.from(row))
+      .toList(growable: false);
+
   T transaction<T>(T Function() action) {
     _database.execute('BEGIN IMMEDIATE');
     try {
@@ -168,9 +203,10 @@ final class FundusDatabase {
   }
 
   String upsertFile(ScannedFile file) {
-    final existing = _database.select('SELECT id FROM files WHERE path = ?', [
-      file.relativePath,
-    ]);
+    final existing = _database.select(
+      'SELECT id FROM files WHERE source_id = ? AND path = ?',
+      [localSourceId, file.relativePath],
+    );
     final id = existing.isEmpty
         ? FundusId.generate()
         : existing.first['id'] as String;
@@ -178,11 +214,12 @@ final class FundusDatabase {
     _database.execute(
       '''
       INSERT INTO files (
-        id, path, filename, extension, size, mime_type, file_modified_at,
-        indexed_at, status, container, audio_codec, codec_profile,
-        audio_channels, sample_rate_hz, video_episode_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(path) DO UPDATE SET
+        id, source_id, path, filename, extension, size, mime_type,
+        file_modified_at, indexed_at, status, container, audio_codec,
+        codec_profile, audio_channels, sample_rate_hz, video_episode_json
+      ) VALUES (?, '$localSourceId', ?, ?, ?, ?, ?, ?, ?, 'available',
+                ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source_id, path) DO UPDATE SET
         filename = excluded.filename,
         extension = excluded.extension,
         size = excluded.size,
@@ -195,7 +232,8 @@ final class FundusDatabase {
         video_episode_json = excluded.video_episode_json,
         file_modified_at = excluded.file_modified_at,
         indexed_at = excluded.indexed_at,
-        status = 'available'
+        status = 'available',
+        availability = 'available'
       ''',
       [
         id,
@@ -617,7 +655,8 @@ final class FundusDatabase {
   List<LibraryWorkSummary> listWorks({bool includeMissing = false}) {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
-             w.metadata_json, w.status, COUNT(content.id) AS file_count,
+             w.metadata_json, w.status, w.source_id, w.availability,
+             COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
              progress.numeric_value AS progress_position,
              progress.position_kind AS progress_kind,
@@ -720,7 +759,11 @@ final class FundusDatabase {
                     row['progress_updated_at'] as int,
                   )
                 : null,
-            offline: row['status'] == 'offline',
+            offline:
+                row['status'] == 'offline' ||
+                row['availability'] == 'offline_copy',
+            sourceId: row['source_id'] as String,
+            availability: row['availability'] as String,
           );
         })
         .toList(growable: false);
@@ -1643,19 +1686,26 @@ final class FundusDatabase {
   void deleteHighlight(String highlightId) => deleteBookmark(highlightId);
 
   void markUnseenFilesMissing(Set<String> seenPaths) {
-    _database.execute("UPDATE files SET status = 'missing'");
+    // Only this vault's own rows are affected — a mirrored peer catalogue is
+    // not evidence about the local disk.
+    _database.execute(
+      "UPDATE files SET status = 'missing', availability = 'unreachable' "
+      'WHERE source_id = ?',
+      [localSourceId],
+    );
     for (final path in seenPaths) {
       _database.execute(
-        "UPDATE files SET status = 'available' WHERE path = ?",
-        [path],
+        "UPDATE files SET status = 'available', "
+        "availability = 'available' WHERE source_id = ? AND path = ?",
+        [localSourceId, path],
       );
     }
   }
 
   String? findMovedAudiobookWorkId(AudiobookImportCandidate candidate) {
     final destination = _database.select(
-      'SELECT id FROM works WHERE source_path = ?',
-      [candidate.directory],
+      'SELECT id FROM works WHERE source_id = ? AND source_path = ?',
+      [localSourceId, candidate.directory],
     );
     if (destination.isNotEmpty) return null;
     final expected = _fileSignature(candidate.audioFiles);
@@ -1755,8 +1805,8 @@ final class FundusDatabase {
     WorkMetadataSource source = WorkMetadataSource.filename,
   }) {
     final existing = _database.select(
-      'SELECT id FROM works WHERE source_path = ?',
-      [sourcePath],
+      'SELECT id FROM works WHERE source_id = ? AND source_path = ?',
+      [localSourceId, sourcePath],
     );
     final preferred = preferredId == null
         ? null
@@ -1843,10 +1893,10 @@ final class FundusDatabase {
     _database.execute(
       '''
       INSERT INTO works (
-        id, kind, source_path, parent_id, title, sort_title, series_name,
-        series_sequence, metadata_json, added_at, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available')
-      ON CONFLICT(source_path) DO UPDATE SET
+        id, source_id, kind, source_path, parent_id, title, sort_title,
+        series_name, series_sequence, metadata_json, added_at, status
+      ) VALUES (?, '$localSourceId', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available')
+      ON CONFLICT(source_id, source_path) DO UPDATE SET
         kind = excluded.kind,
         parent_id = excluded.parent_id,
         title = excluded.title,
@@ -1854,7 +1904,8 @@ final class FundusDatabase {
         series_name = excluded.series_name,
         series_sequence = excluded.series_sequence,
         metadata_json = excluded.metadata_json,
-        status = 'available'
+        status = 'available',
+        availability = 'available'
       ''',
       [
         id,
@@ -1961,6 +2012,95 @@ final class FundusDatabase {
     _database.execute('DELETE FROM $table WHERE work_id = ?', [obsoleteId]);
   }
 
+  // --- Sources -------------------------------------------------------------
+
+  List<LibrarySource> listSources() => _database
+      .select(
+        'SELECT * FROM sources ORDER BY kind, display_name COLLATE NOCASE',
+      )
+      .map(_sourceFromRow)
+      .toList(growable: false);
+
+  LibrarySource? loadSource(String id) {
+    final rows = _database.select('SELECT * FROM sources WHERE id = ?', [id]);
+    return rows.isEmpty ? null : _sourceFromRow(rows.first);
+  }
+
+  void upsertSource(LibrarySource source) {
+    _database.execute(
+      '''
+      INSERT INTO sources (
+        id, kind, display_name, library_id, vault_path, base_url, cert_pin,
+        sync_cursor, status, last_seen_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        kind = excluded.kind,
+        display_name = excluded.display_name,
+        library_id = excluded.library_id,
+        vault_path = excluded.vault_path,
+        base_url = excluded.base_url,
+        cert_pin = excluded.cert_pin,
+        sync_cursor = excluded.sync_cursor,
+        status = excluded.status,
+        last_seen_at = excluded.last_seen_at
+      ''',
+      [
+        source.id,
+        source.kind.name,
+        source.displayName,
+        source.libraryId,
+        source.vaultPath,
+        source.baseUrl,
+        source.certificatePin,
+        source.syncCursor,
+        source.status.name,
+        source.lastSeenAt?.millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  /// Marks a source as answering or not.
+  ///
+  /// An unreachable source never overwrites what is already known about its
+  /// works — the last known value stays and only the origin changes, which is
+  /// why this touches `availability` and not the rows' payload.
+  void setSourceReachable(String id, {required bool reachable}) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _database.execute(
+      'UPDATE sources SET status = ?, last_seen_at = ? WHERE id = ?',
+      [reachable ? 'available' : 'unreachable', reachable ? now : null, id],
+    );
+    if (id == localSourceId) return;
+    _database.execute(
+      "UPDATE works SET availability = ? WHERE source_id = ? "
+      "AND availability != 'offline_copy'",
+      [reachable ? 'remote' : 'unreachable', id],
+    );
+    _database.execute(
+      "UPDATE files SET availability = ? WHERE source_id = ? "
+      "AND availability != 'offline_copy'",
+      [reachable ? 'remote' : 'unreachable', id],
+    );
+  }
+
+  static LibrarySource _sourceFromRow(Map<String, Object?> row) {
+    final lastSeen = row['last_seen_at'];
+    return LibrarySource(
+      id: row['id']! as String,
+      kind: LibrarySourceKind.parse(row['kind']! as String),
+      displayName: row['display_name']! as String,
+      libraryId: row['library_id'] as String? ?? '',
+      vaultPath: row['vault_path'] as String?,
+      baseUrl: row['base_url'] as String?,
+      certificatePin: row['cert_pin'] as String?,
+      syncCursor: row['sync_cursor'] as int? ?? 0,
+      status: LibrarySourceStatus.parse(row['status'] as String? ?? 'unknown'),
+      lastSeenAt: lastSeen is int
+          ? DateTime.fromMillisecondsSinceEpoch(lastSeen)
+          : null,
+    );
+  }
+
   void close() => _database.close();
 
   void _initialize({bool readOnly = false}) {
@@ -1986,6 +2126,7 @@ final class FundusDatabase {
     if (_database.userVersion == 4 && !readOnly) _migrateToVersion5();
     if (_database.userVersion == 5 && !readOnly) _migrateToVersion6();
     if (_database.userVersion == 6 && !readOnly) _migrateToVersion7();
+    if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
   }
 
   void _migrateToVersion1() {
@@ -2117,6 +2258,149 @@ final class FundusDatabase {
     } catch (_) {
       _database.execute('ROLLBACK');
       rethrow;
+    }
+  }
+
+  /// Origin becomes a property of the row.
+  ///
+  /// Three things change at once because they only make sense together: a
+  /// `sources` table (the locally opened vault is a source too, not a special
+  /// case), an `availability` column on files and works, and the end of the
+  /// path as an identity — `files.path` and `works.source_path` lose their
+  /// UNIQUE constraint in favour of one that is unique per source. Dropping an
+  /// inline UNIQUE means rebuilding the table, which is why this migration is
+  /// longer than the ones before it.
+  void _migrateToVersion8() {
+    // Foreign keys are switched off around a table rebuild, as the SQLite
+    // manual prescribes; a pragma inside a transaction would be ignored.
+    _database.execute('PRAGMA foreign_keys = OFF');
+    // The rename step reparses the whole schema; without this the freshly
+    // dropped table would make sibling foreign keys look dangling.
+    _database.execute('PRAGMA legacy_alter_table = ON');
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      for (final statement in _version8Statements) {
+        _database.execute(statement);
+      }
+      if (tableExists('files') && !columnExists('files', 'source_id')) {
+        _rebuildFilesForSources();
+      }
+      if (tableExists('works') && !columnExists('works', 'source_id')) {
+        _rebuildWorksForSources();
+      }
+      _database.userVersion = 8;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    } finally {
+      _database.execute('PRAGMA legacy_alter_table = OFF');
+      _database.execute('PRAGMA foreign_keys = ON');
+    }
+    final violations = _database.select('PRAGMA foreign_key_check');
+    if (violations.isNotEmpty) {
+      throw StateError(
+        'Migration auf Schema 8 hat ${violations.length} verwaiste '
+        'Verweise hinterlassen.',
+      );
+    }
+  }
+
+  /// Copies a table into its version 8 shape.
+  ///
+  /// Legacy databases in the wild — and the migration fixtures — do not
+  /// necessarily carry every column, so each target column names the value to
+  /// use when the source has nothing to give. Columns that fall back to `id`
+  /// do so because they sit under a unique index and a shared literal would
+  /// collide.
+  void _copyIntoV8Table({
+    required String table,
+    required String temporary,
+    required Map<String, String> columns,
+    required String availabilityExpression,
+  }) {
+    final targets = <String>[];
+    final expressions = <String>[];
+    for (final entry in columns.entries) {
+      targets.add(entry.key);
+      expressions.add(columnExists(table, entry.key) ? entry.key : entry.value);
+    }
+    targets.addAll(['source_id', 'availability']);
+    expressions.addAll([
+      "'$localSourceId'",
+      columnExists(table, 'status') ? availabilityExpression : "'available'",
+    ]);
+    _database.execute(
+      'INSERT INTO $temporary (${targets.join(', ')}) '
+      'SELECT ${expressions.join(', ')} FROM $table',
+    );
+    _database.execute('DROP TABLE $table');
+    _database.execute('ALTER TABLE $temporary RENAME TO $table');
+  }
+
+  void _rebuildFilesForSources() {
+    _database.execute(_filesV8Table);
+    _copyIntoV8Table(
+      table: 'files',
+      temporary: 'files_v8',
+      columns: const {
+        'id': "''",
+        'path': 'id',
+        'filename': "''",
+        'extension': "''",
+        'size': '0',
+        'mime_type': 'NULL',
+        'content_hash': 'NULL',
+        'phash': 'NULL',
+        'width': 'NULL',
+        'height': 'NULL',
+        'duration_ms': 'NULL',
+        'video_episode_json': 'NULL',
+        'container': 'NULL',
+        'audio_codec': 'NULL',
+        'codec_profile': 'NULL',
+        'audio_channels': 'NULL',
+        'sample_rate_hz': 'NULL',
+        'file_modified_at': '0',
+        'indexed_at': '0',
+        'status': "'available'",
+      },
+      availabilityExpression:
+          "CASE status WHEN 'offline' THEN 'offline_copy' "
+          "WHEN 'missing' THEN 'unreachable' ELSE 'available' END",
+    );
+    for (final statement in _filesV8Indexes) {
+      _database.execute(statement);
+    }
+  }
+
+  void _rebuildWorksForSources() {
+    _database.execute(_worksV8Table);
+    _copyIntoV8Table(
+      table: 'works',
+      temporary: 'works_v8',
+      columns: const {
+        'id': "''",
+        'kind': "''",
+        'source_path': 'id',
+        'parent_id': 'NULL',
+        'title': "''",
+        'sort_title': 'NULL',
+        'series_name': 'NULL',
+        'series_sequence': 'NULL',
+        'year': 'NULL',
+        'cover_file_id': 'NULL',
+        'generated_cover_path': 'NULL',
+        'metadata_json': "'{}'",
+        'added_at': '0',
+        'status': "'available'",
+      },
+      availabilityExpression:
+          "CASE status WHEN 'missing' THEN 'unreachable' "
+          "ELSE 'available' END",
+    );
+    for (final statement in _worksV8Indexes) {
+      _database.execute(statement);
     }
   }
 }
@@ -2367,4 +2651,95 @@ const _version1Statements = <String>[
     tokenize = 'unicode61 remove_diacritics 2'
   )
   ''',
+];
+
+const _filesV8Table = '''
+CREATE TABLE files_v8 (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  extension TEXT NOT NULL DEFAULT '',
+  size INTEGER NOT NULL CHECK (size >= 0),
+  mime_type TEXT,
+  content_hash TEXT,
+  phash TEXT,
+  width INTEGER,
+  height INTEGER,
+  duration_ms INTEGER,
+  video_episode_json TEXT,
+  container TEXT,
+  audio_codec TEXT,
+  codec_profile TEXT,
+  audio_channels INTEGER,
+  sample_rate_hz INTEGER,
+  availability TEXT NOT NULL DEFAULT 'available'
+    CHECK (availability IN ('available', 'offline_copy', 'remote',
+                            'unreachable', 'in_archive')),
+  offline_path TEXT,
+  file_modified_at INTEGER NOT NULL,
+  indexed_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'available'
+    CHECK (status IN ('available', 'missing', 'offline', 'ignored'))
+)
+''';
+
+const _filesV8Indexes = <String>[
+  'CREATE UNIQUE INDEX files_source_path_idx ON files(source_id, path)',
+  'CREATE INDEX files_content_hash_idx ON files(content_hash)',
+  'CREATE INDEX files_status_idx ON files(status)',
+  'CREATE INDEX files_availability_idx ON files(availability)',
+];
+
+const _worksV8Table = '''
+CREATE TABLE works_v8 (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  -- Named for the table this becomes after the rename: with
+  -- legacy_alter_table the reference text is kept verbatim.
+  parent_id TEXT REFERENCES works(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  sort_title TEXT,
+  series_name TEXT,
+  series_sequence REAL,
+  year INTEGER,
+  cover_file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
+  generated_cover_path TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  availability TEXT NOT NULL DEFAULT 'available'
+    CHECK (availability IN ('available', 'offline_copy', 'remote',
+                            'unreachable', 'in_archive')),
+  added_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'available'
+)
+''';
+
+const _worksV8Indexes = <String>[
+  'CREATE UNIQUE INDEX works_source_path_idx ON works(source_id, source_path)',
+  'CREATE INDEX works_parent_idx ON works(parent_id)',
+  'CREATE INDEX works_kind_idx ON works(kind)',
+  'CREATE INDEX works_availability_idx ON works(availability)',
+];
+
+const _version8Statements = <String>[
+  '''
+  CREATE TABLE IF NOT EXISTS sources (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('vault', 'peer')),
+    display_name TEXT NOT NULL,
+    library_id TEXT NOT NULL DEFAULT '',
+    vault_path TEXT,
+    base_url TEXT,
+    cert_pin TEXT,
+    sync_cursor INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'unknown'
+      CHECK (status IN ('available', 'unreachable', 'unknown')),
+    last_seen_at INTEGER
+  )
+  ''',
+  "INSERT OR IGNORE INTO sources (id, kind, display_name, status) "
+      "VALUES ('${FundusDatabase.localSourceId}', 'vault', "
+      "'Diese Bibliothek', 'available')",
 ];

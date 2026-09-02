@@ -1,0 +1,8 @@
+# Workspace-wide analyzer configuration.
+#
+# `legacy/` holds the previous Flutter client from the Fundus repository. It is
+# kept as a reference to read from, never as an import target, and is not a
+# workspace member — so it must stay out of analysis.
+analyzer:
+  exclude:
+    - legacy/**

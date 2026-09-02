@@ -10,11 +10,13 @@ import '../import/abs_importer.dart';
 import '../import/abs_metadata.dart';
 import '../import/document_importer.dart';
 import '../import/embedded_cover.dart';
+import '../model/device_profile.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
 import '../model/library_manifest.dart';
 import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
+import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
@@ -93,13 +95,15 @@ final class FundusLibrary {
     await manifest.write(manifestFile);
     final configuration = LibraryConfiguration();
     await configuration.write(_configurationFile(root));
-    return FundusLibrary._(
+    final library = FundusLibrary._(
       root: root.absolute,
       manifest: manifest,
       configuration: configuration,
       openMode: LibraryOpenMode.readWrite,
       database: FundusDatabase.openFile(_databaseFile(root)),
     );
+    library._registerAsSource();
+    return library;
   }
 
   static Future<FundusLibrary> open(Directory root) async {
@@ -118,7 +122,7 @@ final class FundusLibrary {
     if (compatibility.mode == LibraryOpenMode.incompatible) {
       throw StateError(compatibility.message);
     }
-    return FundusLibrary._(
+    final library = FundusLibrary._(
       root: root.absolute,
       manifest: manifest,
       configuration: configuration,
@@ -128,6 +132,96 @@ final class FundusLibrary {
         readOnly: compatibility.mode == LibraryOpenMode.readOnly,
       ),
     );
+    if (compatibility.mode == LibraryOpenMode.readWrite) {
+      library._registerAsSource();
+    }
+    return library;
+  }
+
+  /// Records the opened vault as a source of its own.
+  ///
+  /// The path is stored because it is how this device finds the vault again;
+  /// it is never handed out and never synchronised. The `library_id` from the
+  /// manifest is what actually identifies the vault when the drive letter or
+  /// mount point changes.
+  void _registerAsSource() {
+    final existing = _database.loadSource(FundusDatabase.localSourceId);
+    _database.upsertSource(
+      LibrarySource(
+        id: FundusDatabase.localSourceId,
+        kind: LibrarySourceKind.vault,
+        displayName: existing?.displayName.isNotEmpty ?? false
+            ? existing!.displayName
+            : p.basename(root.path),
+        libraryId: manifest.libraryId,
+        vaultPath: root.path,
+        syncCursor: existing?.syncCursor ?? 0,
+        status: LibrarySourceStatus.available,
+        lastSeenAt: DateTime.now(),
+      ),
+    );
+  }
+
+  List<LibrarySource> listSources() => _database.listSources();
+
+  /// The device profiles stored with this vault.
+  ///
+  /// See [DeviceProfile] for why they live here rather than in app storage:
+  /// an app reinstall must not cost the reader settings again.
+  Future<List<DeviceProfile>> listDeviceProfiles() async {
+    final directory = _deviceProfileDirectory;
+    if (!await directory.exists()) return const [];
+    final profiles = <DeviceProfile>[];
+    await for (final entry in directory.list()) {
+      if (entry is! File || !entry.path.endsWith('.yaml')) continue;
+      final profile = await _readDeviceProfile(entry);
+      if (profile != null) profiles.add(profile);
+    }
+    profiles.sort((a, b) => a.displayName.compareTo(b.displayName));
+    return profiles;
+  }
+
+  Future<DeviceProfile?> loadDeviceProfile(String key) =>
+      _readDeviceProfile(_deviceProfileFile(key));
+
+  Future<void> saveDeviceProfile(DeviceProfile profile) async {
+    _ensureWritable();
+    final file = _deviceProfileFile(profile.key);
+    await file.parent.create(recursive: true);
+    final partial = File('${file.path}.part');
+    await partial.writeAsString(
+      '${const JsonEncoder.withIndent('  ').convert(profile.toJson())}\n',
+      flush: true,
+    );
+    if (await file.exists()) await file.delete();
+    await partial.rename(file.path);
+  }
+
+  Future<void> deleteDeviceProfile(String key) async {
+    _ensureWritable();
+    final file = _deviceProfileFile(key);
+    if (await file.exists()) await file.delete();
+  }
+
+  Directory get _deviceProfileDirectory =>
+      Directory(p.join(root.path, '_fundus', 'devices'));
+
+  File _deviceProfileFile(String key) {
+    // The key becomes a file name, so anything that could climb out of the
+    // directory is stripped rather than trusted.
+    final safe = key.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    return File(p.join(_deviceProfileDirectory.path, '$safe.yaml'));
+  }
+
+  Future<DeviceProfile?> _readDeviceProfile(File file) async {
+    if (!await file.exists()) return null;
+    try {
+      return DeviceProfile.fromJson(loadYaml(await file.readAsString()));
+    } on FileSystemException {
+      return null;
+    } on YamlException {
+      return null;
+    }
   }
 
   List<LibraryWorkSummary> listWorks({bool includeMissing = false}) => _database

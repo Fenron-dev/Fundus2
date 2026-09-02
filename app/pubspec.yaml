@@ -9,32 +9,19 @@ environment:
 resolution: workspace
 
 dependencies:
-  archive: ^4.0.9
-  audio_service: ^0.18.19
-  basic_utils: ^5.8.2
-  bonsoir: ^7.1.4
-  crypto: ^3.0.7
-  file_picker: ^11.0.2
   flutter:
     sdk: flutter
-  flutter_secure_storage: ^10.3.1
   fundus_core: any
+  fundus_design: any
   fundus_server: any
-  http: ^1.2.2
-  media_kit: ^1.2.6
-  media_kit_libs_video: ^1.0.7
-  media_kit_video: ^2.0.1
-  mobile_scanner: ^7.4.0
-  path_provider: ^2.1.6
   path: ^1.9.1
-  qr_flutter: ^4.1.0
-  sensors_plus: ^6.1.2
-  shelf: ^1.4.2
+  path_provider: ^2.1.6
+  file_picker: ^11.0.2
 
 dev_dependencies:
+  flutter_lints: ^6.0.0
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true

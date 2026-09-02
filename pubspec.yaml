@@ -8,4 +8,5 @@ environment:
 workspace:
   - app
   - packages/core
+  - packages/design
   - packages/server
