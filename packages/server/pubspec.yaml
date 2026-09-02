@@ -1,0 +1,22 @@
+name: fundus_server
+description: Embedded HTTP server for Fundus libraries and clients.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.1
+
+resolution: workspace
+
+dependencies:
+  archive: ^4.0.9
+  crypto: ^3.0.7
+  fundus_core: any
+  path: ^1.9.1
+  shelf: ^1.4.2
+  shelf_router: ^1.1.2
+
+dev_dependencies:
+  http: ^1.2.2
+  lints: ^6.0.0
+  test: ^1.30.0

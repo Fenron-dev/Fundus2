@@ -1,0 +1,31 @@
+.DS_Store
+.dart_tool/
+build/
+coverage/
+*.log
+.idea/
+.vscode/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+**/key.properties
+**/local.properties
+credentials.json
+secrets.json
+
+# Local Fundus libraries and generated databases
+.library/
+*.db
+*.db-shm
+*.db-wal
+
+# Konzept-, Design- und Planungsunterlagen bleiben aus dem oeffentlichen Repo
+Dokumentation/

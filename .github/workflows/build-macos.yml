@@ -1,0 +1,70 @@
+name: Build macOS Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'packages/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/build-macos.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-preview
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: 3.41.4
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Verify release network entitlements
+        run: |
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.server' app/macos/Runner/Release.entitlements | grep -qx true
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' app/macos/Runner/Release.entitlements | grep -qx true
+
+      - name: Build macOS release
+        working-directory: app
+        run: flutter build macos --release
+
+      - name: Verify application signature
+        working-directory: app
+        run: |
+          xattr -cr build/macos/Build/Products/Release/fundus.app
+          codesign --verify --deep --strict --verbose=2 build/macos/Build/Products/Release/fundus.app
+          codesign -d --entitlements :- build/macos/Build/Products/Release/fundus.app > /tmp/fundus-release-entitlements.plist 2>/dev/null
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.server' /tmp/fundus-release-entitlements.plist | grep -qx true
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' /tmp/fundus-release-entitlements.plist | grep -qx true
+
+      - name: Package application
+        working-directory: app
+        run: >-
+          ditto -c -k --keepParent
+          build/macos/Build/Products/Release/fundus.app
+          Fundus-macOS.zip
+
+      - name: Upload preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: Fundus-macOS-${{ github.sha }}
+          path: app/Fundus-macOS.zip
+          if-no-files-found: error
+          retention-days: 14
