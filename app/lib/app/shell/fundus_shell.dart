@@ -4,6 +4,8 @@ import 'package:fundus_design/fundus_design.dart';
 import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/downloads/downloads_screen.dart';
 import '../../features/library/library_screen.dart';
+import '../../features/player/player_bar.dart';
+import '../../features/player/player_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/vault/vault_screen.dart';
 import '../../features/work/work_screen.dart';
@@ -31,8 +33,16 @@ class FundusShell extends StatelessWidget {
     final isCompact =
         MediaQuery.sizeOf(context).width < FundusShellMetrics.compactBreakpoint;
     return Scaffold(
-      body: SafeArea(
-        child: isCompact ? const _CompactShell() : const _WideShell(),
+      body: Stack(
+        children: [
+          SafeArea(
+            child: isCompact ? const _CompactShell() : const _WideShell(),
+          ),
+          // The full player covers the shell instead of pushing it aside; it
+          // is one screen more, not a second navigation.
+          if (scope.player.isExpanded)
+            const Positioned.fill(child: PlayerScreen()),
+        ],
       ),
     );
   }
@@ -56,6 +66,7 @@ class _WideShell extends StatelessWidget {
                 ),
               ),
               const Expanded(child: ShellContent()),
+              const PlayerBar(),
             ],
           ),
         ),
@@ -90,6 +101,7 @@ class _CompactShell extends StatelessWidget {
       children: [
         _CompactHeader(),
         const Expanded(child: ShellContent()),
+        const CompactPlayerBar(),
         Container(
           decoration: BoxDecoration(
             border: Border(top: BorderSide(color: tokens.divider)),

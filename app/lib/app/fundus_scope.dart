@@ -5,6 +5,8 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../data/library_controller.dart';
 import '../data/work_filter.dart';
+import '../data/work_view.dart';
+import '../media/playback_controller.dart';
 import 'app_navigation.dart';
 import 'app_settings.dart';
 
@@ -35,6 +37,9 @@ class FundusScope extends StatefulWidget {
 
 class FundusScopeState extends State<FundusScope> {
   final navigation = AppNavigation();
+  late final PlaybackController player = PlaybackController(
+    deviceId: widget.settings.deviceKey,
+  );
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
@@ -48,6 +53,7 @@ class FundusScopeState extends State<FundusScope> {
     navigation.addListener(_bump);
     settings.addListener(_bump);
     library.addListener(_bump);
+    player.addListener(_bump);
   }
 
   @override
@@ -55,6 +61,8 @@ class FundusScopeState extends State<FundusScope> {
     navigation.removeListener(_bump);
     settings.removeListener(_bump);
     library.removeListener(_bump);
+    player.removeListener(_bump);
+    player.dispose();
     navigation.dispose();
     super.dispose();
   }
@@ -62,6 +70,15 @@ class FundusScopeState extends State<FundusScope> {
   void _bump() => setState(() => _revision++);
 
   void setFilter(WorkFilter value) => setState(() => _filter = value);
+
+  /// Starts or resumes a work. One entry point, whatever the media type — the
+  /// controller picks its byte source, the screens do not.
+  Future<void> play(WorkView work) async {
+    final vault = library.library;
+    if (vault == null) return;
+    await player.open(vault, work);
+    if (player.failure == null) library.refresh();
+  }
 
   /// Opens a media type. The filter follows the place, so switching areas
   /// never leaves a stale filter behind that would explain an empty screen.
