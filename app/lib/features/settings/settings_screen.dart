@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:fundus_server/fundus_server.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/media_type.dart';
+import '../../data/server_host.dart';
 import '../library/unassigned_folders_card.dart';
 
 /// Settings, with the scope of each one visible.
@@ -23,6 +26,7 @@ class SettingsScreen extends StatelessWidget {
       'darstellung' => const _Appearance(),
       'bibliotheken' => const _Libraries(),
       'server' => const _Devices(),
+      'synchronisation' => const _Sync(),
       'diagnose' => const _Diagnostics(),
       _ => _Planned(category: category),
     };
@@ -550,11 +554,6 @@ class _Planned extends StatelessWidget {
         'Serverwartung',
         'Speicher, Scan-Zeitplan und Wartungsaufgaben gehören zum Peer-Server.',
       ),
-      'synchronisation': (
-        'Synchronisation',
-        'Konfliktregeln je Entität stehen fest; sie greifen, sobald das '
-            'Journal läuft.',
-      ),
       'schutz': (
         'Schutzmodus',
         'PIN, unscharfe Vorschau und vollständiges Ausblenden greifen quer '
@@ -569,5 +568,396 @@ class _Planned extends StatelessWidget {
       subtitle: entry.$2,
       children: const [],
     );
+  }
+}
+
+/// Connecting to another Fundus, and keeping both sides in step.
+class _Sync extends StatefulWidget {
+  const _Sync();
+
+  @override
+  State<_Sync> createState() => _SyncState();
+}
+
+class _SyncState extends State<_Sync> {
+  final _codeController = TextEditingController();
+  final _pinController = TextEditingController();
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    _pinController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final sync = scope.sync;
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+
+    return _SettingsPage(
+      title: 'Synchronisation',
+      subtitle:
+          'Zwei Geräte, dieselbe Bibliothek, derselbe Stand. Abgeglichen wird, '
+          'was man mit sich trägt: wo man ist, und was man sich angestrichen '
+          'hat. Dateien wandern nicht mit.',
+      children: [
+        _Sharing(host: scope.host),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Gerät koppeln', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Lass dir auf dem anderen Gerät den Kopplungscode zeigen und '
+                'gib die sechsstellige PIN dazu ein. Der Code allein reicht '
+                'nicht — wer ihn abfotografiert, hat noch keine Verbindung.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              TextField(
+                controller: _codeController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Kopplungscode',
+                  hintText: '{"type":"fundus_pairing", …}',
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 140,
+                    child: TextField(
+                      controller: _pinController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'PIN'),
+                    ),
+                  ),
+                  const SizedBox(width: FundusSpace.x4),
+                  FilledButton(
+                    onPressed: sync.isBusy
+                        ? null
+                        : () async {
+                            final paired = await sync.pair(
+                              code: _codeController.text,
+                              pin: _pinController.text,
+                            );
+                            if (!paired) return;
+                            _codeController.clear();
+                            _pinController.clear();
+                          },
+                    child: const Text('Koppeln'),
+                  ),
+                ],
+              ),
+              if (sync.failure case final failure?) ...[
+                const SizedBox(height: FundusSpace.x3),
+                Text(
+                  failure,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: tokens.danger,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Verbundene Geräte',
+                      style: theme.textTheme.titleMedium,
+                    ),
+                  ),
+                  if (sync.peers.isNotEmpty)
+                    OutlinedButton.icon(
+                      onPressed: sync.isBusy ? null : sync.syncAll,
+                      icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
+                      label: const Text('Jetzt abgleichen'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              if (sync.peers.isEmpty)
+                Text(
+                  'Noch keins. Ein gekoppeltes Gerät steht hier mit dem '
+                  'Zeitpunkt seines letzten Abgleichs.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                )
+              else
+                for (final peer in sync.peers)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(peer.name),
+                    subtitle: Text(
+                      peer.lastSyncAt == null
+                          ? peer.baseUrl
+                          : '${peer.baseUrl} · zuletzt '
+                                '${_when(peer.lastSyncAt!)}'
+                                '${peer.lastResult == null ? '' : ' · ${peer.lastResult}'}',
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: sync.isBusy
+                              ? null
+                              : () => sync.syncWith(peer),
+                          icon: Icon(
+                            FundusIcons.sync,
+                            size: FundusIcons.sizeMd,
+                          ),
+                          tooltip: 'Abgleichen',
+                        ),
+                        IconButton(
+                          onPressed: () => sync.forget(peer.serverId),
+                          icon: Icon(
+                            FundusIcons.close,
+                            size: FundusIcons.sizeMd,
+                          ),
+                          tooltip: 'Verbindung entfernen',
+                        ),
+                      ],
+                    ),
+                  ),
+              const SizedBox(height: FundusSpace.x3),
+              Text(
+                'Das Zugangstoken liegt bei diesem Gerät, nicht in der '
+                'Bibliothek — ein Bibliotheksordner wird geteilt, ein Schlüssel '
+                'nicht. Eine Neuinstallation kostet daher die Kopplung.',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.textFaint,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _when(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.day)}.${two(local.month)}. ${two(local.hour)}:'
+        '${two(local.minute)}';
+  }
+}
+
+/// This device as the side that answers.
+///
+/// Two Fundus installations cannot both be only clients, so the same screen
+/// carries both halves: below, the connections this device made; here, the
+/// door it opens for the other one. It stays shut until it is opened.
+class _Sharing extends StatelessWidget {
+  const _Sharing({required this.host});
+
+  final ServerHostController host;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final session = host.pairingSession;
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Dieses Gerät freigeben',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              Switch(
+                value: host.isRunning,
+                onChanged: host.isBusy
+                    ? null
+                    : (value) => host.setSharing(value),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Solange die Freigabe an ist, kann ein gekoppeltes Gerät im '
+            'selben Netz die hier geöffnete Bibliothek erreichen. Die '
+            'Verbindung ist verschlüsselt, und das Zertifikat steht im '
+            'Kopplungscode — ein anderes wird nicht angenommen.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          if (host.failure case final failure?) ...[
+            const SizedBox(height: FundusSpace.x3),
+            Text(
+              failure,
+              style: theme.textTheme.bodyMedium?.copyWith(color: tokens.danger),
+            ),
+          ],
+          if (host.isRunning) ...[
+            const SizedBox(height: FundusSpace.x4),
+            if (host.addresses.isEmpty)
+              Text(
+                'Dieses Gerät hat keine Netzwerkadresse, unter der es '
+                'erreichbar wäre. Ohne WLAN oder Kabel gibt es nichts zu '
+                'koppeln.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textFaint,
+                ),
+              )
+            else ...[
+              Text('Erreichbar unter', style: theme.textTheme.labelLarge),
+              const SizedBox(height: FundusSpace.x2),
+              Wrap(
+                spacing: FundusSpace.x2,
+                runSpacing: FundusSpace.x2,
+                children: [
+                  for (final address in host.addresses)
+                    ChoiceChip(
+                      selected: address == host.address,
+                      onSelected: (_) => host.useAddress(address),
+                      label: Text('${address.host}:${address.port}'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              if (session == null)
+                OutlinedButton.icon(
+                  onPressed: host.beginPairing,
+                  icon: Icon(FundusIcons.devices, size: FundusIcons.sizeSm),
+                  label: const Text('Gerät koppeln'),
+                )
+              else
+                _PairingInvitation(host: host, session: session),
+            ],
+          ],
+          if (host.pairedDevices.isNotEmpty) ...[
+            const SizedBox(height: FundusSpace.x4),
+            Text('Gekoppelte Geräte', style: theme.textTheme.labelLarge),
+            for (final device in host.pairedDevices)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(device.name),
+                subtitle: Text(
+                  'gekoppelt am ${_date(device.pairedAt)}',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                ),
+                trailing: IconButton(
+                  onPressed: () => host.revoke(device.id),
+                  icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
+                  tooltip: 'Zugang entziehen',
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _date(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.day)}.${two(local.month)}.${local.year}';
+  }
+}
+
+/// The code and the PIN, side by side.
+///
+/// Deliberately two separate things to hand over: the code may be copied,
+/// photographed or pasted, the six digits have to be read off this screen.
+/// One of them travelling alone is worth nothing.
+class _PairingInvitation extends StatelessWidget {
+  const _PairingInvitation({required this.host, required this.session});
+
+  final ServerHostController host;
+  final FundusPairingSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final code = host.pairingCode;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('PIN', style: theme.textTheme.labelLarge),
+        const SizedBox(height: FundusSpace.x1),
+        SelectableText(
+          session.pin,
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontFeatures: const [FontFeature.tabularFigures()],
+            letterSpacing: 6,
+          ),
+        ),
+        const SizedBox(height: FundusSpace.x3),
+        Text('Kopplungscode', style: theme.textTheme.labelLarge),
+        const SizedBox(height: FundusSpace.x1),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(FundusSpace.x3),
+          decoration: BoxDecoration(
+            color: tokens.background,
+            borderRadius: FundusRadius.mdAll,
+          ),
+          child: SelectableText(
+            code ?? '',
+            maxLines: 4,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontFamily: 'monospace',
+              color: tokens.textMuted,
+            ),
+          ),
+        ),
+        const SizedBox(height: FundusSpace.x3),
+        Row(
+          children: [
+            FilledButton.tonalIcon(
+              onPressed: code == null
+                  ? null
+                  : () => Clipboard.setData(ClipboardData(text: code)),
+              icon: Icon(FundusIcons.note, size: FundusIcons.sizeSm),
+              label: const Text('Code kopieren'),
+            ),
+            const SizedBox(width: FundusSpace.x3),
+            TextButton(
+              onPressed: host.cancelPairing,
+              child: const Text('Abbrechen'),
+            ),
+          ],
+        ),
+        const SizedBox(height: FundusSpace.x2),
+        Text(
+          'Gültig bis ${_time(session.expiresAt)}. Danach braucht es einen '
+          'neuen Code.',
+          style: theme.textTheme.labelMedium?.copyWith(color: tokens.textFaint),
+        ),
+      ],
+    );
+  }
+
+  static String _time(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.hour)}:${two(local.minute)} Uhr';
   }
 }

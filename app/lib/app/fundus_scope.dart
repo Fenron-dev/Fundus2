@@ -4,6 +4,8 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../data/library_controller.dart';
+import '../data/server_host.dart';
+import '../data/sync_controller.dart';
 import '../data/work_filter.dart';
 import '../data/media_type.dart';
 import '../data/work_view.dart';
@@ -28,6 +30,8 @@ class FundusScope extends StatefulWidget {
     this.reader,
     this.textReader,
     this.fullscreen,
+    this.sync,
+    this.host,
     this.captureSink = const FileCaptureSink(),
     this.storage = const PlatformStorageAccess(),
   });
@@ -46,6 +50,12 @@ class FundusScope extends StatefulWidget {
 
   /// And for the window: a test must not ask the window manager for anything.
   final FullscreenController? fullscreen;
+
+  /// And for the sync, so a test never reaches for the network.
+  final SyncController? sync;
+
+  /// And for the served side, so a test never opens a port.
+  final ServerHostController? host;
 
   /// Where a saved page or frame goes. The default opens a system dialog.
   final CaptureSink captureSink;
@@ -76,6 +86,12 @@ class FundusScopeState extends State<FundusScope> {
       TextReaderController(deviceId: widget.settings.deviceKey);
   late final FullscreenController fullscreen =
       widget.fullscreen ?? FullscreenController();
+  late final SyncController sync =
+      widget.sync ??
+      SyncController(settings: widget.settings, library: widget.library);
+  late final ServerHostController host =
+      widget.host ??
+      ServerHostController(settings: widget.settings, library: widget.library);
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
@@ -95,6 +111,8 @@ class FundusScopeState extends State<FundusScope> {
     reader.addListener(_bump);
     textReader.addListener(_bump);
     fullscreen.addListener(_bump);
+    sync.addListener(_bump);
+    host.addListener(_bump);
   }
 
   @override
@@ -106,11 +124,15 @@ class FundusScopeState extends State<FundusScope> {
     reader.removeListener(_bump);
     textReader.removeListener(_bump);
     fullscreen.removeListener(_bump);
+    sync.removeListener(_bump);
+    host.removeListener(_bump);
     // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
     if (widget.reader == null) reader.dispose();
     if (widget.textReader == null) textReader.dispose();
     if (widget.fullscreen == null) fullscreen.dispose();
+    if (widget.sync == null) sync.dispose();
+    if (widget.host == null) host.dispose();
     navigation.dispose();
     super.dispose();
   }

@@ -1,0 +1,505 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:fundus_core/fundus_core.dart';
+import 'package:http/http.dart' as http;
+
+import 'pairing_code.dart';
+import 'pinned_client.dart';
+
+/// What went wrong talking to the other side.
+final class FundusRemoteException implements Exception {
+  const FundusRemoteException(this.message, {this.statusCode});
+
+  final String message;
+  final int? statusCode;
+
+  /// Whether asking again later could work. A wrong token will not fix
+  /// itself; a server that is switched off might.
+  bool get isTransient => statusCode == null || statusCode! >= 500;
+
+  @override
+  String toString() => message;
+}
+
+/// One library on the other side.
+final class RemoteLibrary {
+  const RemoteLibrary({
+    required this.id,
+    required this.name,
+    this.workCount = 0,
+  });
+
+  final String id;
+  final String name;
+  final int workCount;
+}
+
+/// A work as the other side describes it.
+final class RemoteWork {
+  const RemoteWork({
+    required this.id,
+    required this.kind,
+    required this.title,
+    this.subtitle = '',
+    this.authors = const [],
+    this.series,
+    this.fileCount = 0,
+    this.hasCover = false,
+    this.tags = const [],
+  });
+
+  final String id;
+  final String kind;
+  final String title;
+  final String subtitle;
+  final List<String> authors;
+  final String? series;
+  final int fileCount;
+  final bool hasCover;
+  final List<String> tags;
+}
+
+/// Talking to another Fundus.
+///
+/// Only the calls the client actually makes, and each one named after what it
+/// means rather than after its route. Everything goes through one place so
+/// the bearer token, the timeouts and the error shape are decided once.
+final class FundusRemoteClient {
+  FundusRemoteClient({
+    required this.baseUri,
+    required this.token,
+    http.Client? httpClient,
+    String? certificateFingerprint,
+    this.timeout = const Duration(seconds: 20),
+  }) : _http =
+           httpClient ??
+           (certificateFingerprint == null || certificateFingerprint.isEmpty
+               ? http.Client()
+               : pinnedHttpClient(certificateFingerprint));
+
+  final Uri baseUri;
+  final String token;
+  final Duration timeout;
+  final http.Client _http;
+
+  /// Claims a pairing code and returns the token that follows from it.
+  ///
+  /// Unauthenticated by nature — this is the call that earns the credentials.
+  static Future<({String token, String serverId, String serverName})> claim({
+    required FundusPairingCode code,
+    required String pin,
+    required String deviceId,
+    required String deviceName,
+    http.Client? httpClient,
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    if (code.isExpired) {
+      throw const FundusRemoteException(
+        'Der Kopplungscode ist abgelaufen. Lass dir auf dem anderen Gerät '
+        'einen neuen zeigen.',
+      );
+    }
+    // The code names the certificate; from here on nothing else is accepted.
+    final client = httpClient ?? pinnedHttpClient(code.certificateFingerprint);
+    try {
+      final http.Response response;
+      try {
+        response = await client
+            .post(
+              code.baseUri.resolve('/v1/pairing/claim'),
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({
+                'nonce': code.nonce,
+                'pin': pin.trim(),
+                'device_id': deviceId,
+                'device_name': deviceName,
+              }),
+            )
+            .timeout(timeout);
+      } on Object catch (error) {
+        throw _unreachable(error);
+      }
+      final decoded = _decode(response);
+      final issued = decoded['token'];
+      if (issued is! String || issued.isEmpty) {
+        throw const FundusRemoteException(
+          'Die Gegenstelle hat kein Zugangstoken ausgestellt.',
+        );
+      }
+      return (
+        token: issued,
+        serverId: '${decoded['server_id'] ?? code.serverId}',
+        serverName: '${decoded['server_name'] ?? code.serverName ?? ''}',
+      );
+    } finally {
+      if (httpClient == null) client.close();
+    }
+  }
+
+  Future<List<RemoteLibrary>> libraries() async {
+    final decoded = await _get('/v1/libraries');
+    final entries = decoded['libraries'];
+    if (entries is! List) return const [];
+    return [
+      for (final entry in entries)
+        if (entry is Map)
+          RemoteLibrary(
+            id: '${entry['id'] ?? ''}',
+            name: '${entry['name'] ?? 'Bibliothek'}',
+            workCount: entry['work_count'] is num
+                ? (entry['work_count'] as num).round()
+                : 0,
+          ),
+    ];
+  }
+
+  Future<List<RemoteWork>> works(String libraryId) async {
+    final decoded = await _get('/v1/libraries/$libraryId/works');
+    final entries = decoded['works'];
+    if (entries is! List) return const [];
+    return [
+      for (final entry in entries)
+        if (entry is Map) _workFrom(entry),
+    ];
+  }
+
+  static RemoteWork _workFrom(Map<Object?, Object?> entry) => RemoteWork(
+    id: '${entry['id'] ?? ''}',
+    kind: '${entry['kind'] ?? ''}',
+    title: '${entry['title'] ?? ''}',
+    subtitle: '${entry['subtitle'] ?? ''}',
+    authors: [
+      if (entry['authors'] is List)
+        for (final author in entry['authors'] as List) '$author',
+    ],
+    series: entry['series'] is String ? entry['series'] as String : null,
+    fileCount: entry['file_count'] is num
+        ? (entry['file_count'] as num).round()
+        : 0,
+    hasCover: entry['has_cover'] == true,
+    tags: [
+      if (entry['tags'] is List)
+        for (final tag in entry['tags'] as List) '$tag',
+    ],
+  );
+
+  /// The other side's reading position for a work, or null if it has none.
+  Future<RemoteProgress?> progress(String libraryId, String workId) async {
+    final decoded = await _get('/v1/libraries/$libraryId/progress/$workId');
+    final progress = decoded['progress'];
+    if (progress is! Map) return null;
+    return RemoteProgress.fromJson(Map<String, Object?>.from(progress));
+  }
+
+  Future<RemoteProgress?> saveProgress({
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required bool finished,
+    required String deviceId,
+    String? operationId,
+  }) async {
+    final decoded = await _put(
+      '/v1/libraries/$libraryId/progress/$workId',
+      body: {
+        'file_id': fileId,
+        'position': position.toJson(),
+        'finished': finished,
+        'device_id': deviceId,
+        // Die Gegenstelle verlangt einen Schlüssel je Schreibvorgang: derselbe
+        // Stand zweimal gesendet soll einmal zählen, nicht zweimal in der
+        // Historie stehen.
+        'operation_id': operationId ?? FundusId.generate(),
+      },
+    );
+    return RemoteProgress.fromJson(decoded);
+  }
+
+  Future<RemoteAnnotations> annotations(String libraryId, String workId) async {
+    final decoded = await _get('/v1/libraries/$libraryId/annotations/$workId');
+    return RemoteAnnotations.fromJson(decoded);
+  }
+
+  Future<void> saveBookmark({
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    String? label,
+    String? note,
+  }) => _post(
+    '/v1/libraries/$libraryId/annotations/$workId/bookmarks',
+    body: {
+      'file_id': fileId,
+      'position': position.toJson(),
+      'label': ?label,
+      'note': ?note,
+    },
+  );
+
+  Future<void> saveHighlight({
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required String quote,
+    String color = '#FFF176',
+    String? note,
+  }) => _post(
+    '/v1/libraries/$libraryId/annotations/$workId/highlights',
+    body: {
+      'file_id': fileId,
+      'position': position.toJson(),
+      'quote': quote,
+      'color': color,
+      'note': ?note,
+    },
+  );
+
+  Future<void> saveTags({
+    required String libraryId,
+    required String workId,
+    required List<String> tags,
+  }) => _put(
+    '/v1/libraries/$libraryId/annotations/$workId/tags',
+    body: {'tags': tags},
+  );
+
+  /// Where a work's cover can be fetched, for the catalogue mirror.
+  Uri coverUri(String libraryId, String workId) =>
+      baseUri.resolve('/v1/libraries/$libraryId/works/$workId/cover');
+
+  Future<Map<String, Object?>> _get(String path) async {
+    final http.Response response;
+    try {
+      response = await _http
+          .get(baseUri.resolve(path), headers: _headers)
+          .timeout(timeout);
+    } on Object catch (error) {
+      throw _unreachable(error);
+    }
+    return _decode(response);
+  }
+
+  Future<Map<String, Object?>> _put(
+    String path, {
+    required Map<String, Object?> body,
+  }) async {
+    final http.Response response;
+    try {
+      response = await _http
+          .put(
+            baseUri.resolve(path),
+            headers: {..._headers, 'content-type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
+    } on Object catch (error) {
+      throw _unreachable(error);
+    }
+    return _decode(response);
+  }
+
+  Future<Map<String, Object?>> _post(
+    String path, {
+    required Map<String, Object?> body,
+  }) async {
+    final http.Response response;
+    try {
+      response = await _http
+          .post(
+            baseUri.resolve(path),
+            headers: {..._headers, 'content-type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
+    } on Object catch (error) {
+      throw _unreachable(error);
+    }
+    return _decode(response);
+  }
+
+  Map<String, String> get _headers => {'authorization': 'Bearer $token'};
+
+  /// Turns a transport failure into something worth reading.
+  ///
+  /// A refused handshake is the interesting one: it means the certificate is
+  /// not the one the pairing code named. That is either a device that has
+  /// been reinstalled since — new key, new certificate — or something else
+  /// answering in its place, and the two are worth telling apart from "the
+  /// other side is switched off".
+  static FundusRemoteException _unreachable(Object error) {
+    if (error is HandshakeException ||
+        (error is http.ClientException &&
+            error.message.contains('CERTIFICATE_VERIFY_FAILED'))) {
+      return const FundusRemoteException(
+        'Das Zertifikat der Gegenstelle passt nicht zum Kopplungscode. '
+        'Wenn dort neu installiert wurde, braucht es eine neue Kopplung.',
+      );
+    }
+    return FundusRemoteException('Die Gegenstelle antwortet nicht: $error');
+  }
+
+  static Map<String, Object?> _decode(http.Response response) {
+    final Object? decoded;
+    try {
+      decoded = response.body.isEmpty ? null : jsonDecode(response.body);
+    } on FormatException {
+      throw FundusRemoteException(
+        'Die Gegenstelle hat etwas geantwortet, das kein JSON ist.',
+        statusCode: response.statusCode,
+      );
+    }
+    if (response.statusCode >= 400) {
+      final code = decoded is Map ? '${decoded['error'] ?? ''}' : '';
+      throw FundusRemoteException(
+        _messageFor(code, response.statusCode),
+        statusCode: response.statusCode,
+      );
+    }
+    return decoded is Map
+        ? Map<String, Object?>.from(decoded)
+        : const <String, Object?>{};
+  }
+
+  static String _messageFor(String code, int status) => switch (code) {
+    'pairing_unavailable' =>
+      'Das andere Gerät bietet gerade keine Kopplung an.',
+    'invalid_pairing_code' => 'Code oder PIN stimmen nicht.',
+    'pairing_expired' => 'Der Kopplungscode ist abgelaufen.',
+    'pairing_locked' =>
+      'Zu viele Fehlversuche. Lass dir einen neuen Code zeigen.',
+    'unauthorized' =>
+      'Diese Verbindung gilt nicht mehr. Das andere Gerät hat sie vermutlich '
+          'entkoppelt.',
+    'library_not_found' => 'Diese Bibliothek gibt es dort nicht mehr.',
+    'work_not_found' => 'Dieses Werk gibt es dort nicht mehr.',
+    _ => 'Die Gegenstelle hat mit $status geantwortet.',
+  };
+
+  void close() => _http.close();
+}
+
+/// A reading position as the other side keeps it.
+final class RemoteProgress {
+  const RemoteProgress({
+    required this.workId,
+    required this.position,
+    required this.finished,
+    required this.revision,
+    required this.updatedAt,
+    this.fileId,
+    this.deviceId = '',
+  });
+
+  factory RemoteProgress.fromJson(Map<String, Object?> value) {
+    final encoded = value['position'];
+    return RemoteProgress(
+      workId: '${value['work_id'] ?? ''}',
+      fileId: value['file_id'] is String ? value['file_id'] as String : null,
+      position: encoded is Map
+          ? MediaPosition.fromJson(Map<String, Object?>.from(encoded))
+          : const MediaPosition(kind: MediaPositionKind.time, numericValue: 0),
+      finished: value['finished'] == true,
+      revision: value['revision'] is num
+          ? (value['revision'] as num).round()
+          : 0,
+      updatedAt:
+          DateTime.tryParse('${value['updated_at'] ?? ''}')?.toUtc() ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      deviceId: '${value['device_id'] ?? ''}',
+    );
+  }
+
+  final String workId;
+  final String? fileId;
+  final MediaPosition position;
+  final bool finished;
+  final int revision;
+  final DateTime updatedAt;
+  final String deviceId;
+}
+
+/// The marks and notes the other side keeps for a work.
+final class RemoteAnnotations {
+  const RemoteAnnotations({
+    this.tags = const [],
+    this.bookmarks = const [],
+    this.highlights = const [],
+  });
+
+  factory RemoteAnnotations.fromJson(Map<String, Object?> value) {
+    List<Map<String, Object?>> listOf(String key) => [
+      if (value[key] is List)
+        for (final entry in value[key]! as List)
+          if (entry is Map) Map<String, Object?>.from(entry),
+    ];
+    return RemoteAnnotations(
+      tags: [
+        if (value['tags'] is List)
+          for (final tag in value['tags']! as List) '$tag',
+      ],
+      bookmarks: [
+        for (final entry in listOf('bookmarks')) RemoteMark.fromJson(entry),
+      ],
+      highlights: [
+        for (final entry in listOf('highlights')) RemoteMark.fromJson(entry),
+      ],
+    );
+  }
+
+  final List<String> tags;
+  final List<RemoteMark> bookmarks;
+  final List<RemoteMark> highlights;
+}
+
+/// A bookmark or a highlight — the same shape either way.
+final class RemoteMark {
+  const RemoteMark({
+    required this.id,
+    required this.position,
+    this.fileId,
+    this.label,
+    this.note,
+    this.quote,
+    this.color,
+    this.createdAt,
+  });
+
+  factory RemoteMark.fromJson(Map<String, Object?> value) {
+    final encoded = value['position'];
+    return RemoteMark(
+      id: '${value['id'] ?? ''}',
+      fileId: value['file_id'] is String ? value['file_id'] as String : null,
+      position: encoded is Map
+          ? MediaPosition.fromJson(Map<String, Object?>.from(encoded))
+          : const MediaPosition(kind: MediaPositionKind.time, numericValue: 0),
+      label: value['label'] is String ? value['label'] as String : null,
+      note: value['note'] is String ? value['note'] as String : null,
+      quote: value['quote'] is String ? value['quote'] as String : null,
+      color: value['color'] is String ? value['color'] as String : null,
+      createdAt: DateTime.tryParse('${value['created_at'] ?? ''}')?.toUtc(),
+    );
+  }
+
+  final String id;
+  final String? fileId;
+  final MediaPosition position;
+  final String? label;
+  final String? note;
+  final String? quote;
+  final String? color;
+  final DateTime? createdAt;
+
+  /// What makes two marks the same mark across devices.
+  ///
+  /// Ids are handed out locally, so the same bookmark made on two devices has
+  /// two ids. What it *is* — this spot in this file, with this text — is the
+  /// only thing both sides agree on.
+  String get fingerprint {
+    final at = position.numericValue?.toStringAsFixed(3) ?? position.key ?? '';
+    return '${fileId ?? ''}|${position.elementId ?? ''}|$at|${quote ?? ''}';
+  }
+}

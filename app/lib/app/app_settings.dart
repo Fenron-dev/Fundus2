@@ -7,6 +7,8 @@ import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../data/peer_connection.dart';
+
 /// Everything this device remembers on its own.
 ///
 /// Two kinds of state are deliberately kept apart. What lives here is bound to
@@ -83,6 +85,34 @@ class AppSettings extends ChangeNotifier {
   /// Whether the player shows its list of episodes and chapters beside the
   /// picture. Off by default: a film wants the screen, not a sidebar.
   bool get playerPanelVisible => _values['player_panel_visible'] == true;
+
+  /// The Fundus installations this device has been paired with.
+  ///
+  /// Here rather than in the vault: each entry carries a bearer token, and a
+  /// vault folder is shared by definition.
+  List<PeerConnection> get peers {
+    final value = _values['peers'];
+    if (value is! List) return const [];
+    return [
+      for (final entry in value)
+        if (entry is Map)
+          PeerConnection.fromJson(Map<String, Object?>.from(entry)),
+    ];
+  }
+
+  Future<void> savePeer(PeerConnection peer) async {
+    final others = peers.where((other) => other.serverId != peer.serverId);
+    await _set('peers', [
+      for (final entry in [...others, peer]) entry.toJson(),
+    ]);
+  }
+
+  Future<void> forgetPeer(String serverId) async {
+    await _set('peers', [
+      for (final entry in peers)
+        if (entry.serverId != serverId) entry.toJson(),
+    ]);
+  }
 
   /// Up to ten vault paths, most recent first.
   List<String> get recentVaults {

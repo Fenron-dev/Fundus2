@@ -160,6 +160,10 @@ class VaultScreen extends StatelessWidget {
     // The vault carries this device's own settings; after a reinstall this is
     // where they come back from.
     await scope.restoreShellProfile();
+    // Sharing was a decision about this device, not about this session: if it
+    // was on when the app was last closed, it comes back on — but only now,
+    // with a library open, because there is nothing to serve without one.
+    await scope.host.restore();
     scope.navigation.reset(const DashboardRoute());
   }
 }

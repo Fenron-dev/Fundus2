@@ -11,6 +11,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
+  fundus_client: any
   fundus_core: any
   fundus_design: any
   fundus_server: any
@@ -18,6 +19,9 @@ dependencies:
   media_kit_libs_video: ^1.0.7
   media_kit_video: ^2.0.1
   archive: ^4.0.7
+  basic_utils: ^5.8.2
+  crypto: ^3.0.7
+  shelf: ^1.4.2
   path: ^1.9.1
   path_provider: ^2.1.6
   file_picker: ^11.0.2
@@ -27,6 +31,7 @@ dependencies:
 
 dev_dependencies:
   flutter_lints: ^6.0.0
+  http: ^1.5.0
   flutter_test:
     sdk: flutter
 
