@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:fundus_core/fundus_core.dart';
 
 import '../data/work_view.dart';
@@ -62,6 +62,16 @@ class PlaybackController extends ChangeNotifier {
   bool get isExpanded => _expanded;
   String? get failure => _failure;
 
+  /// True for the media types that carry a picture.
+  bool get showsVideo => switch (_work?.mediaType?.id) {
+    'movie' || 'series' || 'anime' => true,
+    _ => false,
+  };
+
+  /// The video surface of the running engine, or null when there is nothing
+  /// to show — no engine yet, or a media type without a picture.
+  Widget? videoSurface() => showsVideo ? _engineOrNull?.videoSurface() : null;
+
   double get progressFraction {
     final total = _duration;
     if (total == null || total.inMilliseconds <= 0) return 0;
@@ -77,7 +87,8 @@ class PlaybackController extends ChangeNotifier {
     _failure = null;
     _library = library;
     _work = work;
-    _expanded = false;
+    // Starting a title opens the player; minimising is the deliberate step.
+    _expanded = autoplay;
 
     try {
       final tracks = library.playbackTracks(work.id);
@@ -124,8 +135,7 @@ class PlaybackController extends ChangeNotifier {
       return;
     }
     final uri = await source.resolve();
-    await _engine.open(uri);
-    if (at > Duration.zero) await _engine.seek(at);
+    await _engine.open(uri, start: at);
     _duration = source.duration;
     _position = at;
     _startSaveTimer();

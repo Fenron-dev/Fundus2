@@ -86,14 +86,23 @@ class _Transport extends StatelessWidget {
     final tokens = context.fundus;
     final theme = Theme.of(context);
 
+    // A film shows its picture where an audiobook shows its cover.
+    final video = player.videoSurface();
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(FundusSpace.x10),
       child: Column(
         children: [
-          SizedBox(
-            width: compact ? 220 : 260,
-            child: WorkCover(work: work, showProgress: false),
-          ),
+          if (video != null)
+            ClipRRect(
+              borderRadius: FundusRadius.mdAll,
+              child: AspectRatio(aspectRatio: 16 / 9, child: video),
+            )
+          else
+            SizedBox(
+              width: compact ? 220 : 260,
+              child: WorkCover(work: work, showProgress: false),
+            ),
           const SizedBox(height: FundusSpace.x8),
           Text(
             work.title,

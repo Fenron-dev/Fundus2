@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/work_view.dart';
 import 'package:fundus/media/playback_controller.dart';
@@ -16,6 +17,7 @@ final class FakeEngine implements PlaybackEngine {
   final _completed = StreamController<bool>.broadcast();
 
   final List<Uri> opened = [];
+  final List<Duration> starts = [];
   final List<Duration> seeks = [];
   double rate = 1;
   bool playing = false;
@@ -39,7 +41,13 @@ final class FakeEngine implements PlaybackEngine {
   Stream<bool> get completedStream => _completed.stream;
 
   @override
-  Future<void> open(Uri uri) async => opened.add(uri);
+  Future<void> open(Uri uri, {Duration start = Duration.zero}) async {
+    opened.add(uri);
+    starts.add(start);
+  }
+
+  @override
+  Widget? videoSurface() => null;
 
   @override
   Future<void> play() async {
@@ -132,10 +140,15 @@ void main() {
     expect(stored!.position.numericValue, closeTo(720, 1));
 
     // Ein zweites Öffnen setzt genau dort wieder an.
-    final resumed = PlaybackController(engine: FakeEngine());
+    final resumeEngine = FakeEngine();
+    final resumed = PlaybackController(engine: resumeEngine);
     addTearDown(resumed.dispose);
     await resumed.open(library, work, autoplay: false);
     expect(resumed.position, const Duration(minutes: 12));
+    // Entscheidend: die Stelle geht in das Öffnen ein. Ein Sprung danach
+    // verpufft, solange die Datei noch lädt — genau so ging der Hörstand
+    // bisher verloren.
+    expect(resumeEngine.starts.single, const Duration(minutes: 12));
   });
 
   test('Pause schreibt den Stand sofort', () async {
@@ -208,5 +221,23 @@ void main() {
     await controller.open(library, empty);
 
     expect(controller.failure, contains('keine abspielbaren'));
+  });
+
+  test(
+    'ein gestarteter Titel öffnet den Player, nicht den Randstreifen',
+    () async {
+      await controller.open(library, work);
+
+      expect(controller.isExpanded, isTrue);
+
+      controller.collapse();
+      expect(controller.isExpanded, isFalse);
+    },
+  );
+
+  test('ohne Wiedergabe bleibt der Player zu', () async {
+    await controller.open(library, work, autoplay: false);
+
+    expect(controller.isExpanded, isFalse);
   });
 }
