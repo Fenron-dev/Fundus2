@@ -50,6 +50,9 @@ void main() {
     root = await Directory.systemTemp.createTemp('fundus-panel-');
     library = LibraryController();
     settings = AppSettings.inMemory();
+    // Die Liste neben dem Player ist standardmäßig aus; diese Tests handeln
+    // von ihrem Inhalt, nicht von ihrer Sichtbarkeit.
+    await settings.setPlayerPanelVisible(true);
     engine = FakeEngine();
     player = PlaybackController(engine: engine);
   });
@@ -118,6 +121,33 @@ void main() {
     await tester.pump();
 
     expect(engine.audioChoices, ['2']);
+  });
+
+  testWidgets('die Liste ist erst da, wenn man sie holt', (tester) async {
+    await settings.setPlayerPanelVisible(false);
+    final series = Directory('${root.path}/Anime/Chainsaw Man')
+      ..createSync(recursive: true);
+    for (final episode in ['S01E01 - Dog', 'S01E02 - Tokyo']) {
+      File('${series.path}/$episode.mkv').writeAsBytesSync(List.filled(64, 3));
+    }
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+    });
+    await pumpPlayer(tester);
+
+    expect(find.text('FOLGEN'), findsNothing);
+
+    await tester.tap(find.byTooltip('Liste einblenden'));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+
+    expect(find.text('FOLGEN'), findsOneWidget);
   });
 
   testWidgets('ohne Auswahl steht kein Menü da', (tester) async {

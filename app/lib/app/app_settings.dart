@@ -80,6 +80,10 @@ class AppSettings extends ChangeNotifier {
 
   bool get navigationCollapsed => _values['navigation_collapsed'] == true;
 
+  /// Whether the player shows its list of episodes and chapters beside the
+  /// picture. Off by default: a film wants the screen, not a sidebar.
+  bool get playerPanelVisible => _values['player_panel_visible'] == true;
+
   /// Up to ten vault paths, most recent first.
   List<String> get recentVaults {
     final value = _values['recent_vaults'];
@@ -100,6 +104,9 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setNavigationCollapsed(bool value) =>
       _set('navigation_collapsed', value);
+
+  Future<void> setPlayerPanelVisible(bool value) =>
+      _set('player_panel_visible', value);
 
   Future<void> rememberVault(String path) async {
     final vaults = [path, ...recentVaults.where((entry) => entry != path)];

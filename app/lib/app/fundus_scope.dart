@@ -10,6 +10,7 @@ import '../data/work_view.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import 'app_navigation.dart';
+import 'fullscreen.dart';
 import 'app_settings.dart';
 
 /// The app's shared state, handed down once instead of threaded through every
@@ -22,6 +23,7 @@ class FundusScope extends StatefulWidget {
     required this.child,
     this.player,
     this.reader,
+    this.fullscreen,
   });
 
   final AppSettings settings;
@@ -32,6 +34,9 @@ class FundusScope extends StatefulWidget {
 
   /// Same for the page reader.
   final ReaderController? reader;
+
+  /// And for the window: a test must not ask the window manager for anything.
+  final FullscreenController? fullscreen;
   final Widget child;
 
   static FundusScopeState of(BuildContext context) {
@@ -51,6 +56,8 @@ class FundusScopeState extends State<FundusScope> {
       widget.player ?? PlaybackController(deviceId: widget.settings.deviceKey);
   late final ReaderController reader =
       widget.reader ?? ReaderController(deviceId: widget.settings.deviceKey);
+  late final FullscreenController fullscreen =
+      widget.fullscreen ?? FullscreenController();
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
@@ -66,6 +73,7 @@ class FundusScopeState extends State<FundusScope> {
     library.addListener(_bump);
     player.addListener(_bump);
     reader.addListener(_bump);
+    fullscreen.addListener(_bump);
   }
 
   @override
@@ -75,9 +83,11 @@ class FundusScopeState extends State<FundusScope> {
     library.removeListener(_bump);
     player.removeListener(_bump);
     reader.removeListener(_bump);
+    fullscreen.removeListener(_bump);
     // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
     if (widget.reader == null) reader.dispose();
+    if (widget.fullscreen == null) fullscreen.dispose();
     navigation.dispose();
     super.dispose();
   }
@@ -143,6 +153,13 @@ class FundusScopeState extends State<FundusScope> {
     await _writeShellProfile();
   }
 
+  /// Shows or hides the list beside the player. It is a device setting like
+  /// the theme, so it travels in the vault and survives a reinstall.
+  Future<void> setPlayerPanelVisible(bool value) async {
+    await settings.setPlayerPanelVisible(value);
+    await _writeShellProfile();
+  }
+
   Future<void> setDensity(FundusDensity density) async {
     await settings.setDensity(density);
     await _writeShellProfile();
@@ -163,6 +180,8 @@ class FundusScopeState extends State<FundusScope> {
         ),
       );
     }
+    final panel = shell['player_panel_visible'];
+    if (panel is bool) await settings.setPlayerPanelVisible(panel);
     final density = shell['density'];
     if (density is String) {
       await settings.setDensity(
@@ -214,6 +233,7 @@ class FundusScopeState extends State<FundusScope> {
             .withSettings(shellProfileKind, {
               'theme_mode': settings.themeMode.name,
               'density': settings.density.name,
+              'player_panel_visible': settings.playerPanelVisible,
             });
     await library.saveDeviceProfile(profile);
   }

@@ -21,6 +21,7 @@ import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../publication/epub_package.dart';
+import '../publication/publication_engine.dart';
 import '../scan/library_scanner.dart';
 import '../search/library_work_query.dart';
 import 'work_annotations.dart';
@@ -239,6 +240,68 @@ final class FundusLibrary {
     _ensureWritable();
     final file = _deviceProfileFile(key);
     if (await file.exists()) await file.delete();
+  }
+
+  /// The reader profile for a work, falling back to the vault's default.
+  ///
+  /// Layout, reading direction and page scale belong to the vault, not to the
+  /// app: reinstalling once cost every manga its reading direction, and that
+  /// must not happen again. A work without its own profile inherits the
+  /// default, so a new series starts the way the last one was read.
+  Future<PublicationReaderProfile> loadReaderProfile({String? workId}) async {
+    if (workId != null) {
+      final own = await _readReaderProfile(_readerProfileFile(workId));
+      if (own != null) return own;
+    }
+    return await _readReaderProfile(_readerProfileFile(_defaultReaderKey)) ??
+        const PublicationReaderProfile();
+  }
+
+  /// Writes the profile for one work and, at the same time, as the default —
+  /// the next series then opens the way this one is being read.
+  Future<void> saveReaderProfile(
+    PublicationReaderProfile profile, {
+    String? workId,
+  }) async {
+    _ensureWritable();
+    for (final key in {?workId, _defaultReaderKey}) {
+      final file = _readerProfileFile(key);
+      await file.parent.create(recursive: true);
+      final partial = File('${file.path}.part');
+      await partial.writeAsString(
+        '${const JsonEncoder.withIndent('  ').convert(profile.toJson())}\n',
+        flush: true,
+      );
+      if (await file.exists()) await file.delete();
+      await partial.rename(file.path);
+    }
+  }
+
+  static const _defaultReaderKey = 'default';
+
+  Directory get _readerProfileDirectory =>
+      Directory(p.join(root.path, '_fundus', 'readers'));
+
+  File _readerProfileFile(String key) {
+    final safe = key.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    return File(p.join(_readerProfileDirectory.path, '$safe.json'));
+  }
+
+  Future<PublicationReaderProfile?> _readReaderProfile(File file) async {
+    if (!await file.exists()) return null;
+    try {
+      final value = jsonDecode(await file.readAsString());
+      if (value is! Map) return null;
+      return PublicationReaderProfile.fromJson(
+        Map<String, Object?>.from(value),
+      );
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      // A profile written by a newer version is not worth refusing to read a
+      // book over; the defaults still work.
+      return null;
+    }
   }
 
   Directory get _deviceProfileDirectory =>

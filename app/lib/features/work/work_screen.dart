@@ -131,7 +131,11 @@ class _Hero extends StatelessWidget {
                             : FundusIcons.play,
                         size: FundusIcons.sizeSm,
                       ),
-                      label: Text(work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
+                      label: Text(
+                        ReaderController.handles(work)
+                            ? (work.hasProgress ? 'Weiterlesen' : 'Lesen')
+                            : (work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
+                      ),
                     ),
                     const SizedBox(width: FundusSpace.x3),
                     if (work.summary.tags.isNotEmpty)

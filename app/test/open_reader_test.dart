@@ -30,7 +30,7 @@ void main() {
     root = await Directory.systemTemp.createTemp('fundus-open-');
     final work = Directory('${root.path}/Manga/Klingenwind')
       ..createSync(recursive: true);
-    await writeArchive(work, 'Band 01.cbz', ['001.jpg', '002.jpg']);
+    writeArchive(work, 'Band 01.cbz', ['001.jpg', '002.jpg']);
     library = LibraryController();
     settings = AppSettings.inMemory();
     engine = FakeEngine();
@@ -84,7 +84,9 @@ void main() {
       const Duration(seconds: 5),
     );
 
-    await tester.runAsync(() => tester.tap(find.text('Öffnen')));
+    // Ein Manga wird gelesen, nicht abgespielt — auch auf dem Knopf.
+    expect(find.text('Öffnen'), findsNothing);
+    await tester.runAsync(() => tester.tap(find.text('Lesen')));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 100)),
     );

@@ -2,10 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:fundus_core/fundus_core.dart';
+import 'package:path/path.dart' as p;
 
 import '../data/media_type.dart';
 import '../data/work_view.dart';
 import 'comic_archive.dart';
+import 'comic_layout.dart';
+
+/// The file types this reader can open.
+///
+/// A work carries more than its chapters — covers, a ComicInfo, sometimes a
+/// banner. Those are files of the work, not volumes of it, and putting them
+/// in the chapter list is how a reader ends up "opening" a cover.
+const _readableExtensions = {'.cbz', '.zip'};
 
 /// The one reader for paged works.
 ///
@@ -27,12 +36,10 @@ class ReaderController extends ChangeNotifier {
   final ComicPageSource Function(String path, String name) _openSource;
   final String deviceId;
 
-  /// A page is written back at the turn, not on a timer: turning a page is
-  /// the event, and there is nothing between two pages worth saving.
   FundusLibrary? _library;
   WorkView? _work;
 
-  /// The files of the work — for a manga one entry per volume.
+  /// The readable files of the work — for a manga one entry per volume.
   List<LibraryPlaybackTrack> _volumes = const [];
   int _volumeIndex = 0;
 
@@ -43,8 +50,15 @@ class ReaderController extends ChangeNotifier {
   /// Page id → file on disk. Only what has been shown is unpacked.
   final Map<String, String> _files = {};
 
+  /// Pages whose unpacking is under way, so a scroll does not ask twice.
+  final Set<String> _pending = {};
+
+  PublicationReaderProfile _profile = const PublicationReaderProfile();
+  List<LibraryBookmark> _bookmarks = const [];
+
   bool _busy = false;
   bool _open = false;
+  bool _chrome = true;
   String? _failure;
 
   WorkView? get work => _work;
@@ -57,19 +71,41 @@ class ReaderController extends ChangeNotifier {
   int get pageIndex => _pageIndex;
   int get pageCount => _pages.length;
 
+  PublicationReaderProfile get profile => _profile;
+  List<LibraryBookmark> get bookmarks => _bookmarks;
+
   /// Whether the reader covers the shell.
   bool get isOpen => _open;
   bool get isBusy => _busy;
   String? get failure => _failure;
 
-  /// The file for the page currently shown, or null while it is unpacking.
-  String? get currentPageFile =>
-      _pageIndex < _pages.length ? _files[_pages[_pageIndex].id] : null;
+  /// Whether the surrounding chrome is shown. Reading is the point; the bar
+  /// steps out of the way on a tap and comes back the same way.
+  bool get showsChrome => _chrome;
 
-  /// „Band 2 · Seite 7 von 180" — the label the design asks for.
+  bool get isContinuous => isContinuousLayout(_profile.layout);
+  bool get isRightToLeft =>
+      _profile.readingDirection == PublicationReadingDirection.rightToLeft;
+
+  /// How pages sit together — one per group, or two on a spread.
+  List<List<int>> get pageGroups => comicPageGroups(
+    _pages.length,
+    layout: _profile.layout,
+    firstPageIsCover: _profile.firstPageIsCover,
+  );
+
+  int get groupIndex => comicPageGroupIndex(pageGroups, _pageIndex);
+
+  /// The file for a page, or null while it is still unpacking.
+  String? fileForPage(int index) =>
+      index >= 0 && index < _pages.length ? _files[_pages[index].id] : null;
+
+  String? get currentPageFile => fileForPage(_pageIndex);
+
+  /// „Band 2 · Seiten 6–7 von 180" — the label the design asks for.
   String get positionLabel {
     if (_pages.isEmpty) return '';
-    final page = 'Seite ${_pageIndex + 1} von ${_pages.length}';
+    final page = comicPageLabel(pageGroups, _pageIndex, _pages.length);
     if (_volumes.length <= 1) return page;
     return '${currentVolume?.title ?? 'Band ${_volumeIndex + 1}'} · $page';
   }
@@ -78,23 +114,34 @@ class ReaderController extends ChangeNotifier {
   static bool handles(WorkView work) =>
       work.mediaType?.progressKind == ProgressKind.pagePerVolume;
 
+  /// Whether a file of a work is a volume rather than a cover or a sidecar.
+  static bool isReadableFile(String path) =>
+      _readableExtensions.contains(p.extension(path).toLowerCase());
+
   /// Opens a work at its stored page.
   Future<void> open(FundusLibrary library, WorkView work) async {
     _failure = null;
     _library = library;
     _work = work;
     _open = true;
+    _chrome = true;
     _busy = true;
     notifyListeners();
 
     try {
-      _volumes = library.playbackTracks(work.id);
+      _volumes = library
+          .playbackTracks(work.id)
+          .where((track) => isReadableFile(track.relativePath))
+          .toList(growable: false);
       if (_volumes.isEmpty) {
-        _failure = 'Zu diesem Werk sind keine lesbaren Dateien erfasst.';
+        _failure = 'Zu diesem Werk ist kein lesbares Archiv erfasst.';
         _busy = false;
         notifyListeners();
         return;
       }
+
+      _profile = await library.loadReaderProfile(workId: work.id);
+      _bookmarks = library.loadAnnotations(work.id).bookmarks;
 
       final saved = library.loadProgress(work.id)?.position;
       final savedVolume = saved?.fileId == null
@@ -118,6 +165,7 @@ class ReaderController extends ChangeNotifier {
     try {
       await _source?.dispose();
       _files.clear();
+      _pending.clear();
       final volume = _volumes[index];
       _source = _openSource(volume.absolutePath, volume.title);
       _pages = await _source!.pages();
@@ -138,19 +186,40 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Unpacks the page shown and its neighbour, so a page turn does not wait
-  /// for the archive.
+  /// Unpacks the pages around [index], so a page turn does not wait for the
+  /// archive. How far ahead is the reader's own setting.
   Future<void> _ensurePagesAround(int index) async {
     final source = _source;
     if (source == null) return;
-    final wanted = [
-      for (final offset in [0, 1, -1])
-        if (index + offset >= 0 && index + offset < _pages.length)
-          _pages[index + offset],
-    ].where((page) => !_files.containsKey(page.id)).toList(growable: false);
+    final reach = _profile.preloadCount;
+    final wanted = <ComicPage>[];
+    for (var offset = 0; offset <= reach; offset++) {
+      for (final candidate in {index + offset, index - offset}) {
+        if (candidate < 0 || candidate >= _pages.length) continue;
+        final page = _pages[candidate];
+        if (_files.containsKey(page.id) || _pending.contains(page.id)) continue;
+        wanted.add(page);
+      }
+    }
     if (wanted.isEmpty) return;
-    final files = await source.materialize(wanted);
-    _files.addAll(files);
+    _pending.addAll(wanted.map((page) => page.id));
+    try {
+      _files.addAll(await source.materialize(wanted));
+    } on Object catch (error) {
+      _failure = error.toString();
+    } finally {
+      _pending.removeAll(wanted.map((page) => page.id));
+    }
+    notifyListeners();
+  }
+
+  /// Asks for a page that scrolled into view. Continuous layouts reach far
+  /// beyond the preload window, so they say what they need.
+  void requestPage(int index) {
+    if (index < 0 || index >= _pages.length) return;
+    final page = _pages[index];
+    if (_files.containsKey(page.id) || _pending.contains(page.id)) return;
+    unawaited(_ensurePagesAround(index));
   }
 
   Future<void> goToPage(int index) async {
@@ -178,14 +247,112 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> nextPage() => goToPage(_pageIndex + 1);
-  Future<void> previousPage() => goToPage(_pageIndex - 1);
+  /// Forward by one unit — a page, or a whole spread in double-page layout.
+  Future<void> nextPage() async {
+    final groups = pageGroups;
+    if (groups.isEmpty) return goToPage(_pageIndex + 1);
+    final unit = comicPageGroupIndex(groups, _pageIndex);
+    if (unit + 1 >= groups.length) return goToPage(_pages.length);
+    return goToPage(groups[unit + 1].first);
+  }
+
+  Future<void> previousPage() async {
+    final groups = pageGroups;
+    if (groups.isEmpty) return goToPage(_pageIndex - 1);
+    final unit = comicPageGroupIndex(groups, _pageIndex);
+    if (unit == 0) return goToPage(-1);
+    return goToPage(groups[unit - 1].first);
+  }
 
   Future<void> openVolume(int index) async {
     if (index < 0 || index >= _volumes.length || index == _volumeIndex) return;
     await _openVolume(index);
     saveProgress();
   }
+
+  /// Changes how the work is read and remembers it in the vault.
+  Future<void> updateProfile(PublicationReaderProfile value) async {
+    _profile = value;
+    notifyListeners();
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null || library.isReadOnly) return;
+    try {
+      await library.saveReaderProfile(value, workId: work.id);
+    } on Object {
+      // A setting that could not be written is still in force for this
+      // session; it is not worth interrupting reading for.
+    }
+    await _ensurePagesAround(_pageIndex);
+  }
+
+  void toggleChrome() {
+    _chrome = !_chrome;
+    notifyListeners();
+  }
+
+  void showChrome() {
+    if (_chrome) return;
+    _chrome = true;
+    notifyListeners();
+  }
+
+  /// Marks the page currently shown.
+  Future<void> addBookmark({String? note}) async {
+    final library = _library;
+    final work = _work;
+    final volume = currentVolume;
+    if (library == null || work == null || volume == null) return;
+    if (library.isReadOnly || _pages.isEmpty) return;
+    try {
+      final annotations = await library.addMediaBookmark(
+        workId: work.id,
+        fileId: volume.fileId,
+        position: _positionOfCurrentPage(),
+        label: comicPageLabel(pageGroups, _pageIndex, _pages.length),
+        note: note,
+      );
+      _bookmarks = annotations.bookmarks;
+      notifyListeners();
+    } on Object catch (error) {
+      _failure = error.toString();
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteBookmark(String bookmarkId) async {
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null || library.isReadOnly) return;
+    try {
+      final annotations = await library.deleteBookmark(work.id, bookmarkId);
+      _bookmarks = annotations.bookmarks;
+      notifyListeners();
+    } on Object {
+      // Nothing was removed; the list still shows the truth.
+    }
+  }
+
+  /// Jumps to a mark — into another volume if that is where it sits.
+  Future<void> goToBookmark(LibraryBookmark bookmark) async {
+    final page = (bookmark.mediaPosition.numericValue ?? 1).round() - 1;
+    final volume = _volumes.indexWhere(
+      (candidate) => candidate.fileId == bookmark.fileId,
+    );
+    if (volume >= 0 && volume != _volumeIndex) {
+      await _openVolume(volume, page: page < 0 ? 0 : page);
+      saveProgress();
+      return;
+    }
+    await goToPage(page < 0 ? 0 : page);
+  }
+
+  MediaPosition _positionOfCurrentPage() => MediaPosition(
+    kind: MediaPositionKind.page,
+    numericValue: (_pageIndex + 1).toDouble(),
+    total: _pages.length.toDouble(),
+    fileId: currentVolume?.fileId,
+  );
 
   /// Writes the page back. A page and a title are two different kinds of
   /// truth; metadata is never touched here.
@@ -200,12 +367,7 @@ class ReaderController extends ChangeNotifier {
       library.saveMediaProgress(
         workId: work.id,
         fileId: volume.fileId,
-        position: MediaPosition(
-          kind: MediaPositionKind.page,
-          numericValue: (_pageIndex + 1).toDouble(),
-          total: _pages.length.toDouble(),
-          fileId: volume.fileId,
-        ),
+        position: _positionOfCurrentPage(),
         finished: finished,
         deviceId: deviceId,
       );

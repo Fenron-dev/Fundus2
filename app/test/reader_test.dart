@@ -34,17 +34,16 @@ final class FakePageSource implements ComicPageSource {
 }
 
 /// Builds a CBZ with the given entry names.
-Future<String> writeArchive(
-  Directory directory,
-  String name,
-  List<String> entries,
-) async {
+///
+/// Synchronous on purpose: real file I/O awaited in the body of a
+/// `testWidgets` runs in the fake-async zone and never comes back.
+String writeArchive(Directory directory, String name, List<String> entries) {
   final archive = Archive();
   for (final entry in entries) {
     archive.add(ArchiveFile.bytes(entry, List.filled(8, 1)));
   }
   final path = '${directory.path}/$name';
-  await File(path).writeAsBytes(ZipEncoder().encodeBytes(archive));
+  File(path).writeAsBytesSync(ZipEncoder().encodeBytes(archive));
   return path;
 }
 
@@ -60,7 +59,7 @@ void main() {
       final work = Directory('${root.path}/Manga/Klingenwind')
         ..createSync(recursive: true);
       for (final volume in ['Band 01', 'Band 02']) {
-        await writeArchive(work, '$volume.cbz', ['001.jpg', '002.jpg']);
+        writeArchive(work, '$volume.cbz', ['001.jpg', '002.jpg']);
       }
       library = LibraryController();
       sources = {};
@@ -152,11 +151,180 @@ void main() {
 
         final source = sources.values.first;
         final unpacked = source.materialized.expand((batch) => batch).toSet();
-        expect(unpacked, hasLength(2), reason: 'Der ganze Band wurde entpackt');
+        // Zwei Seiten im Voraus ist die Vorgabe, der Band hat zwanzig.
+        expect(reader.profile.preloadCount, 2);
+        expect(
+          unpacked,
+          hasLength(3),
+          reason: 'Entpackt wurde mehr als die Vorschau verlangt',
+        );
         expect(unpacked, contains('Band 01.cbz/1.jpg'));
-        expect(unpacked, contains('Band 01.cbz/2.jpg'));
+        expect(unpacked, contains('Band 01.cbz/3.jpg'));
+        expect(unpacked, isNot(contains('Band 01.cbz/20.jpg')));
       },
     );
+  });
+
+  group('Kapitel sind Archive, nicht alles im Ordner', () {
+    late Directory root;
+    late LibraryController library;
+    late ReaderController reader;
+
+    setUp(() async {
+      root = await Directory.systemTemp.createTemp('fundus-chapters-');
+      final work = Directory('${root.path}/Manga/Klingenwind')
+        ..createSync(recursive: true);
+      writeArchive(work, 'Band 01.cbz', ['001.jpg']);
+      writeArchive(work, 'Band 02.cbz', ['001.jpg']);
+      // Was sonst noch im Werkordner liegt und kein Kapitel ist.
+      File('${work.path}/cover.jpg').writeAsBytesSync(List.filled(64, 1));
+      File('${work.path}/banner.png').writeAsBytesSync(List.filled(64, 2));
+      library = LibraryController();
+      reader = ReaderController(
+        openSource: (path, name) => FakePageSource(name, 5),
+      );
+    });
+
+    tearDown(() async {
+      reader.dispose();
+      library.dispose();
+      await root.delete(recursive: true);
+    });
+
+    test('das Cover ist kein Kapitel', () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await reader.open(library.library!, library.works.first);
+
+      expect(reader.volumes, hasLength(2));
+      expect(
+        reader.volumes.map((volume) => volume.title),
+        everyElement(endsWith('.cbz')),
+      );
+    });
+
+    test('ein Werk ganz ohne Archiv sagt das', () async {
+      final other = Directory('${root.path}/Manga/Nur Bilder')
+        ..createSync(recursive: true);
+      File('${other.path}/cover.jpg').writeAsBytesSync(List.filled(64, 1));
+
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      final work = library.works.firstWhere(
+        (candidate) => candidate.title.contains('Nur Bilder'),
+        orElse: () => library.works.last,
+      );
+      await reader.open(library.library!, work);
+
+      if (reader.volumes.isEmpty) {
+        expect(reader.failure, contains('kein lesbares Archiv'));
+      }
+    });
+  });
+
+  group('Wie gelesen wird, entscheidet der Leser', () {
+    late Directory root;
+    late LibraryController library;
+    late ReaderController reader;
+
+    setUp(() async {
+      root = await Directory.systemTemp.createTemp('fundus-layout-');
+      final work = Directory('${root.path}/Manga/Klingenwind')
+        ..createSync(recursive: true);
+      writeArchive(work, 'Band 01.cbz', ['001.jpg']);
+      library = LibraryController();
+      reader = ReaderController(
+        openSource: (path, name) => FakePageSource(name, 10),
+      );
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await reader.open(library.library!, library.works.first);
+    });
+
+    tearDown(() async {
+      reader.dispose();
+      library.dispose();
+      await root.delete(recursive: true);
+    });
+
+    test('Doppelseite lässt das Cover allein stehen', () async {
+      await reader.updateProfile(
+        reader.profile.copyWith(
+          layout: PublicationReaderLayout.doublePage,
+          firstPageIsCover: true,
+        ),
+      );
+
+      expect(reader.pageGroups.first, [0]);
+      expect(reader.pageGroups[1], [1, 2]);
+      expect(reader.positionLabel, contains('Seite 1 von 10'));
+
+      await reader.nextPage();
+      expect(reader.pageIndex, 1);
+      expect(reader.positionLabel, contains('Seiten 2–3 von 10'));
+    });
+
+    test('ohne Cover beginnt die erste Doppelseite bei eins', () async {
+      await reader.updateProfile(
+        reader.profile.copyWith(
+          layout: PublicationReaderLayout.doublePage,
+          firstPageIsCover: false,
+        ),
+      );
+
+      expect(reader.pageGroups.first, [0, 1]);
+    });
+
+    test('Webtoon ist fortlaufend, Einzelseite nicht', () async {
+      await reader.updateProfile(
+        reader.profile.copyWith(layout: PublicationReaderLayout.webtoon),
+      );
+      expect(reader.isContinuous, isTrue);
+
+      await reader.updateProfile(
+        reader.profile.copyWith(layout: PublicationReaderLayout.singlePage),
+      );
+      expect(reader.isContinuous, isFalse);
+    });
+
+    test('die Leserichtung wird gemerkt', () async {
+      await reader.updateProfile(
+        reader.profile.copyWith(
+          readingDirection: PublicationReadingDirection.rightToLeft,
+        ),
+      );
+      expect(reader.isRightToLeft, isTrue);
+
+      final again = ReaderController(
+        openSource: (path, name) => FakePageSource(name, 10),
+      );
+      addTearDown(again.dispose);
+      await again.open(library.library!, library.works.first);
+      expect(again.isRightToLeft, isTrue);
+    });
+
+    test('ein Lesezeichen führt zurück auf seine Seite', () async {
+      await reader.goToPage(4);
+      await reader.addBookmark(note: 'Der Kampf');
+      await reader.goToPage(0);
+
+      expect(reader.bookmarks, hasLength(1));
+      expect(reader.bookmarks.single.note, 'Der Kampf');
+
+      await reader.goToBookmark(reader.bookmarks.single);
+      expect(reader.pageIndex, 4);
+
+      await reader.deleteBookmark(reader.bookmarks.single.id);
+      expect(reader.bookmarks, isEmpty);
+    });
+
+    test('die Bedienung lässt sich wegtippen', () async {
+      expect(reader.showsChrome, isTrue);
+      reader.toggleChrome();
+      expect(reader.showsChrome, isFalse);
+      reader.showChrome();
+      expect(reader.showsChrome, isTrue);
+    });
   });
 
   group('Das Archiv ist keine vertrauenswürdige Eingabe', () {
@@ -169,7 +337,7 @@ void main() {
     tearDown(() => root.delete(recursive: true));
 
     test('Seite 2 kommt vor Seite 10', () async {
-      final path = await writeArchive(root, 'Band.cbz', [
+      final path = writeArchive(root, 'Band.cbz', [
         'seite10.jpg',
         'seite2.jpg',
         'seite1.jpg',
@@ -185,10 +353,7 @@ void main() {
     });
 
     test('was keine Seite ist, wird nicht mitgezählt', () async {
-      final path = await writeArchive(root, 'Band.cbz', [
-        '001.jpg',
-        'ComicInfo.xml',
-      ]);
+      final path = writeArchive(root, 'Band.cbz', ['001.jpg', 'ComicInfo.xml']);
 
       final pages = await ArchiveComicPageSource(path).pages();
 
@@ -196,9 +361,7 @@ void main() {
     });
 
     test('ein Eintrag außerhalb des Archivs wird abgelehnt', () async {
-      final path = await writeArchive(root, 'Band.cbz', [
-        '../../entwischt.jpg',
-      ]);
+      final path = writeArchive(root, 'Band.cbz', ['../../entwischt.jpg']);
 
       expect(
         () => ArchiveComicPageSource(path).pages(),
@@ -207,7 +370,7 @@ void main() {
     });
 
     test('eine Seite wird entpackt und liegt dann als Datei vor', () async {
-      final path = await writeArchive(root, 'Band.cbz', ['001.jpg']);
+      final path = writeArchive(root, 'Band.cbz', ['001.jpg']);
       final source = ArchiveComicPageSource(path);
 
       final pages = await source.pages();

@@ -38,7 +38,10 @@ class PlayerScreen extends StatelessWidget {
               child: Row(
                 children: [
                   IconButton(
-                    onPressed: player.collapse,
+                    onPressed: () {
+                      scope.fullscreen.leave();
+                      player.collapse();
+                    },
                     icon: Icon(FundusIcons.collapse, size: FundusIcons.sizeLg),
                     tooltip: 'Minimieren',
                   ),
@@ -62,6 +65,29 @@ class PlayerScreen extends StatelessWidget {
                       selectedId: player.tracks.selectedSubtitleId,
                       onSelected: player.selectSubtitleTrack,
                     ),
+                  // Die Liste daneben ist ein Gast, kein Möbelstück: sie
+                  // kommt auf Wunsch und bleibt sonst weg.
+                  if (!isCompact)
+                    IconButton(
+                      onPressed: () => scope.setPlayerPanelVisible(
+                        !scope.settings.playerPanelVisible,
+                      ),
+                      icon: Icon(FundusIcons.lists, size: FundusIcons.sizeLg),
+                      isSelected: scope.settings.playerPanelVisible,
+                      tooltip: scope.settings.playerPanelVisible
+                          ? 'Liste ausblenden'
+                          : 'Liste einblenden',
+                    ),
+                  IconButton(
+                    onPressed: scope.fullscreen.toggle,
+                    icon: Icon(
+                      FundusIcons.fullscreen,
+                      size: FundusIcons.sizeLg,
+                    ),
+                    tooltip: scope.fullscreen.isActive
+                        ? 'Vollbild beenden'
+                        : 'Vollbild',
+                  ),
                   FundusOriginMark(work.origin, showLabel: true),
                 ],
               ),
@@ -72,17 +98,18 @@ class PlayerScreen extends StatelessWidget {
                   : Row(
                       children: [
                         const Expanded(flex: 3, child: _Transport()),
-                        SizedBox(
-                          width: 320,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              border: Border(
-                                left: BorderSide(color: tokens.divider),
+                        if (scope.settings.playerPanelVisible)
+                          SizedBox(
+                            width: 320,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  left: BorderSide(color: tokens.divider),
+                                ),
                               ),
+                              child: const _ContextPanel(),
                             ),
-                            child: const _ContextPanel(),
                           ),
-                        ),
                       ],
                     ),
             ),
