@@ -61,10 +61,11 @@ final class FundusLibrary {
   FundusLibrary._({
     required this.root,
     required this.manifest,
-    required this.configuration,
+    required LibraryConfiguration configuration,
     required this.openMode,
     required FundusDatabase database,
-  }) : _database = database;
+  }) : _configuration = configuration,
+       _database = database;
 
   static const metadataDirectoryName = '.library';
   static const manifestFileName = 'version.json';
@@ -73,7 +74,10 @@ final class FundusLibrary {
 
   final Directory root;
   final LibraryManifest manifest;
-  final LibraryConfiguration configuration;
+  LibraryConfiguration _configuration;
+
+  /// Which folder names count as which media area. Editable per library.
+  LibraryConfiguration get configuration => _configuration;
   final LibraryOpenMode openMode;
   final FundusDatabase _database;
 
@@ -163,6 +167,40 @@ final class FundusLibrary {
   }
 
   List<LibrarySource> listSources() => _database.listSources();
+
+  /// Every folder name the library currently recognises, lower-cased.
+  Set<String> get configuredRootNames => {
+    for (final roots in configuration.mediaRoots.values)
+      for (final root in roots)
+        if (root.isNotEmpty) root.split('/').first.toLowerCase(),
+  };
+
+  /// Assigns a top-level folder to a media area and stores it with the
+  /// library, so the choice travels with the vault rather than with the app.
+  Future<void> assignMediaRoot({
+    required String folder,
+    required String kind,
+  }) async {
+    _ensureWritable();
+    final name = folder.trim();
+    if (name.isEmpty) {
+      throw ArgumentError('Der Ordnername darf nicht leer sein.');
+    }
+    final roots = <String, Iterable<String>>{
+      for (final entry in configuration.mediaRoots.entries)
+        entry.key: entry.value.where(
+          (value) => value.toLowerCase() != name.toLowerCase(),
+        ),
+    };
+    roots[kind] = [...?roots[kind], name];
+    await saveConfiguration(LibraryConfiguration(mediaRoots: roots));
+  }
+
+  Future<void> saveConfiguration(LibraryConfiguration next) async {
+    _ensureWritable();
+    await next.write(_configurationFile(root));
+    _configuration = next;
+  }
 
   /// The device profiles stored with this vault.
   ///

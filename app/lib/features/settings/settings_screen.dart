@@ -4,6 +4,8 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
+import '../../data/media_type.dart';
+import '../library/unassigned_folders_card.dart';
 
 /// Settings, with the scope of each one visible.
 ///
@@ -165,6 +167,51 @@ class _Libraries extends StatelessWidget {
           'Die geöffnete Bibliothek ist selbst eine Quelle — gekoppelte Server '
           'erscheinen später in derselben Liste.',
       children: [
+        const UnassignedFoldersCard(),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Medienordner',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Eingelesen wird nur, was unter diesen Ordnernamen liegt. '
+                'Die Zuordnung steht in der Bibliothek und gilt auf jedem '
+                'Gerät.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: tokens.textMuted),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              for (final entry in _mediaRoots(scope))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: FundusSpace.x2),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 190,
+                        child: Text(
+                          entry.$1,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: tokens.textFaint),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          entry.$2,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
         for (final source in sources)
           _Card(
             child: Row(
@@ -250,6 +297,21 @@ class _Libraries extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The configured media roots, as area label and folder names.
+List<(String, String)> _mediaRoots(FundusScopeState scope) {
+  final library = scope.library.library;
+  if (library == null) return const [];
+  final entries = <(String, String)>[];
+  for (final type in MediaTypes.all) {
+    final kind = type.configurationKind;
+    if (kind == null) continue;
+    final roots = library.configuration.rootsFor(kind);
+    if (roots.isEmpty) continue;
+    entries.add((type.label, roots.join(' · ')));
+  }
+  return entries;
 }
 
 class _Devices extends StatefulWidget {

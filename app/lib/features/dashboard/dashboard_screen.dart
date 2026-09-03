@@ -5,6 +5,7 @@ import 'package:fundus_design/fundus_design.dart';
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/work_view.dart';
+import '../library/unassigned_folders_card.dart';
 import '../library/work_cover.dart';
 
 /// The daily entry point: continue first, everything else after.
@@ -35,6 +36,7 @@ class DashboardScreen extends StatelessWidget {
         if (scope.library.isScanning || scope.library.scanProgress != null)
           const _ScanBanner(),
         const SizedBox(height: FundusSpace.x8),
+        const UnassignedFoldersCard(),
         if (continuing.isNotEmpty) ...[
           const _SectionHeading(
             'Fortsetzen',

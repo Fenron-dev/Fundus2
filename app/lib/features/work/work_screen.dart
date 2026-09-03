@@ -117,10 +117,11 @@ class _Hero extends StatelessWidget {
                 Row(
                   children: [
                     FilledButton.icon(
-                      // Playback arrives with the media engine; until then the
-                      // button is present but honestly disabled rather than
-                      // silently doing nothing.
-                      onPressed: null,
+                      // Only what can be reached offers to play; everything
+                      // else says why, rather than doing nothing.
+                      onPressed: work.origin == FundusOrigin.unreachable
+                          ? null
+                          : () => FundusScope.of(context).play(work),
                       icon: Icon(FundusIcons.play, size: FundusIcons.sizeSm),
                       label: Text(work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
                     ),

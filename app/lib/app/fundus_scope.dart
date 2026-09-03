@@ -18,10 +18,14 @@ class FundusScope extends StatefulWidget {
     required this.settings,
     required this.library,
     required this.child,
+    this.player,
   });
 
   final AppSettings settings;
   final LibraryController library;
+
+  /// Supplied by tests with a stand-in engine; the app builds its own.
+  final PlaybackController? player;
   final Widget child;
 
   static FundusScopeState of(BuildContext context) {
@@ -37,9 +41,8 @@ class FundusScope extends StatefulWidget {
 
 class FundusScopeState extends State<FundusScope> {
   final navigation = AppNavigation();
-  late final PlaybackController player = PlaybackController(
-    deviceId: widget.settings.deviceKey,
-  );
+  late final PlaybackController player =
+      widget.player ?? PlaybackController(deviceId: widget.settings.deviceKey);
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
@@ -62,7 +65,8 @@ class FundusScopeState extends State<FundusScope> {
     settings.removeListener(_bump);
     library.removeListener(_bump);
     player.removeListener(_bump);
-    player.dispose();
+    // A player handed in from outside is the caller's to dispose.
+    if (widget.player == null) player.dispose();
     navigation.dispose();
     super.dispose();
   }

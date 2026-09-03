@@ -67,6 +67,7 @@ final class DocumentImporter {
     'archive',
     'movie',
     'tv',
+    'anime',
   };
   static const _extensions = {
     'pdf',

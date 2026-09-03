@@ -17,16 +17,30 @@ final class LibraryConfiguration {
 
   static const formatVersion = 1;
 
+  /// Folder names a media area is recognised by.
+  ///
+  /// These are only defaults — the names people actually use win, and they are
+  /// editable per library (see [LibraryConfiguration.write] and the
+  /// "Medienordner" settings). Anything below a folder that matches no entry
+  /// here stays unindexed, which is why the scan reports those folders instead
+  /// of passing over them in silence.
   static const Map<String, List<String>> defaults = {
-    'audiobook': ['Audiobooks', 'Hörbücher'],
+    'audiobook': ['Audiobooks', 'Hörbücher', 'Hoerbuecher', 'Hörspiele'],
     'movie': ['Movies', 'Filme'],
-    'tv': ['TV Shows', 'Serien'],
-    'book': ['Books', 'Bücher'],
-    'webnovel': ['Webnovels', 'Web Novels'],
-    'manga': ['Manga', 'Comics'],
+    'tv': ['TV Shows', 'Serien', 'Series'],
+    'anime': ['Anime', 'Animes'],
+    'book': ['Books', 'Bücher', 'Buecher', 'E-Books', 'EBooks', 'Ebooks'],
+    'webnovel': [
+      'Webnovels',
+      'Web Novels',
+      'Light Novels',
+      'Light Novel',
+      'Novels',
+    ],
+    'manga': ['Manga', 'Comics', 'Manhwa', 'Manhua'],
     'music': ['Music', 'Musik'],
     'podcast': ['Podcasts'],
-    'image': ['Pictures', 'Bilder', 'Fotos'],
+    'image': ['Pictures', 'Bilder', 'Fotos', 'Photos'],
     'document': ['Documents', 'Dokumente'],
     'ttrpg_product': ['TTRPG'],
     'archive': ['Archives', 'Backups'],

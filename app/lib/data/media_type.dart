@@ -94,6 +94,7 @@ final class MediaTypeDefinition {
     required this.label,
     required this.icon,
     required this.workKinds,
+    this.configurationKind,
     required this.progressKind,
     required this.tabs,
     this.groupings = const [
@@ -107,6 +108,10 @@ final class MediaTypeDefinition {
   final String id;
   final String label;
   final IconData icon;
+
+  /// The key this area has in the library's media roots. Areas without one
+  /// cannot have a folder assigned to them.
+  final String? configurationKind;
 
   /// The `works.kind` values this type collects.
   final Set<String> workKinds;
@@ -123,6 +128,7 @@ final class MediaTypeDefinition {
 abstract final class MediaTypes {
   static final audiobook = MediaTypeDefinition(
     id: 'audiobook',
+    configurationKind: 'audiobook',
     label: 'Hörbücher',
     icon: FundusIcons.audiobook,
     workKinds: const {'audiobook', 'podcast', 'podcast_episode'},
@@ -138,6 +144,7 @@ abstract final class MediaTypes {
 
   static final movies = MediaTypeDefinition(
     id: 'movie',
+    configurationKind: 'movie',
     label: 'Filme',
     icon: FundusIcons.film,
     workKinds: const {'movie'},
@@ -153,9 +160,11 @@ abstract final class MediaTypes {
 
   static final series = MediaTypeDefinition(
     id: 'series',
+    configurationKind: 'tv',
     label: 'Serien',
     icon: FundusIcons.series,
-    workKinds: const {'series', 'season', 'episode'},
+    // The scanner writes 'tv' for a series folder.
+    workKinds: const {'tv', 'series', 'season', 'episode'},
     progressKind: ProgressKind.seconds,
     tabs: const [
       WorkTab.episodes,
@@ -168,6 +177,7 @@ abstract final class MediaTypes {
 
   static final anime = MediaTypeDefinition(
     id: 'anime',
+    configurationKind: 'anime',
     label: 'Anime',
     icon: FundusIcons.anime,
     workKinds: const {'anime', 'anime_season', 'anime_episode'},
@@ -182,9 +192,10 @@ abstract final class MediaTypes {
 
   static final manga = MediaTypeDefinition(
     id: 'manga',
+    configurationKind: 'manga',
     label: 'Manga & Comics',
     icon: FundusIcons.manga,
-    workKinds: const {'manga', 'chapter', 'comic'},
+    workKinds: const {'manga', 'comic', 'chapter'},
     progressKind: ProgressKind.pagePerVolume,
     tabs: const [
       WorkTab.volumes,
@@ -203,9 +214,12 @@ abstract final class MediaTypes {
 
   static final novels = MediaTypeDefinition(
     id: 'novel',
-    label: 'Light Novels',
+    configurationKind: 'webnovel',
+    label: 'Light Novels & Webnovels',
     icon: FundusIcons.novel,
-    workKinds: const {'webnovel', 'light_novel'},
+    // 'webnovel' is what the scanner writes for a novel folder, whatever the
+    // folder happens to be called.
+    workKinds: const {'webnovel', 'light_novel', 'novel'},
     progressKind: ProgressKind.chapterFraction,
     tabs: const [
       WorkTab.volumes,
@@ -217,9 +231,12 @@ abstract final class MediaTypes {
 
   static final books = MediaTypeDefinition(
     id: 'book',
+    configurationKind: 'book',
     label: 'Bücher & E-Books',
     icon: FundusIcons.book,
-    workKinds: const {'book', 'book_series'},
+    // The scanner writes 'ebook'; 'book' and 'book_series' come from the
+    // audiobook side of the importer.
+    workKinds: const {'ebook', 'book', 'book_series'},
     progressKind: ProgressKind.chapterFraction,
     tabs: const [
       WorkTab.files,
@@ -237,6 +254,7 @@ abstract final class MediaTypes {
 
   static final documents = MediaTypeDefinition(
     id: 'document',
+    configurationKind: 'document',
     label: 'PDFs & Dokumente',
     icon: FundusIcons.document,
     workKinds: const {'document', 'archive'},
@@ -252,6 +270,7 @@ abstract final class MediaTypes {
 
   static final ttrpg = MediaTypeDefinition(
     id: 'ttrpg',
+    configurationKind: 'ttrpg_product',
     label: 'TTRPG',
     icon: FundusIcons.ttrpg,
     workKinds: const {'ttrpg_product'},
@@ -266,9 +285,10 @@ abstract final class MediaTypes {
 
   static final photos = MediaTypeDefinition(
     id: 'photo',
+    configurationKind: 'image',
     label: 'Fotos',
     icon: FundusIcons.photo,
-    workKinds: const {'image'},
+    workKinds: const {'image', 'photo'},
     progressKind: ProgressKind.none,
     tabs: const [WorkTab.properties],
     groupings: const [
@@ -280,9 +300,10 @@ abstract final class MediaTypes {
 
   static final music = MediaTypeDefinition(
     id: 'music',
+    configurationKind: 'music',
     label: 'Musik',
     icon: FundusIcons.music,
-    workKinds: const {'album', 'track'},
+    workKinds: const {'album', 'track', 'music'},
     progressKind: ProgressKind.playCount,
     tabs: const [WorkTab.files, WorkTab.properties],
   );
