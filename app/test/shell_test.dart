@@ -29,6 +29,32 @@ Future<void> settleDisk(WidgetTester tester) async {
   );
 }
 
+/// Waits until the disk actually shows what was asked of it.
+///
+/// A fixed delay was a guess, and on a loaded machine the wrong one: the tap
+/// starts a read of the profile and only then a queued write, so there is no
+/// single moment to sleep until. Waiting for the result is exact, and giving
+/// up after a few seconds is still a failure rather than a hang.
+Future<T> waitForDisk<T>(
+  WidgetTester tester,
+  Future<T?> Function() read, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final result = await tester.runAsync(() async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final value = await read();
+      if (value != null) return value;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    return null;
+  });
+  if (result == null) {
+    fail('Die Platte hat in ${timeout.inSeconds} s nichts geliefert');
+  }
+  return result;
+}
+
 Future<void> openVault(
   WidgetTester tester,
   LibraryController library,
@@ -171,10 +197,14 @@ void main() {
 
     expect(settings.themeMode, ThemeMode.light);
     // Und die Bibliothek merkt es sich für dieses Gerät.
-    final profile = await tester.runAsync(
-      () => library.library!.loadDeviceProfile(settings.deviceKey),
-    );
-    expect(profile?.settingsFor('shell')['theme_mode'], 'light');
+    final theme = await waitForDisk(tester, () async {
+      await library.library!.flushSidecarWrites();
+      final profile = await library.library!.loadDeviceProfile(
+        settings.deviceKey,
+      );
+      return profile?.settingsFor('shell')['theme_mode'];
+    });
+    expect(theme, 'light');
   });
 
   testWidgets('die Pfadleiste führt zurück', (tester) async {

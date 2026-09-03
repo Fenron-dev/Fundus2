@@ -354,6 +354,13 @@ final class FundusLibrary {
     return File(p.join(_deviceProfileDirectory.path, '$safe.yaml'));
   }
 
+  /// Waits until everything asked of the sidecars is on disk.
+  ///
+  /// The writes are queued, so a setting made a moment ago may still be in
+  /// flight. Anything that has to see it — closing the vault, a test reading
+  /// the file back — waits here rather than guessing at a delay.
+  Future<void> flushSidecarWrites() => _sidecarWrites;
+
   /// Writes [contents] to [file] so that a reader never sees half of it, and
   /// so that a second writer cannot pull the ground away.
   Future<void> _writeSidecar(File file, String contents) {
