@@ -3,6 +3,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
+import '../../media/reader_controller.dart';
 import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import '../library/work_cover.dart';
@@ -122,7 +123,14 @@ class _Hero extends StatelessWidget {
                       onPressed: work.origin == FundusOrigin.unreachable
                           ? null
                           : () => FundusScope.of(context).play(work),
-                      icon: Icon(FundusIcons.play, size: FundusIcons.sizeSm),
+                      // Ein Abspielpfeil auf einem Manga verspricht das
+                      // Falsche; gelesen wird, nicht abgespielt.
+                      icon: Icon(
+                        ReaderController.handles(work)
+                            ? FundusIcons.manga
+                            : FundusIcons.play,
+                        size: FundusIcons.sizeSm,
+                      ),
                       label: Text(work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
                     ),
                     const SizedBox(width: FundusSpace.x3),

@@ -78,6 +78,21 @@ class PlaybackController extends ChangeNotifier {
     return (_position.inMilliseconds / total.inMilliseconds).clamp(0, 1);
   }
 
+  /// States plainly that this work cannot be opened yet.
+  ///
+  /// Better than handing a comic or an EPUB to libmpv: that plays nothing and
+  /// says nothing, which from the outside is a broken button.
+  void reject(WorkView work, String message) {
+    _work = work;
+    _sources = const [];
+    _chapters = const [];
+    _position = Duration.zero;
+    _duration = null;
+    _expanded = false;
+    _failure = message;
+    notifyListeners();
+  }
+
   /// Opens a work and starts at its stored position.
   Future<void> open(
     FundusLibrary library,

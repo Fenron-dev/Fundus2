@@ -5,8 +5,10 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../data/library_controller.dart';
 import '../data/work_filter.dart';
+import '../data/media_type.dart';
 import '../data/work_view.dart';
 import '../media/playback_controller.dart';
+import '../media/reader_controller.dart';
 import 'app_navigation.dart';
 import 'app_settings.dart';
 
@@ -19,6 +21,7 @@ class FundusScope extends StatefulWidget {
     required this.library,
     required this.child,
     this.player,
+    this.reader,
   });
 
   final AppSettings settings;
@@ -26,6 +29,9 @@ class FundusScope extends StatefulWidget {
 
   /// Supplied by tests with a stand-in engine; the app builds its own.
   final PlaybackController? player;
+
+  /// Same for the page reader.
+  final ReaderController? reader;
   final Widget child;
 
   static FundusScopeState of(BuildContext context) {
@@ -43,6 +49,8 @@ class FundusScopeState extends State<FundusScope> {
   final navigation = AppNavigation();
   late final PlaybackController player =
       widget.player ?? PlaybackController(deviceId: widget.settings.deviceKey);
+  late final ReaderController reader =
+      widget.reader ?? ReaderController(deviceId: widget.settings.deviceKey);
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
@@ -57,6 +65,7 @@ class FundusScopeState extends State<FundusScope> {
     settings.addListener(_bump);
     library.addListener(_bump);
     player.addListener(_bump);
+    reader.addListener(_bump);
   }
 
   @override
@@ -65,8 +74,10 @@ class FundusScopeState extends State<FundusScope> {
     settings.removeListener(_bump);
     library.removeListener(_bump);
     player.removeListener(_bump);
-    // A player handed in from outside is the caller's to dispose.
+    reader.removeListener(_bump);
+    // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
+    if (widget.reader == null) reader.dispose();
     navigation.dispose();
     super.dispose();
   }
@@ -75,14 +86,40 @@ class FundusScopeState extends State<FundusScope> {
 
   void setFilter(WorkFilter value) => setState(() => _filter = value);
 
-  /// Starts or resumes a work. One entry point, whatever the media type — the
-  /// controller picks its byte source, the screens do not.
+  /// Starts or resumes a work. One entry point, whatever the media type — a
+  /// screen never decides between a player and a reader, and neither asks
+  /// where the bytes come from.
   Future<void> play(WorkView work) async {
     final vault = library.library;
     if (vault == null) return;
+    if (ReaderController.handles(work)) {
+      // A comic in the audio player is silence with a progress bar: pages and
+      // seconds are different units, so they get different controllers.
+      await player.close();
+      await reader.open(vault, work);
+      if (reader.failure == null) library.refresh();
+      return;
+    }
+    final unsupported = _missingReaderFor(work);
+    if (unsupported != null) {
+      player.reject(work, unsupported);
+      return;
+    }
     await player.open(vault, work);
     if (player.failure == null) library.refresh();
   }
+
+  /// The media types whose reader is still missing. Naming them is the honest
+  /// answer; handing the file to the audio engine is not.
+  String? _missingReaderFor(
+    WorkView work,
+  ) => switch (work.mediaType?.progressKind) {
+    ProgressKind.chapterFraction =>
+      'Der Textleser für EPUB fehlt noch — dieses Werk lässt sich noch nicht öffnen.',
+    ProgressKind.documentPage =>
+      'Der Dokumentenleser für PDF fehlt noch — dieses Werk lässt sich noch nicht öffnen.',
+    _ => null,
+  };
 
   /// Opens a media type. The filter follows the place, so switching areas
   /// never leaves a stale filter behind that would explain an empty screen.
