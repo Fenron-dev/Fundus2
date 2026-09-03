@@ -233,9 +233,18 @@ final class MediaKitEngine implements PlaybackEngine {
     await _player.setSubtitleTrack(track);
   }
 
+  /// Built once and handed out unchanged.
+  ///
+  /// A fresh widget on every call meant the picture's subtree was rebuilt
+  /// with the rest of the screen; the same instance lets Flutter skip it
+  /// entirely, which is what the picture needs while it is running.
+  late final Widget _surface = Video(
+    controller: _video,
+    controls: NoVideoControls,
+  );
+
   @override
-  Widget? videoSurface() =>
-      Video(controller: _video, controls: NoVideoControls);
+  Widget? videoSurface() => _surface;
 
   @override
   Future<void> dispose() async {

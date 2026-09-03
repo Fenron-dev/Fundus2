@@ -159,7 +159,7 @@ final class DocumentImporter {
           directory: group.sourcePath,
           title: group.title,
           files: group.files..sort(_compareFiles),
-          coverFile: _cover(group.files, group.kind),
+          coverFile: _cover(group.files, group.kind, title: group.title),
         ),
     ];
     candidates.sort((left, right) {
@@ -186,17 +186,59 @@ final class DocumentImporter {
     return null;
   }
 
-  static ScannedFile? _cover(List<ScannedFile> files, String kind) {
-    for (final file in files) {
+  /// The picture that stands for a work.
+  ///
+  /// The fixed names catch a tidy library. Real folders are not tidy: an
+  /// anime season carries „Chainsaw Man.jpg" beside the episodes, a scan
+  /// carries „front.png", and a folder with exactly one picture in it means
+  /// that picture. All of those left the work with a placeholder before.
+  static ScannedFile? _cover(
+    List<ScannedFile> files,
+    String kind, {
+    String? title,
+  }) {
+    final images = files
+        .where((file) => file.mimeType?.startsWith('image/') ?? false)
+        .toList(growable: false);
+    if (images.isEmpty) return null;
+
+    for (final file in images) {
       if (_coverNames.contains(file.filename.toLowerCase())) return file;
     }
-    if (kind == 'image') {
-      return files
-          .where((file) => file.mimeType?.startsWith('image/') ?? false)
-          .firstOrNull;
+    // A picture named after the work itself — how most video folders do it.
+    final wanted = title?.toLowerCase().trim();
+    if (wanted != null && wanted.isNotEmpty) {
+      for (final file in images) {
+        final base = file.filename.toLowerCase();
+        final stem = base.contains('.')
+            ? base.substring(0, base.lastIndexOf('.'))
+            : base;
+        if (stem == wanted) return file;
+      }
     }
-    return null;
+    // Then anything that calls itself a cover in some other language or
+    // spelling, before falling back to the first picture there is.
+    for (final file in images) {
+      final base = file.filename.toLowerCase();
+      if (_coverWords.any(base.contains)) return file;
+    }
+    // Whatever is left: the first picture in the folder, taken in the
+    // scanner's own order. Better a wrong cover than none at all — a wrong
+    // one is visibly wrong and can be replaced, a placeholder says nothing.
+    return images.first;
   }
+
+  static const _coverWords = {
+    'cover',
+    'poster',
+    'folder',
+    'front',
+    'artwork',
+    'albumart',
+    'thumb',
+    'banner',
+    'keyart',
+  };
 
   static int _compareFiles(ScannedFile left, ScannedFile right) =>
       _naturalCompare(left.relativePath, right.relativePath);

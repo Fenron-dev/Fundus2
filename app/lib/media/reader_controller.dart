@@ -117,6 +117,26 @@ class ReaderController extends ChangeNotifier {
   ComicChapterSequence get chapterSequence =>
       comicChapterSequence([for (final volume in _volumes) volume.title]);
 
+  /// The page a bookmark points at, if it belongs to the volume open now.
+  ///
+  /// A list of „Seite 143" tells nobody anything; the page itself does. Only
+  /// the volume in hand can be shown — unpacking every other volume to draw
+  /// a list of marks would cost more than the list is worth.
+  String? previewForBookmark(LibraryBookmark bookmark) {
+    if (bookmark.fileId != currentVolume?.fileId) return null;
+    final page = (bookmark.mediaPosition.numericValue ?? 1).round() - 1;
+    return fileForPage(page);
+  }
+
+  /// Asks for the pages the bookmarks of this volume sit on, so the list can
+  /// show them. Does nothing for marks in other volumes.
+  void requestBookmarkPreviews() {
+    for (final bookmark in _bookmarks) {
+      if (bookmark.fileId != currentVolume?.fileId) continue;
+      requestPage((bookmark.mediaPosition.numericValue ?? 1).round() - 1);
+    }
+  }
+
   /// The bytes of the page on screen, for saving it out. Null while the page
   /// is still unpacking or if it went missing underneath us.
   Future<Uint8List?> capturePage() async {

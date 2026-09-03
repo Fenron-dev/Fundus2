@@ -46,6 +46,7 @@ class PlaybackController extends ChangeNotifier {
   bool _playing = false;
   double _rate = 1;
   bool _expanded = false;
+  bool _chrome = true;
   String? _failure;
 
   WorkView? get work => _work;
@@ -66,6 +67,22 @@ class PlaybackController extends ChangeNotifier {
 
   /// Whether the full player covers the content column.
   bool get isExpanded => _expanded;
+
+  /// Whether the controls are shown over the picture. A film wants the
+  /// screen; the bar is a guest, exactly as in the reader.
+  bool get showsChrome => _chrome;
+
+  void toggleChrome() {
+    _chrome = !_chrome;
+    notifyListeners();
+  }
+
+  void showChrome() {
+    if (_chrome) return;
+    _chrome = true;
+    notifyListeners();
+  }
+
   String? get failure => _failure;
 
   /// True for the media types that carry a picture.
@@ -141,6 +158,7 @@ class PlaybackController extends ChangeNotifier {
     _work = work;
     // Starting a title opens the player; minimising is the deliberate step.
     _expanded = autoplay;
+    _chrome = true;
 
     try {
       final tracks = library.playbackTracks(work.id);
@@ -204,8 +222,13 @@ class PlaybackController extends ChangeNotifier {
     if (_subscriptions.isNotEmpty) return;
     _subscriptions.addAll([
       _engine.positionStream.listen((value) {
+        final previous = _position;
         _position = value;
-        notifyListeners();
+        // mpv meldet die Position vielfach pro Sekunde. Jede Meldung baute
+        // bisher den ganzen Baum neu — sichtbar wird davon aber nur die
+        // Sekunde, also wird auch nur dafür neu gebaut. Das Ruckeln kam
+        // daher, dass über dem laufenden Bild ständig alles neu entstand.
+        if (value.inSeconds != previous.inSeconds) notifyListeners();
       }),
       _engine.durationStream.listen((value) {
         if (value > Duration.zero) _duration = value;

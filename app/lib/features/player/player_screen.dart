@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
@@ -25,105 +26,171 @@ class PlayerScreen extends StatelessWidget {
     final isCompact =
         MediaQuery.sizeOf(context).width < FundusShellMetrics.compactBreakpoint;
 
-    return ColoredBox(
-      color: tokens.background,
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: FundusSpace.x4,
-                vertical: FundusSpace.x2,
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () {
-                      scope.fullscreen.leave();
-                      player.collapse();
-                    },
-                    icon: Icon(FundusIcons.collapse, size: FundusIcons.sizeLg),
-                    tooltip: 'Minimieren',
+    // Bei einem Film gehört der Bildschirm dem Bild: die Leiste blendet sich
+    // auf Klick weg und mit dem nächsten wieder ein — wie im Leser. Bei einem
+    // Hörbuch bleibt sie, dort gibt es nichts zu verdecken.
+    final hidesChrome = player.showsVideo && !player.showsChrome;
+
+    return _PlayerKeys(
+      child: ColoredBox(
+        color: tokens.background,
+        child: SafeArea(
+          top: !hidesChrome,
+          child: Column(
+            children: [
+              if (!hidesChrome)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: FundusSpace.x4,
+                    vertical: FundusSpace.x2,
                   ),
-                  const Spacer(),
-                  // Zweisprachige Anime sind der Normalfall, nicht die
-                  // Ausnahme: ohne diese beiden Menüs sind die deutsche
-                  // Tonspur und die Untertitel schlicht unerreichbar.
-                  if (player.tracks.audio.length > 1)
-                    _TrackMenu(
-                      icon: FundusIcons.audioTrack,
-                      tooltip: 'Tonspur',
-                      options: player.tracks.audio,
-                      selectedId: player.tracks.selectedAudioId,
-                      onSelected: player.selectAudioTrack,
-                    ),
-                  if (player.tracks.subtitles.length > 1)
-                    _TrackMenu(
-                      icon: FundusIcons.subtitles,
-                      tooltip: 'Untertitel',
-                      options: player.tracks.subtitles,
-                      selectedId: player.tracks.selectedSubtitleId,
-                      onSelected: player.selectSubtitleTrack,
-                    ),
-                  // Die Liste daneben ist ein Gast, kein Möbelstück: sie
-                  // kommt auf Wunsch und bleibt sonst weg.
-                  if (!isCompact)
-                    IconButton(
-                      onPressed: () => scope.setPlayerPanelVisible(
-                        !scope.settings.playerPanelVisible,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          scope.leaveFullscreen();
+                          player.collapse();
+                        },
+                        icon: Icon(
+                          FundusIcons.collapse,
+                          size: FundusIcons.sizeLg,
+                        ),
+                        tooltip: 'Minimieren',
                       ),
-                      icon: Icon(FundusIcons.lists, size: FundusIcons.sizeLg),
-                      isSelected: scope.settings.playerPanelVisible,
-                      tooltip: scope.settings.playerPanelVisible
-                          ? 'Liste ausblenden'
-                          : 'Liste einblenden',
-                    ),
-                  // Nur wo es ein Bild gibt: ein Hörbuch hat keins, und das
-                  // Cover ist nicht gemeint.
-                  if (player.showsVideo)
-                    IconButton(
-                      onPressed: () => _saveFrame(context),
-                      icon: Icon(FundusIcons.camera, size: FundusIcons.sizeLg),
-                      tooltip: 'Bild speichern',
-                    ),
-                  IconButton(
-                    onPressed: scope.fullscreen.toggle,
-                    icon: Icon(
-                      FundusIcons.fullscreen,
-                      size: FundusIcons.sizeLg,
-                    ),
-                    tooltip: scope.fullscreen.isActive
-                        ? 'Vollbild beenden'
-                        : 'Vollbild',
-                  ),
-                  FundusOriginMark(work.origin, showLabel: true),
-                ],
-              ),
-            ),
-            Expanded(
-              child: isCompact
-                  ? _Transport(compact: true)
-                  : Row(
-                      children: [
-                        const Expanded(flex: 3, child: _Transport()),
-                        if (scope.settings.playerPanelVisible)
-                          SizedBox(
-                            width: 320,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                border: Border(
-                                  left: BorderSide(color: tokens.divider),
-                                ),
-                              ),
-                              child: const _ContextPanel(),
-                            ),
+                      const Spacer(),
+                      // Zweisprachige Anime sind der Normalfall, nicht die
+                      // Ausnahme: ohne diese beiden Menüs sind die deutsche
+                      // Tonspur und die Untertitel schlicht unerreichbar.
+                      if (player.tracks.audio.length > 1)
+                        _TrackMenu(
+                          icon: FundusIcons.audioTrack,
+                          tooltip: 'Tonspur',
+                          options: player.tracks.audio,
+                          selectedId: player.tracks.selectedAudioId,
+                          onSelected: player.selectAudioTrack,
+                        ),
+                      if (player.tracks.subtitles.length > 1)
+                        _TrackMenu(
+                          icon: FundusIcons.subtitles,
+                          tooltip: 'Untertitel',
+                          options: player.tracks.subtitles,
+                          selectedId: player.tracks.selectedSubtitleId,
+                          onSelected: player.selectSubtitleTrack,
+                        ),
+                      // Die Liste daneben ist ein Gast, kein Möbelstück: sie
+                      // kommt auf Wunsch und bleibt sonst weg.
+                      if (!isCompact)
+                        IconButton(
+                          onPressed: () => scope.setPlayerPanelVisible(
+                            !scope.settings.playerPanelVisible,
                           ),
-                      ],
-                    ),
-            ),
-          ],
+                          icon: Icon(
+                            FundusIcons.lists,
+                            size: FundusIcons.sizeLg,
+                          ),
+                          isSelected: scope.settings.playerPanelVisible,
+                          tooltip: scope.settings.playerPanelVisible
+                              ? 'Liste ausblenden'
+                              : 'Liste einblenden',
+                        ),
+                      // Nur wo es ein Bild gibt: ein Hörbuch hat keins, und das
+                      // Cover ist nicht gemeint.
+                      if (player.showsVideo)
+                        IconButton(
+                          onPressed: () => _saveFrame(context),
+                          icon: Icon(
+                            FundusIcons.camera,
+                            size: FundusIcons.sizeLg,
+                          ),
+                          tooltip: 'Bild speichern',
+                        ),
+                      IconButton(
+                        onPressed: scope.toggleFullscreen,
+                        icon: Icon(
+                          FundusIcons.fullscreen,
+                          size: FundusIcons.sizeLg,
+                        ),
+                        tooltip: scope.fullscreen.isActive
+                            ? 'Vollbild beenden'
+                            : 'Vollbild',
+                      ),
+                      FundusOriginMark(work.origin, showLabel: true),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: isCompact
+                    ? _Transport(compact: true, bare: hidesChrome)
+                    : Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: _Transport(bare: hidesChrome),
+                          ),
+                          if (scope.settings.playerPanelVisible && !hidesChrome)
+                            SizedBox(
+                              width: 320,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    left: BorderSide(color: tokens.divider),
+                                  ),
+                                ),
+                                child: const _ContextPanel(),
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// The keys that belong to a running player, wherever the focus sits inside
+/// it: space pauses, F is fullscreen, Escape steps back out.
+class _PlayerKeys extends StatelessWidget {
+  const _PlayerKeys({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final player = scope.player;
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        switch (event.logicalKey) {
+          case LogicalKeyboardKey.space:
+            player.playOrPause();
+            return KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowLeft:
+            player.seekRelative(const Duration(seconds: -15));
+            return KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowRight:
+            player.seekRelative(const Duration(seconds: 30));
+            return KeyEventResult.handled;
+          case LogicalKeyboardKey.keyF:
+            scope.toggleFullscreen();
+            return KeyEventResult.handled;
+          case LogicalKeyboardKey.escape:
+            if (scope.fullscreen.isActive) {
+              scope.leaveFullscreen();
+            } else if (!player.showsChrome) {
+              player.showChrome();
+            } else {
+              player.collapse();
+            }
+            return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: child,
     );
   }
 }
@@ -193,9 +260,12 @@ class _TrackMenu extends StatelessWidget {
 }
 
 class _Transport extends StatelessWidget {
-  const _Transport({this.compact = false});
+  const _Transport({this.compact = false, this.bare = false});
 
   final bool compact;
+
+  /// Nothing but the picture: the controls have been tapped away.
+  final bool bare;
 
   @override
   Widget build(BuildContext context) {
@@ -208,6 +278,18 @@ class _Transport extends StatelessWidget {
     // is the one thing a video player must not do.
     final video = player.videoSurface();
     if (video != null) {
+      // Ein Klick aufs Bild nimmt die Bedienung weg und der nächste bringt
+      // sie zurück — dieselbe Geste wie im Leser.
+      final picture = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: player.toggleChrome,
+        onDoubleTap: FundusScope.of(context).toggleFullscreen,
+        child: ColoredBox(
+          color: const Color(0xFF000000),
+          child: Center(child: video),
+        ),
+      );
+      if (bare) return picture;
       final caption = Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: FundusSpace.x6,
@@ -236,19 +318,14 @@ class _Transport extends StatelessWidget {
       if (compact) {
         return Column(
           children: [
-            AspectRatio(aspectRatio: 16 / 9, child: video),
+            AspectRatio(aspectRatio: 16 / 9, child: picture),
             Expanded(child: SingleChildScrollView(child: caption)),
           ],
         );
       }
       return Column(
         children: [
-          Expanded(
-            child: ColoredBox(
-              color: const Color(0xFF000000),
-              child: Center(child: video),
-            ),
-          ),
+          Expanded(child: picture),
           caption,
         ],
       );

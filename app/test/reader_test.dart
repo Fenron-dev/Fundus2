@@ -318,6 +318,24 @@ void main() {
       expect(reader.bookmarks, isEmpty);
     });
 
+    test('die Größe gilt auch im fortlaufenden Modus', () async {
+      await reader.updateProfile(
+        reader.profile.copyWith(
+          layout: PublicationReaderLayout.webtoon,
+          pageScale: PublicationPageScale.fitHeight,
+        ),
+      );
+
+      // Die Einstellung wird gehalten, nicht vom Layout überstimmt.
+      expect(reader.isContinuous, isTrue);
+      expect(reader.profile.pageScale, PublicationPageScale.fitHeight);
+
+      await reader.updateProfile(
+        reader.profile.copyWith(pageScale: PublicationPageScale.original),
+      );
+      expect(reader.profile.pageScale, PublicationPageScale.original);
+    });
+
     test('die Bedienung lässt sich wegtippen', () async {
       expect(reader.showsChrome, isTrue);
       reader.toggleChrome();

@@ -71,7 +71,7 @@ class _TextReaderBar extends StatelessWidget {
         children: [
           IconButton(
             onPressed: () {
-              scope.fullscreen.leave();
+              scope.leaveFullscreen();
               reader.close();
             },
             icon: Icon(FundusIcons.close, size: FundusIcons.sizeLg, color: ink),
@@ -130,7 +130,7 @@ class _TextReaderBar extends StatelessWidget {
             tooltip: 'Schrift und Satz',
           ),
           IconButton(
-            onPressed: scope.fullscreen.toggle,
+            onPressed: scope.toggleFullscreen,
             icon: Icon(
               FundusIcons.fullscreen,
               size: FundusIcons.sizeLg,
@@ -303,11 +303,11 @@ class _TextSurfaceState extends State<_TextSurface> {
             reader.previousChapter();
             return KeyEventResult.handled;
           case LogicalKeyboardKey.keyF:
-            scope.fullscreen.toggle();
+            scope.toggleFullscreen();
             return KeyEventResult.handled;
           case LogicalKeyboardKey.escape:
             if (scope.fullscreen.isActive) {
-              scope.fullscreen.leave();
+              scope.leaveFullscreen();
             } else {
               reader.close();
             }
@@ -339,15 +339,7 @@ class _TextSurfaceState extends State<_TextSurface> {
                   constraints: BoxConstraints(maxWidth: profile.contentWidth),
                   child: Padding(
                     padding: EdgeInsets.only(bottom: profile.paragraphSpacing),
-                    child: SelectableText(
-                      paragraphs[index].text,
-                      style: TextStyle(
-                        color: ink,
-                        fontSize: profile.fontSize,
-                        height: profile.lineHeight,
-                        fontFamily: _fontFamily(profile.fontFamily),
-                      ),
-                    ),
+                    child: _Paragraph(index: index, ink: ink),
                   ),
                 ),
               );
@@ -356,6 +348,117 @@ class _TextSurfaceState extends State<_TextSurface> {
         ),
       ),
     );
+  }
+}
+
+/// One paragraph, with its marks drawn in and its selection markable.
+class _Paragraph extends StatefulWidget {
+  const _Paragraph({required this.index, required this.ink});
+
+  final int index;
+  final Color ink;
+
+  @override
+  State<_Paragraph> createState() => _ParagraphState();
+}
+
+class _ParagraphState extends State<_Paragraph> {
+  TextSelection? _selection;
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = FundusScope.of(context).textReader;
+    final profile = reader.profile;
+    final paragraphs = reader.paragraphs;
+    if (widget.index >= paragraphs.length) return const SizedBox.shrink();
+    final text = paragraphs[widget.index].text;
+    final marks = reader.highlightsInParagraph(widget.index);
+
+    final style = TextStyle(
+      color: widget.ink,
+      fontSize: profile.fontSize,
+      height: profile.lineHeight,
+      fontFamily: _fontFamily(profile.fontFamily),
+    );
+
+    return SelectableText.rich(
+      TextSpan(children: _spans(text, marks)),
+      style: style,
+      onSelectionChanged: (selection, cause) => _selection = selection,
+      contextMenuBuilder: (context, state) {
+        final selection = _selection;
+        final selected = selection != null && !selection.isCollapsed;
+        return AdaptiveTextSelectionToolbar.buttonItems(
+          anchors: state.contextMenuAnchors,
+          buttonItems: [
+            ...state.contextMenuButtonItems,
+            if (selected)
+              ContextMenuButtonItem(
+                label: 'Markieren',
+                onPressed: () {
+                  reader.addHighlight(
+                    paragraphIndex: widget.index,
+                    start: selection.start,
+                    end: selection.end,
+                  );
+                  state.hideToolbar();
+                },
+              ),
+            for (final mark in marks)
+              if (selected &&
+                  selection.start < mark.end &&
+                  selection.end > mark.start)
+                ContextMenuButtonItem(
+                  label: 'Markierung entfernen',
+                  onPressed: () {
+                    reader.deleteHighlight(mark.highlight.id);
+                    state.hideToolbar();
+                  },
+                ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Splits the paragraph into the runs between its marks.
+  List<TextSpan> _spans(
+    String text,
+    List<({LibraryHighlight highlight, int start, int end})> marks,
+  ) {
+    if (marks.isEmpty) return [TextSpan(text: text)];
+    final spans = <TextSpan>[];
+    var cursor = 0;
+    for (final mark in marks) {
+      // Marks can overlap; the later one starts where the previous ended
+      // rather than drawing over it.
+      final start = mark.start.clamp(cursor, text.length);
+      final end = mark.end.clamp(start, text.length);
+      if (start > cursor) {
+        spans.add(TextSpan(text: text.substring(cursor, start)));
+      }
+      spans.add(
+        TextSpan(
+          text: text.substring(start, end),
+          style: TextStyle(
+            backgroundColor: _markColor(mark.highlight.color),
+            color: const Color(0xFF1C1B18),
+          ),
+        ),
+      );
+      cursor = end;
+    }
+    if (cursor < text.length) {
+      spans.add(TextSpan(text: text.substring(cursor)));
+    }
+    return spans;
+  }
+
+  static Color _markColor(String value) {
+    final hex = value.replaceAll('#', '');
+    final parsed = int.tryParse(hex, radix: 16);
+    if (parsed == null) return const Color(0xFFFFF176);
+    return Color(hex.length <= 6 ? 0xFF000000 | parsed : parsed);
   }
 }
 

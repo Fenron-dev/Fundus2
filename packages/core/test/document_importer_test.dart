@@ -177,4 +177,57 @@ void main() {
       'Firefly - S01E02.mp4',
     ]);
   });
+
+  group('Ein Werk findet sein Bild', () {
+    List<DocumentImportCandidate> covers(List<ScannedFile> files) =>
+        DocumentImporter(
+          mediaRoots: LibraryConfiguration.defaults,
+        ).group(files);
+
+    test('cover.jpg gewinnt vor allem anderen', () {
+      final candidates = covers([
+        file('Anime/Chainsaw Man/S01E01.mkv', mimeType: 'video/x-matroska'),
+        file('Anime/Chainsaw Man/banner.png', mimeType: 'image/png'),
+        file('Anime/Chainsaw Man/cover.jpg', mimeType: 'image/jpeg'),
+      ]);
+
+      expect(candidates.single.coverFile?.filename, 'cover.jpg');
+    });
+
+    test('ein Bild mit dem Namen des Werks gilt als Cover', () {
+      final candidates = covers([
+        file('Anime/Chainsaw Man/S01E01.mkv', mimeType: 'video/x-matroska'),
+        file('Anime/Chainsaw Man/Chainsaw Man.jpg', mimeType: 'image/jpeg'),
+      ]);
+
+      expect(candidates.single.coverFile?.filename, 'Chainsaw Man.jpg');
+    });
+
+    test('auch „front" und „keyart" zählen', () {
+      final candidates = covers([
+        file('Anime/Kaltes Orbit/S01E01.mkv', mimeType: 'video/x-matroska'),
+        file('Anime/Kaltes Orbit/szene.png', mimeType: 'image/png'),
+        file('Anime/Kaltes Orbit/front.png', mimeType: 'image/png'),
+      ]);
+
+      expect(candidates.single.coverFile?.filename, 'front.png');
+    });
+
+    test('sonst nimmt es das erste Bild, statt keins zu nehmen', () {
+      final candidates = covers([
+        file('Anime/Glasmeer/S01E01.mkv', mimeType: 'video/x-matroska'),
+        file('Anime/Glasmeer/szene.png', mimeType: 'image/png'),
+      ]);
+
+      expect(candidates.single.coverFile?.filename, 'szene.png');
+    });
+
+    test('ohne Bild bleibt es ohne Cover', () {
+      final candidates = covers([
+        file('Anime/Ohne/S01E01.mkv', mimeType: 'video/x-matroska'),
+      ]);
+
+      expect(candidates.single.coverFile, isNull);
+    });
+  });
 }

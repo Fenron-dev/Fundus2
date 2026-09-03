@@ -230,6 +230,82 @@ void main() {
       expect(again.profile.theme, ReflowTheme.sepia);
     });
 
+    test('eine Markierung hängt am Text, nicht am Layout', () async {
+      await openWork();
+      final text = reader.paragraphs[2].text;
+      final start = text.indexOf('Anteil');
+
+      await reader.addHighlight(
+        paragraphIndex: 2,
+        start: start,
+        end: start + 'Anteil'.length,
+      );
+
+      expect(reader.highlights, hasLength(1));
+      expect(reader.highlights.single.quote, 'Anteil');
+
+      // Schriftgröße und Satzbreite ändern heißt: alles wird neu gesetzt.
+      await reader.updateProfile(
+        reader.profile.copyWith(fontSize: 34, contentWidth: 400),
+      );
+
+      final found = reader.highlightsInParagraph(2);
+      expect(found, hasLength(1));
+      expect(found.single.start, start);
+      expect(found.single.end, start + 'Anteil'.length);
+      // Und nicht in einem anderen Absatz.
+      expect(reader.highlightsInParagraph(1), isEmpty);
+    });
+
+    test('eine Markierung übersteht das Schließen des Buchs', () async {
+      await openWork();
+      final text = reader.paragraphs[0].text;
+      await reader.addHighlight(paragraphIndex: 0, start: 0, end: 6);
+      expect(reader.highlights.single.quote, text.substring(0, 6));
+
+      final again = TextReaderController(
+        openSource: (path, name) =>
+            FakeTextSource(name, const ['Kapitel eins', 'Kapitel zwei']),
+      );
+      addTearDown(again.dispose);
+      await again.open(library.library!, library.works.first);
+
+      expect(again.highlights, hasLength(1));
+      expect(again.highlightsInParagraph(0), hasLength(1));
+
+      await again.deleteHighlight(again.highlights.single.id);
+      expect(again.highlights, isEmpty);
+    });
+
+    test(
+      'eine Markierung in einem anderen Kapitel färbt hier nichts',
+      () async {
+        await openWork();
+        await reader.addHighlight(paragraphIndex: 0, start: 0, end: 6);
+        await reader.goToChapter(1);
+
+        expect(reader.highlightsInParagraph(0), isEmpty);
+      },
+    );
+
+    test('ein Lesezeichen überlebt eine andere Schriftgröße', () async {
+      await openWork();
+      reader.reportPosition(3, .5);
+      await reader.addBookmark();
+      await reader.updateProfile(reader.profile.copyWith(fontSize: 32));
+
+      final again = TextReaderController(
+        openSource: (path, name) =>
+            FakeTextSource(name, const ['Kapitel eins', 'Kapitel zwei']),
+      );
+      addTearDown(again.dispose);
+      await again.open(library.library!, library.works.first);
+      await again.goToBookmark(again.bookmarks.single);
+
+      // Der Anker ist der Absatz, nicht eine Pixelhöhe.
+      expect(again.paragraphIndex, 3);
+    });
+
     test('ein Lesezeichen führt zurück an seine Stelle', () async {
       await openWork();
       await reader.goToChapter(1);

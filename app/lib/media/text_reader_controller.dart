@@ -134,6 +134,7 @@ class TextReaderController extends ChangeNotifier {
 
   ReflowReaderProfile _profile = const ReflowReaderProfile();
   List<LibraryBookmark> _bookmarks = const [];
+  List<LibraryHighlight> _highlights = const [];
 
   bool _busy = false;
   bool _open = false;
@@ -159,6 +160,7 @@ class TextReaderController extends ChangeNotifier {
 
   ReflowReaderProfile get profile => _profile;
   List<LibraryBookmark> get bookmarks => _bookmarks;
+  List<LibraryHighlight> get highlights => _highlights;
 
   bool get isOpen => _open;
   bool get isBusy => _busy;
@@ -217,7 +219,9 @@ class TextReaderController extends ChangeNotifier {
       }
 
       _profile = await library.loadTextProfile(workId: work.id);
-      _bookmarks = library.loadAnnotations(work.id).bookmarks;
+      final annotations = library.loadAnnotations(work.id);
+      _bookmarks = annotations.bookmarks;
+      _highlights = annotations.highlights;
 
       final saved = library.loadProgress(work.id)?.position;
       final savedVolume = saved?.fileId == null
@@ -344,6 +348,12 @@ class TextReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void showChrome() {
+    if (_chrome) return;
+    _chrome = true;
+    notifyListeners();
+  }
+
   Future<void> addBookmark({String? note}) async {
     final library = _library;
     final work = _work;
@@ -398,6 +408,125 @@ class TextReaderController extends ChangeNotifier {
     _innerOffset = resolved.innerOffset;
     notifyListeners();
     saveProgress();
+  }
+
+  /// Marks a stretch of text.
+  ///
+  /// The anchor is the paragraph and the words themselves, never a pixel:
+  /// changing the type size or the measure re-lays the whole chapter, and a
+  /// mark that lived on the old layout would land somewhere else.
+  Future<void> addHighlight({
+    required int paragraphIndex,
+    required int start,
+    required int end,
+    String color = '#FFF176',
+    String? note,
+  }) async {
+    final library = _library;
+    final work = _work;
+    final chapter = currentChapter;
+    final volume = currentVolume;
+    if (library == null || work == null || chapter == null) return;
+    if (volume == null || library.isReadOnly) return;
+    final list = chapter.document.paragraphs;
+    if (paragraphIndex < 0 || paragraphIndex >= list.length) return;
+    final paragraph = list[paragraphIndex];
+    final from = start.clamp(0, paragraph.text.length);
+    final to = end.clamp(from, paragraph.text.length);
+    if (to <= from) return;
+
+    try {
+      final annotations = await library.addTextHighlight(
+        workId: work.id,
+        fileId: volume.fileId,
+        position: chapter.document.positionFor(
+          paragraphIndex: paragraphIndex,
+          innerOffset: paragraph.text.isEmpty
+              ? 0
+              : from / paragraph.text.length,
+          fileId: volume.fileId,
+          chapterId: chapter.id,
+        ),
+        quote: paragraph.text.substring(from, to),
+        color: color,
+        note: note,
+      );
+      _highlights = annotations.highlights;
+      notifyListeners();
+    } on Object catch (error) {
+      _failure = error.toString();
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteHighlight(String highlightId) async {
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null || library.isReadOnly) return;
+    try {
+      final annotations = await library.deleteHighlight(work.id, highlightId);
+      _highlights = annotations.highlights;
+      notifyListeners();
+    } on Object {
+      // Nothing was removed; the list still shows the truth.
+    }
+  }
+
+  /// The marks that fall inside one paragraph, as character ranges.
+  ///
+  /// The stored offset says roughly where the mark sat; the quote says what
+  /// it covered. Searching for the quote near that offset finds it again
+  /// however the text is set now, and finds nothing if the words are gone.
+  List<({LibraryHighlight highlight, int start, int end})>
+  highlightsInParagraph(int index) {
+    final chapter = currentChapter;
+    if (chapter == null) return const [];
+    final list = chapter.document.paragraphs;
+    if (index < 0 || index >= list.length) return const [];
+    final paragraph = list[index];
+
+    final found = <({LibraryHighlight highlight, int start, int end})>[];
+    for (final highlight in _highlights) {
+      final position = highlight.mediaPosition;
+      if (position.chapterId != null && position.chapterId != chapter.id) {
+        continue;
+      }
+      if (position.elementId != null && position.elementId != paragraph.id) {
+        continue;
+      }
+      final start = _locateQuote(
+        paragraph.text,
+        highlight.quote,
+        ((position.scrollOffset ?? 0) * paragraph.text.length).round(),
+      );
+      if (start < 0) continue;
+      found.add((
+        highlight: highlight,
+        start: start,
+        end: start + highlight.quote.length,
+      ));
+    }
+    found.sort((left, right) => left.start.compareTo(right.start));
+    return found;
+  }
+
+  /// The occurrence of [quote] closest to [near], or -1 when it is gone.
+  static int _locateQuote(String text, String quote, int near) {
+    if (quote.isEmpty || quote.length > text.length) return -1;
+    var best = -1;
+    var bestDistance = 1 << 30;
+    var from = 0;
+    while (true) {
+      final index = text.indexOf(quote, from);
+      if (index < 0) break;
+      final distance = (index - near).abs();
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+      from = index + 1;
+    }
+    return best;
   }
 
   MediaPosition _position() {

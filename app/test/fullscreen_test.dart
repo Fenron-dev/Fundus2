@@ -113,12 +113,19 @@ void main() {
 
     expect(fullscreen.isActive, isTrue);
     expect(window.entered, 1);
+    // Vollbild heißt Vollbild: die Leiste geht mit.
+    expect(reader.showsChrome, isFalse);
+    expect(find.byTooltip('Vollbild beenden'), findsNothing);
 
+    // Ein Tipp in die Mitte holt sie zurück.
+    reader.showChrome();
+    await settle(tester);
     await tester.tap(find.byTooltip('Vollbild beenden'));
     await settle(tester);
 
     expect(fullscreen.isActive, isFalse);
     expect(window.exited, 1);
+    expect(reader.showsChrome, isTrue);
   });
 
   testWidgets('der Player kann ins Vollbild', (tester) async {
@@ -161,6 +168,9 @@ void main() {
     await settle(tester);
 
     await tester.tap(find.byTooltip('Vollbild'));
+    await settle(tester);
+    // Die Leiste ist im Vollbild weg; sie muss erst zurückgeholt werden.
+    reader.showChrome();
     await settle(tester);
     await tester.tap(find.byTooltip('Schließen'));
     await settle(tester);

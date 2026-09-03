@@ -62,7 +62,7 @@ class _ReaderBar extends StatelessWidget {
         children: [
           IconButton(
             onPressed: () {
-              scope.fullscreen.leave();
+              scope.leaveFullscreen();
               reader.close();
             },
             icon: Icon(FundusIcons.close, size: FundusIcons.sizeLg),
@@ -118,7 +118,7 @@ class _ReaderBar extends StatelessWidget {
             tooltip: 'Leseeinstellungen',
           ),
           IconButton(
-            onPressed: scope.fullscreen.toggle,
+            onPressed: scope.toggleFullscreen,
             icon: Icon(FundusIcons.fullscreen, size: FundusIcons.sizeLg),
             tooltip: scope.fullscreen.isActive
                 ? 'Vollbild beenden'
@@ -230,11 +230,11 @@ class _ReaderSurface extends StatelessWidget {
             reader.previousPage();
             return KeyEventResult.handled;
           case LogicalKeyboardKey.keyF:
-            scope.fullscreen.toggle();
+            scope.toggleFullscreen();
             return KeyEventResult.handled;
           case LogicalKeyboardKey.escape:
             if (scope.fullscreen.isActive) {
-              scope.fullscreen.leave();
+              scope.leaveFullscreen();
             } else {
               reader.close();
             }
@@ -518,17 +518,32 @@ class _Page extends StatelessWidget {
       ),
     );
 
-    // In a continuous layout the width is the strip's width, whatever the
-    // scale setting says — a webtoon that fits the screen height would be a
-    // stamp.
+    // A continuous strip scrolls in one direction, so the scale setting
+    // decides the other one: full width is the usual webtoon, but a wide
+    // scan is readable only when it fits the screen instead.
     if (continuous) {
-      return Image.file(
-        File(file),
-        width: double.infinity,
-        fit: BoxFit.fitWidth,
-        filterQuality: FilterQuality.medium,
-        errorBuilder: (context, error, stack) => const SizedBox.shrink(),
-      );
+      return switch (reader.profile.pageScale) {
+        PublicationPageScale.fitWidth ||
+        // Nothing to fit a page into here — the strip has no page height.
+        PublicationPageScale.fitScreen => Image.file(
+          File(file),
+          width: double.infinity,
+          fit: BoxFit.fitWidth,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (context, error, stack) => const SizedBox.shrink(),
+        ),
+        PublicationPageScale.fitHeight => SizedBox(
+          height: MediaQuery.sizeOf(context).height,
+          child: image,
+        ),
+        PublicationPageScale.original => Align(
+          alignment: Alignment.topLeft,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: image,
+          ),
+        ),
+      };
     }
 
     return switch (reader.profile.pageScale) {
@@ -811,41 +826,245 @@ Future<void> _showPageOverview(BuildContext context) {
   );
 }
 
+/// The marks of this work — as a grid of pages, or as a list.
+///
+/// „Seite 143" tells nobody anything; the page itself does. Which of the two
+/// is wanted is the same choice the library offers everywhere else, so it is
+/// the same switch.
 Future<void> _showBookmarks(BuildContext context) {
   final reader = FundusScope.of(context).reader;
+  reader.requestBookmarkPreviews();
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
-    builder: (sheetContext) => SafeArea(
-      child: ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.all(FundusSpace.x6),
-        children: [
-          Text(
-            'Lesezeichen',
-            style: Theme.of(sheetContext).textTheme.titleMedium,
-          ),
-          const SizedBox(height: FundusSpace.x3),
-          for (final bookmark in reader.bookmarks)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(bookmark.label ?? bookmark.displayPosition),
-              subtitle: bookmark.note == null ? null : Text(bookmark.note!),
-              onTap: () {
-                reader.goToBookmark(bookmark);
-                Navigator.of(sheetContext).pop();
-              },
-              trailing: IconButton(
-                onPressed: () {
-                  reader.deleteBookmark(bookmark.id);
-                  Navigator.of(sheetContext).pop();
-                },
-                icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
-                tooltip: 'Entfernen',
+    isScrollControlled: true,
+    builder: (sheetContext) => const _BookmarkSheet(),
+  );
+}
+
+class _BookmarkSheet extends StatefulWidget {
+  const _BookmarkSheet();
+
+  @override
+  State<_BookmarkSheet> createState() => _BookmarkSheetState();
+}
+
+class _BookmarkSheetState extends State<_BookmarkSheet> {
+  bool _grid = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = FundusScope.of(context).reader;
+    final bookmarks = reader.bookmarks;
+
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * .6,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                FundusSpace.x6,
+                0,
+                FundusSpace.x4,
+                FundusSpace.x3,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Lesezeichen',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => setState(() => _grid = true),
+                    isSelected: _grid,
+                    icon: Icon(FundusIcons.viewGrid, size: FundusIcons.sizeMd),
+                    tooltip: 'Als Raster',
+                  ),
+                  IconButton(
+                    onPressed: () => setState(() => _grid = false),
+                    isSelected: !_grid,
+                    icon: Icon(FundusIcons.viewTable, size: FundusIcons.sizeMd),
+                    tooltip: 'Als Liste',
+                  ),
+                ],
               ),
             ),
-        ],
+            if (bookmarks.isEmpty)
+              const Expanded(
+                child: FundusEmptyState(
+                  title: 'Noch keine Lesezeichen',
+                  reason: 'Setze eins über das Lesezeichen-Symbol oben.',
+                ),
+              )
+            else
+              Expanded(
+                child: _grid
+                    ? _BookmarkGrid(bookmarks: bookmarks)
+                    : _BookmarkList(bookmarks: bookmarks),
+              ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+class _BookmarkGrid extends StatelessWidget {
+  const _BookmarkGrid({required this.bookmarks});
+
+  final List<LibraryBookmark> bookmarks;
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = FundusScope.of(context).reader;
+    final tokens = context.fundus;
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(
+        FundusSpace.x6,
+        0,
+        FundusSpace.x6,
+        FundusSpace.x6,
+      ),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 150,
+        childAspectRatio: .58,
+        mainAxisSpacing: FundusSpace.x4,
+        crossAxisSpacing: FundusSpace.x4,
+      ),
+      itemCount: bookmarks.length,
+      itemBuilder: (context, index) {
+        final bookmark = bookmarks[index];
+        final preview = reader.previewForBookmark(bookmark);
+        return InkWell(
+          onTap: () {
+            reader.goToBookmark(bookmark);
+            Navigator.of(context).pop();
+          },
+          onLongPress: () {
+            reader.deleteBookmark(bookmark.id);
+            Navigator.of(context).pop();
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: tokens.surface,
+                    border: Border.all(color: tokens.divider),
+                    borderRadius: FundusRadius.mdAll,
+                  ),
+                  child: preview == null
+                      // A mark in another volume has no page to show until
+                      // that volume is open; the number still stands.
+                      ? Center(
+                          child: Icon(
+                            FundusIcons.bookmark,
+                            size: FundusIcons.sizeLg,
+                            color: tokens.textFaint,
+                          ),
+                        )
+                      : ClipRRect(
+                          borderRadius: FundusRadius.mdAll,
+                          child: Image.file(
+                            File(preview),
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            cacheWidth: 300,
+                            errorBuilder: (context, error, stack) =>
+                                const SizedBox.shrink(),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                bookmark.label ?? bookmark.displayPosition,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _BookmarkList extends StatelessWidget {
+  const _BookmarkList({required this.bookmarks});
+
+  final List<LibraryBookmark> bookmarks;
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = FundusScope.of(context).reader;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        FundusSpace.x6,
+        0,
+        FundusSpace.x6,
+        FundusSpace.x6,
+      ),
+      children: [
+        for (final bookmark in bookmarks)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: _BookmarkThumb(bookmark: bookmark),
+            title: Text(bookmark.label ?? bookmark.displayPosition),
+            subtitle: bookmark.note == null ? null : Text(bookmark.note!),
+            onTap: () {
+              reader.goToBookmark(bookmark);
+              Navigator.of(context).pop();
+            },
+            trailing: IconButton(
+              onPressed: () {
+                reader.deleteBookmark(bookmark.id);
+                Navigator.of(context).pop();
+              },
+              icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
+              tooltip: 'Entfernen',
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _BookmarkThumb extends StatelessWidget {
+  const _BookmarkThumb({required this.bookmark});
+
+  final LibraryBookmark bookmark;
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = FundusScope.of(context).reader;
+    final tokens = context.fundus;
+    final preview = reader.previewForBookmark(bookmark);
+    return SizedBox(
+      width: 34,
+      height: 48,
+      child: preview == null
+          ? Icon(
+              FundusIcons.bookmark,
+              size: FundusIcons.sizeMd,
+              color: tokens.textFaint,
+            )
+          : ClipRRect(
+              borderRadius: FundusRadius.smAll,
+              child: Image.file(
+                File(preview),
+                fit: BoxFit.cover,
+                cacheWidth: 100,
+                errorBuilder: (context, error, stack) =>
+                    const SizedBox.shrink(),
+              ),
+            ),
+    );
+  }
 }

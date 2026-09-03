@@ -174,6 +174,33 @@ class FundusScopeState extends State<FundusScope> {
     await _writeShellProfile();
   }
 
+  /// Fullscreen means the whole screen: the window fills it and the chrome
+  /// of whatever is open steps out of the way. Leaving brings it back — a
+  /// player without controls and without a way to find them is a trap.
+  Future<void> toggleFullscreen() async {
+    final entering = !fullscreen.isActive;
+    await fullscreen.toggle();
+    if (entering) {
+      if (player.isExpanded && player.showsChrome) player.toggleChrome();
+      if (reader.isOpen && reader.showsChrome) reader.toggleChrome();
+      if (textReader.isOpen && textReader.showsChrome) {
+        textReader.toggleChrome();
+      }
+      return;
+    }
+    player.showChrome();
+    reader.showChrome();
+    textReader.showChrome();
+  }
+
+  /// Leaves fullscreen and puts the chrome back, whatever is open.
+  Future<void> leaveFullscreen() async {
+    await fullscreen.leave();
+    player.showChrome();
+    reader.showChrome();
+    textReader.showChrome();
+  }
+
   /// Shows or hides the list beside the player. It is a device setting like
   /// the theme, so it travels in the vault and survives a reinstall.
   Future<void> setPlayerPanelVisible(bool value) async {

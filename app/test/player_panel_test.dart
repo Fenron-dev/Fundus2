@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/app/fundus_scope.dart';
@@ -166,6 +167,100 @@ void main() {
 
     expect(find.byTooltip('Tonspur'), findsNothing);
     expect(find.byTooltip('Untertitel'), findsNothing);
+  });
+
+  testWidgets('die Leertaste hält an und lässt weiterlaufen', (tester) async {
+    final work = Directory('${root.path}/Hörbücher/Karl May/Der Schacht')
+      ..createSync(recursive: true);
+    File('${work.path}/01 - Anfang.mp3').writeAsBytesSync(List.filled(64, 1));
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+    });
+    await pumpPlayer(tester);
+    // Die Engine ist die Wahrheit: der Zustand im Controller kommt erst mit
+    // dem nächsten Ereignis aus ihrem Strom nach.
+    expect(engine.playing, isTrue);
+
+    await tester.runAsync(() async {
+      await simulateKeyDownEvent(LogicalKeyboardKey.space);
+      await simulateKeyUpEvent(LogicalKeyboardKey.space);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pump();
+    expect(engine.playing, isFalse, reason: 'Die Leertaste hält nicht an');
+
+    await tester.runAsync(() async {
+      await simulateKeyDownEvent(LogicalKeyboardKey.space);
+      await simulateKeyUpEvent(LogicalKeyboardKey.space);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pump();
+    expect(engine.playing, isTrue, reason: 'Die Leertaste startet nicht');
+  });
+
+  testWidgets('bei einem Film lässt sich die Bedienung wegklicken', (
+    tester,
+  ) async {
+    final series = Directory('${root.path}/Anime/Chainsaw Man')
+      ..createSync(recursive: true);
+    File(
+      '${series.path}/S01E01 - Dog.mkv',
+    ).writeAsBytesSync(List.filled(64, 3));
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+    });
+    await pumpPlayer(tester);
+
+    expect(player.showsVideo, isTrue);
+    expect(find.byTooltip('Vollbild'), findsOneWidget);
+
+    player.toggleChrome();
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+
+    // Nichts als das Bild.
+    expect(find.byTooltip('Vollbild'), findsNothing);
+    expect(find.byTooltip('Minimieren'), findsNothing);
+
+    player.showChrome();
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+    expect(find.byTooltip('Vollbild'), findsOneWidget);
+  });
+
+  testWidgets('ein Hörbuch behält seine Bedienung', (tester) async {
+    final work = Directory('${root.path}/Hörbücher/Karl May/Der Schacht')
+      ..createSync(recursive: true);
+    File('${work.path}/01 - Anfang.mp3').writeAsBytesSync(List.filled(64, 1));
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+    });
+    await pumpPlayer(tester);
+
+    player.toggleChrome();
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+
+    // Ohne Bild gibt es nichts zu verdecken.
+    expect(find.byTooltip('Vollbild'), findsOneWidget);
   });
 
   testWidgets('mehrere Hörbuchdateien heißen Dateien', (tester) async {
