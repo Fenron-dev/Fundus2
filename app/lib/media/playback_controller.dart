@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -82,6 +83,29 @@ class PlaybackController extends ChangeNotifier {
     if (total == null || total.inMilliseconds <= 0) return 0;
     return (_position.inMilliseconds / total.inMilliseconds).clamp(0, 1);
   }
+
+  /// The frame on screen, or null when there is none to take.
+  ///
+  /// Only where there is a picture: capturing an audiobook would hand back
+  /// the cover, which is not what anyone means by a screenshot.
+  Future<Uint8List?> captureFrame() async {
+    if (!showsVideo || _engineOrNull == null) return null;
+    try {
+      return await _engine.screenshot();
+    } on Object {
+      return null;
+    }
+  }
+
+  /// A file name for a capture that says where it came from.
+  String captureName() {
+    final title = _work?.title ?? 'Fundus';
+    final at = formatPlaybackTime(_position).replaceAll(':', '-');
+    return '${_sanitise(title)}_$at.png';
+  }
+
+  static String _sanitise(String value) =>
+      value.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
 
   Future<void> selectAudioTrack(String id) async {
     await _engine.selectAudioTrack(id);

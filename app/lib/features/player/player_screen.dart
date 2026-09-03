@@ -78,6 +78,14 @@ class PlayerScreen extends StatelessWidget {
                           ? 'Liste ausblenden'
                           : 'Liste einblenden',
                     ),
+                  // Nur wo es ein Bild gibt: ein Hörbuch hat keins, und das
+                  // Cover ist nicht gemeint.
+                  if (player.showsVideo)
+                    IconButton(
+                      onPressed: () => _saveFrame(context),
+                      icon: Icon(FundusIcons.camera, size: FundusIcons.sizeLg),
+                      tooltip: 'Bild speichern',
+                    ),
                   IconButton(
                     onPressed: scope.fullscreen.toggle,
                     icon: Icon(
@@ -116,6 +124,32 @@ class PlayerScreen extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Saves the frame on screen where the user wants it.
+Future<void> _saveFrame(BuildContext context) async {
+  final scope = FundusScope.of(context);
+  final player = scope.player;
+  final messenger = ScaffoldMessenger.of(context);
+  final bytes = await player.captureFrame();
+  if (bytes == null) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Von dieser Wiedergabe gibt es kein Bild.')),
+    );
+    return;
+  }
+  try {
+    final path = await scope.captureSink.save(
+      bytes,
+      suggestedName: player.captureName(),
+    );
+    if (path == null) return;
+    messenger.showSnackBar(SnackBar(content: Text('Bild gespeichert: $path')));
+  } on Object catch (error) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('Speichern fehlgeschlagen: $error')),
     );
   }
 }

@@ -68,6 +68,7 @@ abstract final class FundusIcons {
   static final audioTrack = PhosphorIcons.speakerHigh();
   static final subtitles = PhosphorIcons.closedCaptioning();
   static final fullscreen = PhosphorIcons.cornersOut();
+  static final camera = PhosphorIcons.camera();
 
   // Views and states.
   static final viewGrid = PhosphorIcons.gridFour();

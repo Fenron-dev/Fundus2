@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:media_kit/media_kit.dart';
@@ -63,6 +64,10 @@ abstract interface class PlaybackEngine {
 
   Future<void> selectAudioTrack(String id);
   Future<void> selectSubtitleTrack(String id);
+
+  /// The picture as it stands, for engines that have one. Null means there is
+  /// nothing to capture — an audiobook has no frame.
+  Future<Uint8List?> screenshot();
 
   Future<void> dispose();
 
@@ -205,6 +210,10 @@ final class MediaKitEngine implements PlaybackEngine {
 
   @override
   Stream<MediaTracks> get tracksStream => _tracks.stream;
+
+  @override
+  Future<Uint8List?> screenshot() =>
+      _player.screenshot(format: 'image/png', includeLibassSubtitles: true);
 
   @override
   Future<void> selectAudioTrack(String id) async {

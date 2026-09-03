@@ -14,6 +14,7 @@ import 'package:fundus_design/fundus_design.dart';
 
 import 'playback_controller_test.dart' show FakeEngine;
 import 'reader_test.dart' show FakePageSource, writeArchive;
+import 'text_reader_test.dart' show writeEpub;
 
 /// „Öffnen" on a manga must reach the reader. It reached the audio player
 /// first, which is a silent file and a progress bar counting seconds that a
@@ -98,15 +99,14 @@ void main() {
     expect(find.textContaining('Seite 1 von 12'), findsWidgets);
   });
 
-  testWidgets('ein EPUB sagt, dass sein Leser noch fehlt', (tester) async {
+  testWidgets('eine Light Novel öffnet den Textleser', (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
-    Directory('${root.path}/Light Novels/Glasmeer').createSync(recursive: true);
-    File(
-      '${root.path}/Light Novels/Glasmeer/Band 01.epub',
-    ).writeAsBytesSync(List.filled(64, 5));
+    final novelFolder = Directory('${root.path}/Light Novels/Glasmeer')
+      ..createSync(recursive: true);
+    writeEpub(novelFolder, 'Band 01.epub', ['Prolog', 'Erstes Kapitel']);
 
     late FundusScopeState scope;
     await tester.runAsync(() async {
@@ -141,13 +141,18 @@ void main() {
       const Duration(seconds: 5),
     );
     await tester.runAsync(() => scope.play(novel));
-    await tester.pump();
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
 
-    // Nichts an die Audio-Engine, aber auch kein toter Knopf.
+    // Nichts an die Audio-Engine, und der Comic-Leser bleibt ebenfalls zu.
     expect(engine.opened, isEmpty);
     expect(reader.isOpen, isFalse);
-    expect(player.failure, isNotNull, reason: 'Es gibt keine Rückmeldung');
-    expect(find.textContaining('fehlt noch'), findsWidgets);
+    expect(scope.textReader.isOpen, isTrue);
+    expect(scope.textReader.failure, isNull);
+    expect(find.textContaining('Prolog'), findsWidgets);
   });
 
   testWidgets('ein beschädigtes Archiv sagt, was los ist', (tester) async {

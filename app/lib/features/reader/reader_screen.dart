@@ -102,6 +102,11 @@ class _ReaderBar extends StatelessWidget {
               tooltip: 'Lesezeichen',
             ),
           IconButton(
+            onPressed: () => _savePage(context),
+            icon: Icon(FundusIcons.camera, size: FundusIcons.sizeLg),
+            tooltip: 'Seite speichern',
+          ),
+          IconButton(
             onPressed: () => _showPageOverview(context),
             icon: Icon(FundusIcons.viewGrid, size: FundusIcons.sizeLg),
             tooltip: 'Seitenvorschau',
@@ -131,11 +136,36 @@ class _VolumeMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reader = FundusScope.of(context).reader;
+    final sequence = reader.chapterSequence;
     return PopupMenuButton<int>(
       tooltip: 'Kapitel',
       icon: Icon(FundusIcons.manga, size: FundusIcons.sizeLg),
       onSelected: reader.openVolume,
       itemBuilder: (context) => [
+        // Eine Lücke in der Nummerierung gehört genannt: sonst wundert man
+        // sich nur, warum die Geschichte springt.
+        if (sequence.summary case final warning?)
+          PopupMenuItem(
+            enabled: false,
+            child: Row(
+              children: [
+                Icon(
+                  FundusIcons.warning,
+                  size: FundusIcons.sizeSm,
+                  color: context.fundus.warning,
+                ),
+                const SizedBox(width: FundusSpace.x2),
+                Flexible(
+                  child: Text(
+                    warning,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: context.fundus.warning,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         for (var index = 0; index < reader.volumes.length; index++)
           PopupMenuItem(
             value: index,
@@ -528,6 +558,35 @@ class _Page extends StatelessWidget {
         child: image,
       ),
     };
+  }
+}
+
+/// Saves the page on screen where the user wants it, and marks the spot.
+Future<void> _savePage(BuildContext context) async {
+  final scope = FundusScope.of(context);
+  final reader = scope.reader;
+  final messenger = ScaffoldMessenger.of(context);
+  final bytes = await reader.capturePage();
+  if (bytes == null) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Diese Seite liegt noch nicht bereit.')),
+    );
+    return;
+  }
+  try {
+    final path = await scope.captureSink.save(
+      bytes,
+      suggestedName: reader.captureName(),
+    );
+    if (path == null) return;
+    // Wie im alten Build: das gespeicherte Bild wird zugleich zum
+    // Lesezeichen, sonst findet man die Stelle im Werk nie wieder.
+    await reader.addBookmark(note: path);
+    messenger.showSnackBar(SnackBar(content: Text('Seite gespeichert: $path')));
+  } on Object catch (error) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('Speichern fehlgeschlagen: $error')),
+    );
   }
 }
 

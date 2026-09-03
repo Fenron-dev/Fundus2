@@ -7,8 +7,10 @@ import '../data/library_controller.dart';
 import '../data/work_filter.dart';
 import '../data/media_type.dart';
 import '../data/work_view.dart';
+import '../media/capture.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
+import '../media/text_reader_controller.dart';
 import 'app_navigation.dart';
 import 'fullscreen.dart';
 import 'app_settings.dart';
@@ -23,7 +25,9 @@ class FundusScope extends StatefulWidget {
     required this.child,
     this.player,
     this.reader,
+    this.textReader,
     this.fullscreen,
+    this.captureSink = const FileCaptureSink(),
   });
 
   final AppSettings settings;
@@ -35,8 +39,14 @@ class FundusScope extends StatefulWidget {
   /// Same for the page reader.
   final ReaderController? reader;
 
+  /// And for the text reader.
+  final TextReaderController? textReader;
+
   /// And for the window: a test must not ask the window manager for anything.
   final FullscreenController? fullscreen;
+
+  /// Where a saved page or frame goes. The default opens a system dialog.
+  final CaptureSink captureSink;
   final Widget child;
 
   static FundusScopeState of(BuildContext context) {
@@ -56,12 +66,16 @@ class FundusScopeState extends State<FundusScope> {
       widget.player ?? PlaybackController(deviceId: widget.settings.deviceKey);
   late final ReaderController reader =
       widget.reader ?? ReaderController(deviceId: widget.settings.deviceKey);
+  late final TextReaderController textReader =
+      widget.textReader ??
+      TextReaderController(deviceId: widget.settings.deviceKey);
   late final FullscreenController fullscreen =
       widget.fullscreen ?? FullscreenController();
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
   AppSettings get settings => widget.settings;
+  CaptureSink get captureSink => widget.captureSink;
   LibraryController get library => widget.library;
   WorkFilter get filter => _filter;
 
@@ -73,6 +87,7 @@ class FundusScopeState extends State<FundusScope> {
     library.addListener(_bump);
     player.addListener(_bump);
     reader.addListener(_bump);
+    textReader.addListener(_bump);
     fullscreen.addListener(_bump);
   }
 
@@ -83,10 +98,12 @@ class FundusScopeState extends State<FundusScope> {
     library.removeListener(_bump);
     player.removeListener(_bump);
     reader.removeListener(_bump);
+    textReader.removeListener(_bump);
     fullscreen.removeListener(_bump);
     // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
     if (widget.reader == null) reader.dispose();
+    if (widget.textReader == null) textReader.dispose();
     if (widget.fullscreen == null) fullscreen.dispose();
     navigation.dispose();
     super.dispose();
@@ -110,6 +127,12 @@ class FundusScopeState extends State<FundusScope> {
       if (reader.failure == null) library.refresh();
       return;
     }
+    if (TextReaderController.handles(work)) {
+      await player.close();
+      await textReader.open(vault, work);
+      if (textReader.failure == null) library.refresh();
+      return;
+    }
     final unsupported = _missingReaderFor(work);
     if (unsupported != null) {
       player.reject(work, unsupported);
@@ -124,8 +147,6 @@ class FundusScopeState extends State<FundusScope> {
   String? _missingReaderFor(
     WorkView work,
   ) => switch (work.mediaType?.progressKind) {
-    ProgressKind.chapterFraction =>
-      'Der Textleser für EPUB fehlt noch — dieses Werk lässt sich noch nicht öffnen.',
     ProgressKind.documentPage =>
       'Der Dokumentenleser für PDF fehlt noch — dieses Werk lässt sich noch nicht öffnen.',
     _ => null,

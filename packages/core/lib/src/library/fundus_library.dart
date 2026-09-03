@@ -274,6 +274,49 @@ final class FundusLibrary {
     }
   }
 
+  /// The text profile for a work, falling back to the vault's default.
+  ///
+  /// Same reasoning as the comic profile: type size is a setting nobody wants
+  /// to make twice, least of all after a reinstall.
+  Future<ReflowReaderProfile> loadTextProfile({String? workId}) async {
+    if (workId != null) {
+      final own = await _readTextProfile(_textProfileFile(workId));
+      if (own != null) return own;
+    }
+    return await _readTextProfile(_textProfileFile(_defaultReaderKey)) ??
+        const ReflowReaderProfile();
+  }
+
+  Future<void> saveTextProfile(
+    ReflowReaderProfile profile, {
+    String? workId,
+  }) async {
+    _ensureWritable();
+    final contents =
+        '${const JsonEncoder.withIndent('  ').convert(profile.toJson())}\n';
+    for (final key in {?workId, _defaultReaderKey}) {
+      await _writeSidecar(_textProfileFile(key), contents);
+    }
+  }
+
+  File _textProfileFile(String key) {
+    final safe = key.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    return File(p.join(_readerProfileDirectory.path, 'text', '$safe.json'));
+  }
+
+  Future<ReflowReaderProfile?> _readTextProfile(File file) async {
+    if (!await file.exists()) return null;
+    try {
+      final value = jsonDecode(await file.readAsString());
+      if (value is! Map) return null;
+      return ReflowReaderProfile.fromJson(Map<String, Object?>.from(value));
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   static const _defaultReaderKey = 'default';
 
   Directory get _readerProfileDirectory =>

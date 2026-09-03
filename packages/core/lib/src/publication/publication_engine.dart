@@ -182,6 +182,82 @@ final class PublicationReaderProfile {
   }
 }
 
+enum ReflowFontFamily { system, serif, sansSerif, monospace }
+
+enum ReflowTheme { followApp, paper, sepia, night }
+
+/// How a text is set on the page.
+///
+/// Kept apart from [PublicationReaderProfile] because a novel and a comic
+/// share nothing here: one is about type, the other about page geometry.
+final class ReflowReaderProfile {
+  const ReflowReaderProfile({
+    this.fontFamily = ReflowFontFamily.system,
+    this.fontSize = 19,
+    this.lineHeight = 1.55,
+    this.contentWidth = 760,
+    this.paragraphSpacing = 18,
+    this.theme = ReflowTheme.followApp,
+  });
+
+  static const schemaVersion = 1;
+
+  final ReflowFontFamily fontFamily;
+  final double fontSize;
+  final double lineHeight;
+
+  /// The measure, in logical pixels. A line running the full width of a
+  /// desktop window is unreadable however good the type is.
+  final double contentWidth;
+  final double paragraphSpacing;
+  final ReflowTheme theme;
+
+  ReflowReaderProfile copyWith({
+    ReflowFontFamily? fontFamily,
+    double? fontSize,
+    double? lineHeight,
+    double? contentWidth,
+    double? paragraphSpacing,
+    ReflowTheme? theme,
+  }) => ReflowReaderProfile(
+    fontFamily: fontFamily ?? this.fontFamily,
+    fontSize: (fontSize ?? this.fontSize).clamp(12, 40),
+    lineHeight: (lineHeight ?? this.lineHeight).clamp(1.1, 2.4),
+    contentWidth: (contentWidth ?? this.contentWidth).clamp(320, 1400),
+    paragraphSpacing: (paragraphSpacing ?? this.paragraphSpacing).clamp(0, 48),
+    theme: theme ?? this.theme,
+  );
+
+  Map<String, Object?> toJson() => {
+    'schema_version': schemaVersion,
+    'font_family': fontFamily.name,
+    'font_size': fontSize,
+    'line_height': lineHeight,
+    'content_width': contentWidth,
+    'paragraph_spacing': paragraphSpacing,
+    'theme': theme.name,
+  };
+
+  factory ReflowReaderProfile.fromJson(Map<String, Object?> json) {
+    final version = json['schema_version'];
+    if (version != null && version != schemaVersion) {
+      throw const FormatException('Nicht unterstütztes Textprofil.');
+    }
+    return const ReflowReaderProfile().copyWith(
+      fontFamily: ReflowFontFamily.values
+          .where((value) => value.name == json['font_family'])
+          .firstOrNull,
+      fontSize: (json['font_size'] as num?)?.toDouble(),
+      lineHeight: (json['line_height'] as num?)?.toDouble(),
+      contentWidth: (json['content_width'] as num?)?.toDouble(),
+      paragraphSpacing: (json['paragraph_spacing'] as num?)?.toDouble(),
+      theme: ReflowTheme.values
+          .where((value) => value.name == json['theme'])
+          .firstOrNull,
+    );
+  }
+}
+
 final class PublicationFormatDescriptor {
   const PublicationFormatDescriptor({
     required this.format,

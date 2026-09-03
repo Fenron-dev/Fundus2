@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -86,6 +87,12 @@ final class FakeEngine implements PlaybackEngine {
 
   @override
   Future<void> selectSubtitleTrack(String id) async => subtitleChoices.add(id);
+
+  /// A frame with a shape, so a test can tell "captured" from "nothing".
+  Uint8List? frame = Uint8List.fromList(const [1, 2, 3, 4]);
+
+  @override
+  Future<Uint8List?> screenshot() async => frame;
 
   @override
   Future<void> dispose() async {

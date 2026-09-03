@@ -7,6 +7,7 @@ import '../../features/library/library_screen.dart';
 import '../../features/player/player_bar.dart';
 import '../../features/player/player_screen.dart';
 import '../../features/reader/reader_screen.dart';
+import '../../features/reader/text_reader_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/vault/vault_screen.dart';
 import '../../features/work/work_screen.dart';
@@ -46,6 +47,8 @@ class FundusShell extends StatelessWidget {
           // The reader covers the shell the same way; a page wants the whole
           // window, not a column beside the navigation.
           if (scope.reader.isOpen) const Positioned.fill(child: ReaderScreen()),
+          if (scope.textReader.isOpen)
+            const Positioned.fill(child: TextReaderScreen()),
         ],
       ),
     );

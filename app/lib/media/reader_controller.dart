@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -109,6 +111,39 @@ class ReaderController extends ChangeNotifier {
     if (_volumes.length <= 1) return page;
     return '${currentVolume?.title ?? 'Band ${_volumeIndex + 1}'} · $page';
   }
+
+  /// What the chapter list says about its own completeness — a gap in the
+  /// numbering is worth naming rather than leaving the story to jump.
+  ComicChapterSequence get chapterSequence =>
+      comicChapterSequence([for (final volume in _volumes) volume.title]);
+
+  /// The bytes of the page on screen, for saving it out. Null while the page
+  /// is still unpacking or if it went missing underneath us.
+  Future<Uint8List?> capturePage() async {
+    final file = currentPageFile;
+    if (file == null) return null;
+    try {
+      return await File(file).readAsBytes();
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  /// A file name for a saved page that says where it came from.
+  String captureName() {
+    final title = _work?.title ?? 'Fundus';
+    final volume = currentVolume?.title ?? '';
+    final page = (_pageIndex + 1).toString().padLeft(3, '0');
+    final extension = _pageIndex < _pages.length
+        ? p.extension(_pages[_pageIndex].name)
+        : '.jpg';
+    return '${_sanitise(title)}_${_sanitise(volume)}_$page'
+        '${extension.isEmpty ? '.jpg' : extension}';
+  }
+
+  static String _sanitise(String value) => value
+      .replaceAll(RegExp(r'\.[A-Za-z0-9]+$'), '')
+      .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
 
   /// True for the media types this reader serves.
   static bool handles(WorkView work) =>
