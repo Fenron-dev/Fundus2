@@ -467,7 +467,9 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
             bottom: horizontal ? 0 : reader.profile.pageGap,
             right: horizontal ? reader.profile.pageGap : 0,
           ),
-          child: _Page(index: index, continuous: true),
+          // Eine Seite, die die Spalte nicht ausfüllt, gehört in die Mitte —
+          // links angeschlagen liest sich ein Band schief.
+          child: Center(child: _Page(index: index, continuous: true)),
         );
       },
     );
@@ -534,15 +536,14 @@ class _Page extends StatelessWidget {
         ),
         PublicationPageScale.fitHeight => SizedBox(
           height: MediaQuery.sizeOf(context).height,
-          child: image,
-        ),
-        PublicationPageScale.original => Align(
-          alignment: Alignment.topLeft,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: image,
+          child: Image.file(
+            File(file),
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (context, error, stack) => const SizedBox.shrink(),
           ),
         ),
+        PublicationPageScale.original => _CentredScroll(child: image),
       };
     }
 
@@ -561,10 +562,16 @@ class _Page extends StatelessWidget {
           filterQuality: FilterQuality.medium,
         ),
       ),
-      PublicationPageScale.fitHeight => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox.expand(
-          child: FittedBox(fit: BoxFit.fitHeight, child: image),
+      PublicationPageScale.fitHeight => LayoutBuilder(
+        builder: (context, constraints) => _CentredScroll(
+          child: SizedBox(
+            height: constraints.maxHeight,
+            child: Image.file(
+              File(file),
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.medium,
+            ),
+          ),
         ),
       ),
       PublicationPageScale.original => InteractiveViewer(
@@ -1067,4 +1074,23 @@ class _BookmarkThumb extends StatelessWidget {
             ),
     );
   }
+}
+
+/// A page wider than the window scrolls sideways; one narrower than it sits
+/// in the middle. A scroll view alone would pin it to the left edge.
+class _CentredScroll extends StatelessWidget {
+  const _CentredScroll({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: constraints.maxWidth),
+        child: Center(child: child),
+      ),
+    ),
+  );
 }

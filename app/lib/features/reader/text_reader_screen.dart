@@ -374,11 +374,13 @@ class _ParagraphState extends State<_Paragraph> {
     final text = paragraphs[widget.index].text;
     final marks = reader.highlightsInParagraph(widget.index);
 
+    final font = fontFor(profile.fontFamily);
     final style = TextStyle(
       color: widget.ink,
       fontSize: profile.fontSize,
       height: profile.lineHeight,
-      fontFamily: _fontFamily(profile.fontFamily),
+      fontFamily: font.family,
+      fontFamilyFallback: font.fallback,
     );
 
     return SelectableText.rich(
@@ -462,12 +464,45 @@ class _ParagraphState extends State<_Paragraph> {
   }
 }
 
-String? _fontFamily(ReflowFontFamily family) => switch (family) {
-  ReflowFontFamily.system => null,
-  ReflowFontFamily.serif => 'serif',
-  ReflowFontFamily.sansSerif => 'sans-serif',
-  ReflowFontFamily.monospace => 'monospace',
+/// The families to try for a reading font, in order.
+///
+/// „serif" and „sans-serif" are CSS names, not font families: handing them to
+/// Flutter names nothing, the system font is used, and choosing a font does
+/// nothing at all. Real names have to be asked for, several per choice,
+/// because a Mac and an Android phone ship different ones.
+const _fontStacks = <ReflowFontFamily, List<String>>{
+  ReflowFontFamily.serif: [
+    'Georgia',
+    'Iowan Old Style',
+    'Times New Roman',
+    'Noto Serif',
+    'Droid Serif',
+    'serif',
+  ],
+  ReflowFontFamily.sansSerif: [
+    'Helvetica Neue',
+    'Helvetica',
+    'Arial',
+    'Roboto',
+    'Noto Sans',
+    'sans-serif',
+  ],
+  ReflowFontFamily.monospace: [
+    'Menlo',
+    'SF Mono',
+    'Consolas',
+    'Roboto Mono',
+    'Noto Sans Mono',
+    'monospace',
+  ],
 };
+
+/// The font to ask for, and what to fall back to when it is not installed.
+({String? family, List<String>? fallback}) fontFor(ReflowFontFamily family) {
+  final stack = _fontStacks[family];
+  if (stack == null) return (family: null, fallback: null);
+  return (family: stack.first, fallback: stack.sublist(1));
+}
 
 class _ChapterFoot extends StatelessWidget {
   const _ChapterFoot({required this.width});
@@ -561,7 +596,20 @@ Future<void> _showTextSettings(BuildContext context) {
                   children: [
                     for (final family in ReflowFontFamily.values)
                       ChoiceChip(
-                        label: Text(_familyLabel(family)),
+                        // Jede Schrift zeigt sich selbst; sonst wählt man
+                        // einen Namen und sieht erst hinterher, was er tut.
+                        label: Builder(
+                          builder: (context) {
+                            final font = fontFor(family);
+                            return Text(
+                              _familyLabel(family),
+                              style: TextStyle(
+                                fontFamily: font.family,
+                                fontFamilyFallback: font.fallback,
+                              ),
+                            );
+                          },
+                        ),
                         selected: profile.fontFamily == family,
                         onSelected: (_) =>
                             update(profile.copyWith(fontFamily: family)),
