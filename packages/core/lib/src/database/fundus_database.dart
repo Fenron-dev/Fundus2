@@ -2184,7 +2184,9 @@ final class FundusDatabase {
         [
           file.id,
           sourceId,
-          'peer/${file.id}',
+          // The extension belongs in the path: a reader decides by it
+          // whether a file is a comic, and `peer/3f9a` looks like nothing.
+          'peer/${file.id}${file.extension}',
           file.filename,
           file.extension,
           file.sizeBytes,

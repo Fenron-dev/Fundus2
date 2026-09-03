@@ -1,16 +1,27 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:flutter/foundation.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 /// One selectable track of a file — a language, a commentary, a subtitle.
 final class MediaTrackOption {
-  const MediaTrackOption({required this.id, required this.label});
+  const MediaTrackOption({
+    required this.id,
+    required this.label,
+    this.language,
+  });
 
   final String id;
   final String label;
+
+  /// The language the file names for this track, if it names one.
+  ///
+  /// Track *ids* are positions in one file and mean nothing in the next, so a
+  /// remembered choice has to be remembered as a language. Episode two of the
+  /// same series can have its tracks in the other order.
+  final String? language;
 }
 
 /// What the file currently open offers, and what of it is playing.
@@ -65,6 +76,13 @@ abstract interface class PlaybackEngine {
   Future<void> selectAudioTrack(String id);
   Future<void> selectSubtitleTrack(String id);
 
+  /// The shape of the picture, once the file has reported one.
+  ///
+  /// A player that guesses 16:9 letterboxes a 4:3 episode twice and crops
+  /// nothing correctly. Null until the engine knows, and for engines that
+  /// have no picture at all.
+  ValueListenable<double?> get videoAspectRatio;
+
   /// The picture as it stands, for engines that have one. Null means there is
   /// nothing to capture — an audiobook has no frame.
   Future<Uint8List?> screenshot();
@@ -81,6 +99,14 @@ final class MediaKitEngine implements PlaybackEngine {
     // The video output has to exist before the first file is opened —
     // attaching it afterwards leaves the picture black while the sound plays.
     _video = VideoController(_player);
+    // The rect the engine actually decodes, so the frame around it can be the
+    // right shape rather than a guess.
+    _video.rect.addListener(() {
+      final rect = _video.rect.value;
+      _aspect.value = rect == null || rect.width <= 0 || rect.height <= 0
+          ? null
+          : rect.width / rect.height;
+    });
     _trackSubscriptions.addAll([
       _player.stream.tracks.listen((value) {
         _available = value;
@@ -102,6 +128,7 @@ final class MediaKitEngine implements PlaybackEngine {
             if (track.id != 'no')
               MediaTrackOption(
                 id: track.id,
+                language: track.language,
                 label: _label(
                   id: track.id,
                   title: track.title,
@@ -114,6 +141,7 @@ final class MediaKitEngine implements PlaybackEngine {
           for (final track in _available.subtitle)
             MediaTrackOption(
               id: track.id,
+              language: track.language,
               label: track.id == 'no'
                   ? 'Aus'
                   : _label(
@@ -245,6 +273,11 @@ final class MediaKitEngine implements PlaybackEngine {
 
   @override
   Widget? videoSurface() => _surface;
+
+  @override
+  ValueListenable<double?> get videoAspectRatio => _aspect;
+
+  final ValueNotifier<double?> _aspect = ValueNotifier(null);
 
   @override
   Future<void> dispose() async {

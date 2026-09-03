@@ -316,9 +316,42 @@ class _Transport extends StatelessWidget {
       );
 
       if (compact) {
+        // Turned sideways, the picture is what the phone is for: it takes the
+        // screen and the controls lie over it, the way every video player on
+        // a phone behaves. Upright it keeps a box of its own shape — the
+        // file's, not a guessed 16:9 — with the controls below it.
+        final landscape =
+            MediaQuery.orientationOf(context) == Orientation.landscape;
+        if (landscape) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              picture,
+              if (player.showsChrome)
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0x00000000), Color(0xCC000000)],
+                      ),
+                    ),
+                    child: SafeArea(top: false, child: caption),
+                  ),
+                ),
+            ],
+          );
+        }
         return Column(
           children: [
-            AspectRatio(aspectRatio: 16 / 9, child: picture),
+            ValueListenableBuilder<double?>(
+              valueListenable: player.videoAspectRatio,
+              builder: (context, ratio, child) =>
+                  AspectRatio(aspectRatio: ratio ?? 16 / 9, child: child),
+              child: picture,
+            ),
             Expanded(child: SingleChildScrollView(child: caption)),
           ],
         );

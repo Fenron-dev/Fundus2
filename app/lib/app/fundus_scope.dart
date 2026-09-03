@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -17,6 +18,7 @@ import '../data/media_type.dart';
 import '../data/work_view.dart';
 import '../media/capture.dart';
 import '../media/peer_file_cache.dart';
+import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
@@ -136,6 +138,9 @@ class FundusScopeState extends State<FundusScope> {
     host.addListener(_bump);
     peerLibrary.addListener(_bump);
     peerLibrary.addListener(_handOverProxy);
+    player.addListener(_syncWhenClosed);
+    reader.addListener(_syncWhenClosed);
+    textReader.addListener(_syncWhenClosed);
   }
 
   /// Keeps the players pointed at the peer that is open.
@@ -176,6 +181,9 @@ class FundusScopeState extends State<FundusScope> {
     host.removeListener(_bump);
     peerLibrary.removeListener(_bump);
     peerLibrary.removeListener(_handOverProxy);
+    player.removeListener(_syncWhenClosed);
+    reader.removeListener(_syncWhenClosed);
+    textReader.removeListener(_syncWhenClosed);
     // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
     if (widget.reader == null) reader.dispose();
@@ -200,8 +208,32 @@ class FundusScopeState extends State<FundusScope> {
     final opened = await peerLibrary.open(peer);
     if (!opened) return;
     await _handOverProxy();
+    await _loadTrackPreference();
     navigation.reset(const DashboardRoute());
   }
+
+  /// Sends a work's reading state on the moment it is put down.
+  ///
+  /// The manual button stays — it is what says whether the round worked. This
+  /// is the case that button cannot cover: finishing an episode on the phone
+  /// and wanting the Mac at the same place, without remembering to press
+  /// anything.
+  void _syncWhenClosed() {
+    final playing = player.work?.id;
+    final reading = reader.isOpen ? reader.work?.id : null;
+    final texting = textReader.isOpen ? textReader.work?.id : null;
+    final open = playing ?? reading ?? texting;
+    if (open != null) {
+      _lastOpenWorkId = open;
+      return;
+    }
+    final closed = _lastOpenWorkId;
+    if (closed == null) return;
+    _lastOpenWorkId = null;
+    unawaited(sync.pushWork(closed));
+  }
+
+  String? _lastOpenWorkId;
 
   /// Lets go of a paired library and returns to the vault chooser.
   Future<void> closePeerLibrary() async {
@@ -266,6 +298,11 @@ class FundusScopeState extends State<FundusScope> {
   /// Shell settings are device-bound but portable: they live in the vault so
   /// a reinstall does not cost them, keyed by this device.
   static const shellProfileKind = 'shell';
+
+  /// Where the player's language choice is kept. Its own section, because a
+  /// device adopting another's settings should be able to take the reading
+  /// setup without the language, or the other way round.
+  static const videoProfileKind = 'video';
 
   Future<void> setThemeMode(ThemeMode mode) async {
     await settings.setThemeMode(mode);
@@ -360,9 +397,42 @@ class FundusScopeState extends State<FundusScope> {
     final profile = await library.loadDeviceProfile(settings.deviceKey);
     if (profile == null) {
       await _writeShellProfile();
+      await _loadTrackPreference();
       return;
     }
     await adoptDeviceProfile(profile);
+    await _loadTrackPreference();
+  }
+
+  /// Reads the remembered audio and subtitle languages out of the vault and
+  /// hands them to the player.
+  ///
+  /// In the vault rather than in this installation's settings: reinstalling
+  /// the app is exactly when losing them hurts, and the vault is what
+  /// survives that.
+  Future<void> _loadTrackPreference() async {
+    final vault = library.library;
+    if (vault == null) return;
+    final profile = await vault.loadDeviceProfile(settings.deviceKey);
+    player.preference = TrackPreference.fromJson(
+      profile?.settingsFor(videoProfileKind) ?? const {},
+    );
+    player.onPreferenceChanged = _saveTrackPreference;
+  }
+
+  Future<void> _saveTrackPreference(TrackPreference value) async {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return;
+    final existing = await vault.loadDeviceProfile(settings.deviceKey);
+    final profile =
+        (existing ??
+                DeviceProfile(
+                  key: settings.deviceKey,
+                  displayName: settings.deviceName,
+                  platform: defaultTargetPlatform.name,
+                ))
+            .withSettings(videoProfileKind, value.toJson());
+    await vault.saveDeviceProfile(profile);
   }
 
   Future<void> _writeShellProfile() async {

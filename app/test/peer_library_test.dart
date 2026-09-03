@@ -5,8 +5,12 @@ import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/peer_connection.dart';
 import 'package:fundus/data/peer_library.dart';
+import 'package:fundus/data/work_view.dart';
 import 'package:fundus/data/sync_controller.dart';
+import 'package:archive/archive.dart';
 import 'package:fundus/media/peer_file_cache.dart';
+import 'package:fundus/media/reader_controller.dart';
+import 'package:fundus/media/comic_archive.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
@@ -35,6 +39,17 @@ void main() {
     await File(
       '${work.path}/01 - Anfang.mp3',
     ).writeAsBytes(List.filled(2048, 7));
+
+    // Und ein Manga, denn genau der ließ sich vom Handy aus nicht öffnen.
+    final manga = Directory('${source.path}/Manga/Klingenwind');
+    await manga.create(recursive: true);
+    final archive = Archive()
+      ..add(ArchiveFile.bytes('001.jpg', List.filled(8, 1)))
+      ..add(ArchiveFile.bytes('002.jpg', List.filled(8, 1)));
+    await File(
+      '${manga.path}/Band 1.cbz',
+    ).writeAsBytes(ZipEncoder().encodeBytes(archive));
+
     theirs = await FundusLibrary.create(source);
     await for (final _ in theirs.index()) {}
 
@@ -78,8 +93,10 @@ void main() {
     expect(await peers.open(peer()), isTrue, reason: peers.failure ?? '');
 
     expect(library.isOpen, isTrue);
-    expect(library.works, hasLength(1));
-    expect(library.works.single.title, 'Der Schacht');
+    expect(
+      library.works.map((work) => work.title),
+      containsAll(['Der Schacht', 'Klingenwind']),
+    );
     // Und sie heißt, wie das Gerät heißt — nicht wie ihr Ordner.
     expect(library.displayName, 'Mac');
   });
@@ -87,13 +104,54 @@ void main() {
   test('das Werk sagt, dass es von woanders kommt', () async {
     await peers.open(peer());
 
-    expect(library.works.single.origin.name, 'stream');
+    expect(
+      library.works
+          .firstWhere((work) => work.title == 'Der Schacht')
+          .origin
+          .name,
+      'stream',
+    );
+  });
+
+  test('ein gespiegeltes CBZ gilt dem Leser als lesbar', () async {
+    await peers.open(peer());
+    final comic = library.works.firstWhere(
+      (work) => work.title == 'Klingenwind',
+    );
+    final volumes = library.library!.playbackTracks(comic.id);
+
+    // Und die App schickt es überhaupt an den Leser.
+    expect(ReaderController.handles(comic), isTrue);
+    expect(volumes, isNotEmpty);
+    // Der Fehler war genau hier: der gespiegelte Pfad hieß `peer/<id>` und
+    // trug keine Endung, also war für den Leser nichts davon ein Comic.
+    expect(volumes.first.title, endsWith('.cbz'));
+    expect(ReaderController.isReadableFile(volumes.first.title), isTrue);
+    expect(volumes.first.relativePath, endsWith('.cbz'));
+  });
+
+  test('der Leser bekommt das Archiv und findet seine Seiten', () async {
+    await peers.open(peer());
+    final comic = library.works.firstWhere(
+      (work) => work.title == 'Klingenwind',
+    );
+    final volume = library.library!.playbackTracks(comic.id).first;
+
+    final cache = PeerFileCache(
+      proxy: peers.proxy!,
+      directory: Directory('${temporary.path}/leser-cache'),
+    );
+    final path = await cache.fileFor(volume);
+    final source = ArchiveComicPageSource(path, name: volume.title);
+    addTearDown(source.dispose);
+
+    expect(await source.pages(), hasLength(2));
   });
 
   test('der Player bekommt eine Adresse, keine Datei', () async {
     await peers.open(peer());
     final track = library.library!
-        .playbackTracks(library.works.single.id)
+        .playbackTracks(_audiobook(library).id)
         .single;
 
     expect(track.isRemote, isTrue);
@@ -105,7 +163,7 @@ void main() {
   test('ein Leser bekommt die Datei wirklich hierher', () async {
     await peers.open(peer());
     final track = library.library!
-        .playbackTracks(library.works.single.id)
+        .playbackTracks(_audiobook(library).id)
         .single;
 
     final cache = PeerFileCache(
@@ -121,7 +179,7 @@ void main() {
 
   test('der Lesestand geht zurück zum Mac', () async {
     await peers.open(peer());
-    final workId = library.works.single.id;
+    final workId = _audiobook(library).id;
     final fileId = library.library!.playbackTracks(workId).single.fileId;
     library.library!.saveProgress(
       workId: workId,
@@ -143,13 +201,17 @@ void main() {
 
   test('ein schlafender Mac leert die Bibliothek nicht', () async {
     await peers.open(peer());
-    expect(library.works, hasLength(1));
+    final before = library.works.length;
 
     await socket.close(force: true);
     expect(await peers.refresh(), isFalse);
 
     // Die Liste steht noch; nur die Meldung sagt, was los ist.
-    expect(library.works, hasLength(1));
+    expect(library.works, hasLength(before));
     expect(peers.failure, isNotNull);
   });
 }
+
+/// Das Hörbuch unter den gespiegelten Werken.
+WorkView _audiobook(LibraryController library) =>
+    library.works.firstWhere((work) => work.title == 'Der Schacht');

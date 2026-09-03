@@ -251,7 +251,9 @@ class TextReaderController extends ChangeNotifier {
     try {
       _volumes = library
           .playbackTracks(work.id)
-          .where((track) => isReadableFile(track.relativePath))
+          // By the file's own name: a mirrored file has no path on this
+          // device, but it is still called what it is called.
+          .where((track) => isReadableFile(track.title))
           .toList(growable: false);
       if (_volumes.isEmpty) {
         _failure = 'Zu diesem Werk ist kein lesbarer Text erfasst.';

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/work_view.dart';
@@ -55,6 +55,11 @@ final class FakeEngine implements PlaybackEngine {
     opened.add(uri);
     starts.add(start);
   }
+
+  @override
+  final ValueListenable<double?> videoAspectRatio = ValueNotifier<double?>(
+    null,
+  );
 
   @override
   Widget? videoSurface() => null;

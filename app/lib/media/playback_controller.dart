@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -8,6 +8,7 @@ import 'package:fundus_core/fundus_core.dart';
 import '../data/work_view.dart';
 import 'media_byte_source.dart';
 import 'playback_engine.dart';
+import 'track_preference.dart';
 
 /// The one player.
 ///
@@ -18,6 +19,16 @@ import 'playback_engine.dart';
 class PlaybackController extends ChangeNotifier {
   PlaybackController({PlaybackEngine? engine, this.deviceId = 'device'})
     : _engineOrNull = engine;
+
+  /// The languages this device watches in, and the way to store a change.
+  ///
+  /// Kept by the scope in the vault's device profile rather than here: it is
+  /// a setting that must survive a reinstall, and the vault is what survives.
+  TrackPreference preference = const TrackPreference();
+  Future<void> Function(TrackPreference value)? onPreferenceChanged;
+
+  /// Set once per opened file — mpv reports its tracks more than once.
+  bool _appliedPreference = false;
 
   /// Where remote bytes come from while a paired library is open.
   ///
@@ -103,6 +114,13 @@ class PlaybackController extends ChangeNotifier {
   /// to show — no engine yet, or a media type without a picture.
   Widget? videoSurface() => showsVideo ? _engineOrNull?.videoSurface() : null;
 
+  /// The shape of the picture, once the file has said what it is. A player
+  /// that assumes 16:9 letterboxes a 4:3 episode a second time.
+  ValueListenable<double?> get videoAspectRatio =>
+      _engineOrNull?.videoAspectRatio ?? _noAspect;
+
+  static final ValueNotifier<double?> _noAspect = ValueNotifier(null);
+
   double get progressFraction {
     final total = _duration;
     if (total == null || total.inMilliseconds <= 0) return 0;
@@ -132,12 +150,53 @@ class PlaybackController extends ChangeNotifier {
   static String _sanitise(String value) =>
       value.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
 
+  /// Picks an audio track, and remembers the *language* it was.
+  ///
+  /// Remembering the id would remember nothing: it is a position inside one
+  /// file, and the next episode may well have German second instead of first.
   Future<void> selectAudioTrack(String id) async {
     await _engine.selectAudioTrack(id);
+    final chosen = _tracks.audio.where((track) => track.id == id).firstOrNull;
+    if (chosen?.language case final language?) {
+      preference = preference.withAudio(language);
+      await onPreferenceChanged?.call(preference);
+    }
   }
 
   Future<void> selectSubtitleTrack(String id) async {
     await _engine.selectSubtitleTrack(id);
+    if (id == 'no') {
+      preference = preference.withSubtitle(TrackPreference.off);
+    } else {
+      final chosen = _tracks.subtitles
+          .where((track) => track.id == id)
+          .firstOrNull;
+      if (chosen?.language case final language?) {
+        preference = preference.withSubtitle(language);
+      }
+    }
+    await onPreferenceChanged?.call(preference);
+  }
+
+  /// Applies the remembered languages to a file that has just reported its
+  /// tracks.
+  ///
+  /// Only once per file, and only where the file actually has the language:
+  /// overriding the file's own choice with nothing would be worse than the
+  /// choice it made.
+  Future<void> _applyPreference() async {
+    if (_appliedPreference || _tracks.audio.isEmpty) return;
+    _appliedPreference = true;
+    if (preference.audioFor(_tracks.audio) case final track?) {
+      if (track.id != _tracks.selectedAudioId) {
+        await _engine.selectAudioTrack(track.id);
+      }
+    }
+    if (preference.subtitleFor(_tracks.subtitles) case final track?) {
+      if (track.id != _tracks.selectedSubtitleId) {
+        await _engine.selectSubtitleTrack(track.id);
+      }
+    }
   }
 
   /// States plainly that this work cannot be opened yet.
@@ -206,8 +265,11 @@ class PlaybackController extends ChangeNotifier {
     final source = currentSource;
     if (source == null) return;
     // The tracks belong to the file, not to the work: a new file starts
-    // without a menu until the engine has said what it holds.
+    // without a menu until the engine has said what it holds — and the
+    // remembered language is applied again, because the next file numbers
+    // its tracks however it likes.
     _tracks = const MediaTracks();
+    _appliedPreference = false;
     if (!await source.isReachable()) {
       // A file that is gone is a state, not a crash: the work keeps its
       // progress and the origin mark tells the story.
@@ -253,6 +315,7 @@ class PlaybackController extends ChangeNotifier {
       _engine.tracksStream.listen((value) {
         _tracks = value;
         notifyListeners();
+        _applyPreference();
       }),
     ]);
   }
