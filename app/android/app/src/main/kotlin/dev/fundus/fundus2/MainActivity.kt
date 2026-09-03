@@ -1,4 +1,4 @@
-package dev.fundus.fundus
+package dev.fundus.fundus2
 
 import android.Manifest
 import android.content.Intent
