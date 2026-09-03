@@ -351,6 +351,14 @@ class _PeerTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (scope.peerLibrary.peer?.serverId == peer.serverId)
+                Padding(
+                  padding: const EdgeInsets.only(right: FundusSpace.x3),
+                  child: FundusConnectionDot(
+                    state: scope.peerLibrary.connection,
+                    showLabel: false,
+                  ),
+                ),
               if (busy)
                 const SizedBox(
                   width: 18,

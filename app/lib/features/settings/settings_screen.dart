@@ -767,7 +767,17 @@ class _SyncState extends State<_Sync> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Geöffnete Fremdbibliothek', style: theme.textTheme.titleMedium),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Geöffnete Fremdbibliothek',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              FundusConnectionDot(state: scope.peerLibrary.connection),
+            ],
+          ),
           const SizedBox(height: FundusSpace.x2),
           Text(
             'Der Katalog von „${peer?.name ?? ''}" liegt hier als Kopie — '
@@ -917,6 +927,15 @@ class _Sharing extends StatelessWidget {
                   style: theme.textTheme.titleMedium,
                 ),
               ),
+              if (host.isRunning) ...[
+                FundusConnectionDot(
+                  state: host.hasConnectedDevice
+                      ? FundusConnectionState.connected
+                      : FundusConnectionState.idle,
+                  label: host.hasConnectedDevice ? 'Gerät verbunden' : 'Bereit',
+                ),
+                const SizedBox(width: FundusSpace.x4),
+              ],
               Switch(
                 value: host.isRunning,
                 onChanged: host.isBusy
@@ -985,9 +1004,17 @@ class _Sharing extends StatelessWidget {
             for (final device in host.pairedDevices)
               ListTile(
                 contentPadding: EdgeInsets.zero,
+                leading: FundusConnectionDot(
+                  state: host.connectionFor(device),
+                  showLabel: false,
+                ),
                 title: Text(device.name),
                 subtitle: Text(
-                  'gekoppelt am ${_date(device.pairedAt)}',
+                  host.connectionFor(device) == FundusConnectionState.connected
+                      ? 'jetzt verbunden'
+                      : device.lastSeenAt == null
+                      ? 'gekoppelt am ${_date(device.pairedAt)}'
+                      : 'zuletzt ${_moment(device.lastSeenAt!)}',
                   style: theme.textTheme.labelMedium?.copyWith(
                     color: tokens.textFaint,
                   ),
@@ -1008,6 +1035,13 @@ class _Sharing extends StatelessWidget {
     final local = value.toLocal();
     String two(int number) => number.toString().padLeft(2, '0');
     return '${two(local.day)}.${two(local.month)}.${local.year}';
+  }
+
+  static String _moment(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.day)}.${two(local.month)}. ${two(local.hour)}:'
+        '${two(local.minute)}';
   }
 }
 

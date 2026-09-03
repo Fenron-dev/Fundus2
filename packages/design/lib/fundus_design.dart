@@ -2,6 +2,7 @@
 /// radius and elevation in the Fundus client.
 library;
 
+export 'src/components/fundus_connection.dart';
 export 'src/components/fundus_empty_state.dart';
 export 'src/components/fundus_origin.dart';
 export 'src/components/fundus_progress.dart';

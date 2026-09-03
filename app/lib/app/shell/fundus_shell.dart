@@ -208,6 +208,22 @@ class _CompactHeader extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
+          if (scope.peerLibrary.isOpen)
+            Padding(
+              padding: const EdgeInsets.only(right: FundusSpace.x2),
+              child: FundusConnectionDot(
+                state: scope.peerLibrary.connection,
+                showLabel: false,
+                label: switch (scope.peerLibrary.connection) {
+                  FundusConnectionState.connected =>
+                    '„${scope.peerLibrary.peer?.name ?? ''}" antwortet',
+                  FundusConnectionState.refused =>
+                    '„${scope.peerLibrary.peer?.name ?? ''}" weist ab',
+                  FundusConnectionState.idle =>
+                    '„${scope.peerLibrary.peer?.name ?? ''}" antwortet nicht',
+                },
+              ),
+            ),
           IconButton(
             onPressed: () => scope.navigation.go(const VaultRoute()),
             icon: Icon(FundusIcons.vault, size: FundusIcons.sizeMd),

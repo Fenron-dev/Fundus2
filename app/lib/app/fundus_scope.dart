@@ -18,6 +18,7 @@ import '../data/media_type.dart';
 import '../data/work_view.dart';
 import '../media/capture.dart';
 import '../media/peer_file_cache.dart';
+import '../media/remote_comic_source.dart';
 import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
@@ -155,17 +156,30 @@ class FundusScopeState extends State<FundusScope> {
     if (proxy == null) {
       reader.cache = null;
       textReader.cache = null;
+      reader.remotePages = null;
       return;
     }
     final support = await getApplicationSupportDirectory();
-    final cache = PeerFileCache(
-      proxy: proxy,
-      directory: Directory(
-        p.join(support.path, 'peer-cache', peerLibrary.peer?.serverId ?? 'x'),
-      ),
+    final room = Directory(
+      p.join(support.path, 'peer-cache', peerLibrary.peer?.serverId ?? 'x'),
     );
+    final cache = PeerFileCache(proxy: proxy, directory: room);
     reader.cache = cache;
     textReader.cache = cache;
+
+    // A comic is paged rather than fetched whole, so the reader is given a
+    // way to open one against the connection itself.
+    final client = peerLibrary.client;
+    final libraryId = peerLibrary.peer?.libraryId;
+    reader.remotePages = client == null || libraryId == null
+        ? null
+        : (volume) => RemoteComicPageSource(
+            client: client,
+            libraryId: libraryId,
+            fileId: volume.fileId,
+            name: volume.title,
+            cacheDirectory: Directory(p.join(room.path, 'pages')),
+          );
   }
 
   @override

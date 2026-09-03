@@ -138,6 +138,21 @@ final class FundusRemoteClient {
     }
   }
 
+  /// A cheap authenticated request, used as a heartbeat.
+  ///
+  /// It has to be authenticated: `/health` answers without a token and would
+  /// therefore prove nothing and — more to the point — would not tell the
+  /// other side that this device is still there. The paired-device list on
+  /// the far end is kept alive by requests arriving with the token.
+  Future<bool> ping() async {
+    try {
+      await _get('/v1/capabilities');
+      return true;
+    } on FundusRemoteException {
+      return false;
+    }
+  }
+
   Future<List<RemoteLibrary>> libraries() async {
     final decoded = await _get('/v1/libraries');
     final entries = decoded['libraries'];
@@ -332,6 +347,34 @@ final class FundusRemoteClient {
       durationMs: seconds == null ? null : (seconds * 1000).round(),
     );
   }
+
+  /// The pages of a comic volume, without fetching the volume.
+  ///
+  /// The other side opens the archive and lists what is in it; a page then
+  /// arrives on its own. That is the difference between waiting for one page
+  /// and waiting for a hundred and fifty megabytes.
+  Future<List<ComicPageRecord>> comicPages(
+    String libraryId,
+    String fileId,
+  ) async {
+    final decoded = await _get(
+      '/v1/libraries/$libraryId/files/$fileId/comic/pages',
+    );
+    final pages = decoded['pages'];
+    if (pages is! List) return const [];
+    return [
+      for (final entry in pages)
+        if (entry is Map)
+          ComicPageRecord(
+            id: '${entry['id'] ?? ''}',
+            name: '${entry['name'] ?? ''}',
+            size: (entry['size'] as num?)?.toInt() ?? 0,
+          ),
+    ];
+  }
+
+  Future<Uint8List> comicPage(String libraryId, String fileId, int index) =>
+      getBytes('/v1/libraries/$libraryId/files/$fileId/comic/pages/$index');
 
   /// Where a work's cover can be fetched, for the catalogue mirror.
   Uri coverUri(String libraryId, String workId) =>
@@ -587,4 +630,17 @@ final class RemoteMark {
     final at = position.numericValue?.toStringAsFixed(3) ?? position.key ?? '';
     return '${fileId ?? ''}|${position.elementId ?? ''}|$at|${quote ?? ''}';
   }
+}
+
+/// One page of a comic, as the other side lists it.
+final class ComicPageRecord {
+  const ComicPageRecord({
+    required this.id,
+    required this.name,
+    required this.size,
+  });
+
+  final String id;
+  final String name;
+  final int size;
 }

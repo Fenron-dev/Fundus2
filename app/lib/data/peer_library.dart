@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
+import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -46,6 +48,21 @@ class PeerLibraryController extends ChangeNotifier {
             : peer.certificateFingerprint,
       );
 
+  /// How often the peer is asked whether it is still there.
+  ///
+  /// Short enough that the mark means "now" rather than "recently", long
+  /// enough that a phone in a pocket is not doing work all evening. It is
+  /// also what keeps this device lit on the *other* side: over there a device
+  /// counts as present because its requests keep arriving.
+  static const heartbeat = Duration(seconds: 20);
+
+  /// After this long without an answer the mark goes out.
+  static const _staleAfter = Duration(seconds: 45);
+
+  Timer? _pulse;
+  DateTime? _lastContactAt;
+  bool _refused = false;
+
   PeerConnection? _peer;
   FundusRemoteClient? _client;
   FundusStreamProxy? _proxy;
@@ -59,7 +76,25 @@ class PeerLibraryController extends ChangeNotifier {
   /// Where a player fetches remote bytes. Null while no peer is open.
   FundusStreamProxy? get proxy => _proxy;
 
+  /// The open connection, for the things that fetch bytes themselves rather
+  /// than through the player's proxy — a comic's pages, a cover.
+  FundusRemoteClient? get client => _client;
+
   bool get isBusy => _busy;
+
+  /// Whether the peer answered a moment ago.
+  FundusConnectionState get connection {
+    if (_peer == null) return FundusConnectionState.idle;
+    if (_refused) return FundusConnectionState.refused;
+    final last = _lastContactAt;
+    if (last == null) return FundusConnectionState.idle;
+    return DateTime.now().difference(last) < _staleAfter
+        ? FundusConnectionState.connected
+        : FundusConnectionState.idle;
+  }
+
+  DateTime? get lastContactAt => _lastContactAt;
+
   String? get failure => _failure;
   RemoteMirrorReport? get lastMirror => _lastMirror;
   bool get isOpen => _peer != null;
@@ -126,6 +161,9 @@ class PeerLibraryController extends ChangeNotifier {
       _client?.close();
       _client = client;
       _peer = peer.copyWith(libraryId: libraryId);
+      _lastContactAt = DateTime.now();
+      _refused = false;
+      _startPulse();
       // Remembered so the sync knows which library over there answers for
       // this one without asking again.
       await settings.savePeer(_peer!);
@@ -157,6 +195,8 @@ class PeerLibraryController extends ChangeNotifier {
         sourceId: sourceIdFor(peer),
       ).run();
       vault.setSourceReachable(sourceIdFor(peer), reachable: true);
+      _lastContactAt = DateTime.now();
+      _refused = false;
       library.refresh();
       return _done(true);
     } on FundusRemoteException catch (error) {
@@ -164,6 +204,9 @@ class PeerLibraryController extends ChangeNotifier {
       // not answering. A library that empties itself because a laptop went to
       // sleep would be worse than useless.
       vault.setSourceReachable(sourceIdFor(peer), reachable: false);
+      // A refusal is a different thing from silence: a revoked device or a
+      // changed certificate will not fix itself by waiting.
+      _refused = error.statusCode == 401 || error.statusCode == 403;
       library.refresh();
       _failure = error.message;
     } on Object catch (error) {
@@ -172,9 +215,30 @@ class PeerLibraryController extends ChangeNotifier {
     return _done(false);
   }
 
+  /// Asks the peer whether it is still there, and lets both sides know.
+  ///
+  /// A failure is not an error to report: a laptop that went to sleep is the
+  /// normal case, and the mark going out says it better than a message would.
+  void _startPulse() {
+    _pulse?.cancel();
+    _pulse = Timer.periodic(heartbeat, (_) async {
+      final client = _client;
+      if (client == null) return;
+      final reachable = await client.ping();
+      if (reachable) {
+        _lastContactAt = DateTime.now();
+        _refused = false;
+      }
+      notifyListeners();
+    });
+  }
+
   /// Lets go of the peer. The mirrored index stays on disk — it is what makes
   /// the library readable again before the network answers.
   Future<void> close() async {
+    _pulse?.cancel();
+    _pulse = null;
+    _lastContactAt = null;
     await _proxy?.close();
     _proxy = null;
     _client?.close();
@@ -185,6 +249,7 @@ class PeerLibraryController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _pulse?.cancel();
     _proxy?.close();
     _client?.close();
     super.dispose();

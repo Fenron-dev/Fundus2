@@ -11,6 +11,7 @@ import 'package:archive/archive.dart';
 import 'package:fundus/media/peer_file_cache.dart';
 import 'package:fundus/media/reader_controller.dart';
 import 'package:fundus/media/comic_archive.dart';
+import 'package:fundus/media/remote_comic_source.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
@@ -128,6 +129,33 @@ void main() {
     expect(volumes.first.title, endsWith('.cbz'));
     expect(ReaderController.isReadableFile(volumes.first.title), isTrue);
     expect(volumes.first.relativePath, endsWith('.cbz'));
+  });
+
+  test('ein Comic wird seitenweise gelesen, nicht am Stück geholt', () async {
+    await peers.open(peer());
+    final comic = library.works.firstWhere(
+      (work) => work.title == 'Klingenwind',
+    );
+    final volume = library.library!.playbackTracks(comic.id).first;
+
+    final pageRoom = Directory('${temporary.path}/seiten');
+    final source = RemoteComicPageSource(
+      client: peers.client!,
+      libraryId: peers.peer!.libraryId,
+      fileId: volume.fileId,
+      name: volume.title,
+      cacheDirectory: pageRoom,
+    );
+    addTearDown(source.dispose);
+
+    final pages = await source.pages();
+    expect(pages, hasLength(2));
+
+    // Eine Seite kommt allein — und nur sie liegt danach hier.
+    final materialised = await source.materialize([pages.first]);
+    expect(materialised, hasLength(1));
+    expect(await File(materialised[pages.first.id]!).exists(), isTrue);
+    expect(pageRoom.listSync().whereType<File>(), hasLength(1));
   });
 
   test('der Leser bekommt das Archiv und findet seine Seiten', () async {

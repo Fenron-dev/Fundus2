@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:fundus_design/fundus_design.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
@@ -57,6 +58,31 @@ class ServerHostController extends ChangeNotifier {
 
   FundusPairingSession? get pairingSession => _pairing?.activeSession;
   List<FundusPairedDevice> get pairedDevices => _pairing?.devices ?? const [];
+
+  /// A device counts as present while its requests keep arriving.
+  ///
+  /// The client sends a heartbeat for exactly this, so the mark means „now"
+  /// rather than „was here at some point". The window is wider than the
+  /// heartbeat interval, because one lost packet is not a disconnection.
+  static const presenceWindow = Duration(seconds: 45);
+
+  /// Nothing tells this side that a device *stopped* asking — silence has no
+  /// event — so while sharing is on the mark is re-read on a slow tick.
+  Timer? _presenceTick;
+
+  FundusConnectionState connectionFor(FundusPairedDevice device) {
+    if (!isRunning) return FundusConnectionState.idle;
+    final seen = device.lastSeenAt;
+    if (seen == null) return FundusConnectionState.idle;
+    return DateTime.now().toUtc().difference(seen) < presenceWindow
+        ? FundusConnectionState.connected
+        : FundusConnectionState.idle;
+  }
+
+  /// Whether any paired device is on the line.
+  bool get hasConnectedDevice => pairedDevices.any(
+    (device) => connectionFor(device) == FundusConnectionState.connected,
+  );
 
   /// The code the other device reads: where, who, which certificate, and a
   /// nonce that is only good for the next few minutes.
@@ -124,6 +150,10 @@ class ServerHostController extends ChangeNotifier {
       _address = _addresses.firstOrNull;
       _state = ServerHostState.running;
       if (remember) await _identityStore!.saveSharing(true);
+      _presenceTick ??= Timer.periodic(
+        const Duration(seconds: 15),
+        (_) => notifyListeners(),
+      );
     } on Object catch (error) {
       await _closeSocket();
       _releaseRegistry();
@@ -134,6 +164,8 @@ class ServerHostController extends ChangeNotifier {
   }
 
   Future<void> stop({bool remember = true}) async {
+    _presenceTick?.cancel();
+    _presenceTick = null;
     await _closeSocket();
     _releaseRegistry();
     _pairing?.cancel();
@@ -176,6 +208,7 @@ class ServerHostController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _presenceTick?.cancel();
     final socket = _socket;
     _socket = null;
     if (socket != null) unawaited(socket.close(force: true));

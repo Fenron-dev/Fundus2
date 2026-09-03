@@ -189,11 +189,32 @@ class ReaderController extends ChangeNotifier {
   /// Where remote volumes are fetched from while a paired library is open.
   PeerFileCache? cache;
 
+  /// How a comic on the other machine is opened page by page. Null when no
+  /// paired library is open, which is when there is nothing to page from.
+  ComicPageSource Function(LibraryPlaybackTrack volume)? remotePages;
+
   double? _fetching;
 
   /// How far a remote volume has been fetched, or null when nothing is being
   /// fetched. A reader that sits blank for a minute has to say why.
   double? get fetchProgress => _fetching;
+
+  /// Opens a volume, wherever it happens to live.
+  ///
+  /// A comic on another machine is fetched page by page — the server lists
+  /// and serves a volume's pages, so the first page arrives in the time one
+  /// page takes rather than after the whole archive. A PDF still comes over
+  /// whole: pdfium seeks all through a document, and there is no page-wise
+  /// answer for it.
+  Future<ComicPageSource> _openVolumeSource(LibraryPlaybackTrack volume) async {
+    final pages = remotePages;
+    if (volume.isRemote &&
+        pages != null &&
+        p.extension(volume.title).toLowerCase() != '.pdf') {
+      return pages(volume);
+    }
+    return _openSource(await _pathFor(volume), volume.title);
+  }
 
   /// Where the bytes are on this device.
   ///
@@ -279,7 +300,7 @@ class ReaderController extends ChangeNotifier {
       _files.clear();
       _pending.clear();
       final volume = _volumes[index];
-      _source = _openSource(await _pathFor(volume), volume.title);
+      _source = await _openVolumeSource(volume);
       _pages = await _source!.pages();
       _volumeIndex = index;
       if (_pages.isEmpty) {

@@ -70,6 +70,7 @@ class ShellHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: FundusSpace.x3),
+          const _ConnectionMark(),
           const _FilterButton(),
           const SizedBox(width: FundusSpace.x2),
           const _SortButton(),
@@ -296,6 +297,57 @@ class _HeaderChip extends StatelessWidget {
             FundusTag(badge!, tone: FundusTagTone.accent),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Whether the other machine is on the line, where it can be seen at a glance.
+///
+/// It appears only when there is something to say: a library of one's own on a
+/// machine that shares nothing has no connection to report, and a mark that is
+/// always grey teaches people to stop looking at it.
+class _ConnectionMark extends StatelessWidget {
+  const _ConnectionMark();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final peer = scope.peerLibrary;
+    final host = scope.host;
+
+    // Reading someone else's library is the case where it matters most: what
+    // is on screen depends on that machine answering.
+    if (peer.isOpen) {
+      return Padding(
+        padding: const EdgeInsets.only(right: FundusSpace.x3),
+        child: FundusConnectionDot(
+          state: peer.connection,
+          showLabel: false,
+          label: switch (peer.connection) {
+            FundusConnectionState.connected =>
+              '„${peer.peer?.name ?? ''}" antwortet',
+            FundusConnectionState.refused =>
+              '„${peer.peer?.name ?? ''}" weist ab',
+            FundusConnectionState.idle =>
+              '„${peer.peer?.name ?? ''}" antwortet gerade nicht',
+          },
+        ),
+      );
+    }
+
+    if (!host.isRunning) return const SizedBox.shrink();
+    final connected = host.hasConnectedDevice;
+    return Padding(
+      padding: const EdgeInsets.only(right: FundusSpace.x3),
+      child: FundusConnectionDot(
+        state: connected
+            ? FundusConnectionState.connected
+            : FundusConnectionState.idle,
+        showLabel: false,
+        label: connected
+            ? 'Ein gekoppeltes Gerät ist verbunden'
+            : 'Freigegeben, gerade ist niemand verbunden',
       ),
     );
   }
