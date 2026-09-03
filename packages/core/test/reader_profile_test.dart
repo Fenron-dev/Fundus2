@@ -77,6 +77,48 @@ void main() {
     expect(profile.readingDirection, PublicationReadingDirection.leftToRight);
   });
 
+  test('gleichzeitige Schreibvorgänge kommen sich nicht ins Gehege', () async {
+    final library = await FundusLibrary.create(root);
+
+    // Zwei Einstellungen im selben Moment: früher teilten sie sich eine
+    // .part-Datei, der erste Umbenennen nahm sie weg und der zweite fiel
+    // über die fehlende Datei.
+    await Future.wait([
+      library.saveReaderProfile(
+        const PublicationReaderProfile(layout: PublicationReaderLayout.webtoon),
+        workId: 'werk-1',
+      ),
+      library.saveDeviceProfile(
+        const DeviceProfile(
+          key: 'device-a',
+          displayName: 'Mac',
+          platform: 'macos',
+        ),
+      ),
+      library.saveDeviceProfile(
+        const DeviceProfile(
+          key: 'device-a',
+          displayName: 'MacBook',
+          platform: 'macos',
+        ),
+      ),
+    ]);
+
+    final profile = await library.loadReaderProfile(workId: 'werk-1');
+    final device = await library.loadDeviceProfile('device-a');
+    library.close();
+
+    expect(profile.layout, PublicationReaderLayout.webtoon);
+    expect(device?.displayName, 'MacBook');
+
+    // Und es bleibt nichts Halbes liegen.
+    final leftovers = Directory('${root.path}/_fundus')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.part'));
+    expect(leftovers, isEmpty);
+  });
+
   test('eine unlesbare Datei kostet kein Buch', () async {
     final library = await FundusLibrary.create(root);
     final file = File('${root.path}/_fundus/readers/kaputt.json');

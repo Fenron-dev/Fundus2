@@ -68,6 +68,14 @@ final class FundusLibrary {
   }) : _configuration = configuration,
        _database = database;
 
+  /// Sidecar writes run one after another.
+  ///
+  /// Two settings saved at the same moment used to share one `.part` file:
+  /// the first rename moved it away and the second failed with a missing
+  /// file, which on a slow machine cost the setting that was just made.
+  Future<void> _sidecarWrites = Future.value();
+  int _sidecarCounter = 0;
+
   static const metadataDirectoryName = '.library';
   static const manifestFileName = 'version.json';
   static const databaseFileName = 'index.db';
@@ -225,15 +233,10 @@ final class FundusLibrary {
 
   Future<void> saveDeviceProfile(DeviceProfile profile) async {
     _ensureWritable();
-    final file = _deviceProfileFile(profile.key);
-    await file.parent.create(recursive: true);
-    final partial = File('${file.path}.part');
-    await partial.writeAsString(
+    await _writeSidecar(
+      _deviceProfileFile(profile.key),
       '${const JsonEncoder.withIndent('  ').convert(profile.toJson())}\n',
-      flush: true,
     );
-    if (await file.exists()) await file.delete();
-    await partial.rename(file.path);
   }
 
   Future<void> deleteDeviceProfile(String key) async {
@@ -264,16 +267,10 @@ final class FundusLibrary {
     String? workId,
   }) async {
     _ensureWritable();
+    final contents =
+        '${const JsonEncoder.withIndent('  ').convert(profile.toJson())}\n';
     for (final key in {?workId, _defaultReaderKey}) {
-      final file = _readerProfileFile(key);
-      await file.parent.create(recursive: true);
-      final partial = File('${file.path}.part');
-      await partial.writeAsString(
-        '${const JsonEncoder.withIndent('  ').convert(profile.toJson())}\n',
-        flush: true,
-      );
-      if (await file.exists()) await file.delete();
-      await partial.rename(file.path);
+      await _writeSidecar(_readerProfileFile(key), contents);
     }
   }
 
@@ -312,6 +309,28 @@ final class FundusLibrary {
     // directory is stripped rather than trusted.
     final safe = key.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
     return File(p.join(_deviceProfileDirectory.path, '$safe.yaml'));
+  }
+
+  /// Writes [contents] to [file] so that a reader never sees half of it, and
+  /// so that a second writer cannot pull the ground away.
+  Future<void> _writeSidecar(File file, String contents) {
+    final operation = _sidecarWrites.then((_) async {
+      await file.parent.create(recursive: true);
+      // A name of its own per write: a shared one is what let two writers
+      // collide in the first place.
+      final partial = File('${file.path}.${_sidecarCounter++}.part');
+      try {
+        await partial.writeAsString(contents, flush: true);
+        if (await file.exists()) await file.delete();
+        await partial.rename(file.path);
+      } finally {
+        if (await partial.exists()) await partial.delete();
+      }
+    });
+    // The chain must survive a failed write, or one error would block every
+    // later setting.
+    _sidecarWrites = operation.catchError((Object _) {});
+    return operation;
   }
 
   Future<DeviceProfile?> _readDeviceProfile(File file) async {
