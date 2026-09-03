@@ -38,6 +38,8 @@ class PlaybackController extends ChangeNotifier {
   List<LibraryPlaybackChapter> _chapters = const [];
   int _index = 0;
 
+  MediaTracks _tracks = const MediaTracks();
+
   Duration _position = Duration.zero;
   Duration? _duration;
   bool _playing = false;
@@ -55,6 +57,9 @@ class PlaybackController extends ChangeNotifier {
   Duration get position => _position;
   Duration? get duration => _duration;
   bool get isPlaying => _playing;
+
+  /// What the running file offers in the way of languages and subtitles.
+  MediaTracks get tracks => _tracks;
   double get rate => _rate;
   bool get hasWork => _work != null;
 
@@ -76,6 +81,14 @@ class PlaybackController extends ChangeNotifier {
     final total = _duration;
     if (total == null || total.inMilliseconds <= 0) return 0;
     return (_position.inMilliseconds / total.inMilliseconds).clamp(0, 1);
+  }
+
+  Future<void> selectAudioTrack(String id) async {
+    await _engine.selectAudioTrack(id);
+  }
+
+  Future<void> selectSubtitleTrack(String id) async {
+    await _engine.selectSubtitleTrack(id);
   }
 
   /// States plainly that this work cannot be opened yet.
@@ -142,6 +155,9 @@ class PlaybackController extends ChangeNotifier {
   Future<void> _openCurrent({Duration at = Duration.zero}) async {
     final source = currentSource;
     if (source == null) return;
+    // The tracks belong to the file, not to the work: a new file starts
+    // without a menu until the engine has said what it holds.
+    _tracks = const MediaTracks();
     if (!await source.isReachable()) {
       // A file that is gone is a state, not a crash: the work keeps its
       // progress and the origin mark tells the story.
@@ -178,6 +194,10 @@ class PlaybackController extends ChangeNotifier {
       }),
       _engine.completedStream.listen((value) {
         if (value) next();
+      }),
+      _engine.tracksStream.listen((value) {
+        _tracks = value;
+        notifyListeners();
       }),
     ]);
   }

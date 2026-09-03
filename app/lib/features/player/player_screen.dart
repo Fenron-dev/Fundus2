@@ -3,6 +3,7 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
 import '../../media/playback_controller.dart';
+import '../../media/playback_engine.dart';
 import '../library/work_cover.dart';
 
 /// The full player, laid over the shell.
@@ -42,6 +43,25 @@ class PlayerScreen extends StatelessWidget {
                     tooltip: 'Minimieren',
                   ),
                   const Spacer(),
+                  // Zweisprachige Anime sind der Normalfall, nicht die
+                  // Ausnahme: ohne diese beiden Menüs sind die deutsche
+                  // Tonspur und die Untertitel schlicht unerreichbar.
+                  if (player.tracks.audio.length > 1)
+                    _TrackMenu(
+                      icon: FundusIcons.audioTrack,
+                      tooltip: 'Tonspur',
+                      options: player.tracks.audio,
+                      selectedId: player.tracks.selectedAudioId,
+                      onSelected: player.selectAudioTrack,
+                    ),
+                  if (player.tracks.subtitles.length > 1)
+                    _TrackMenu(
+                      icon: FundusIcons.subtitles,
+                      tooltip: 'Untertitel',
+                      options: player.tracks.subtitles,
+                      selectedId: player.tracks.selectedSubtitleId,
+                      onSelected: player.selectSubtitleTrack,
+                    ),
                   FundusOriginMark(work.origin, showLabel: true),
                 ],
               ),
@@ -73,6 +93,44 @@ class PlayerScreen extends StatelessWidget {
   }
 }
 
+class _TrackMenu extends StatelessWidget {
+  const _TrackMenu({
+    required this.icon,
+    required this.tooltip,
+    required this.options,
+    required this.selectedId,
+    required this.onSelected,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final List<MediaTrackOption> options;
+  final String? selectedId;
+  final void Function(String id) onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    return PopupMenuButton<String>(
+      tooltip: tooltip,
+      icon: Icon(icon, size: FundusIcons.sizeLg),
+      onSelected: onSelected,
+      itemBuilder: (context) => [
+        for (final option in options)
+          PopupMenuItem(
+            value: option.id,
+            child: Text(
+              option.label,
+              style: option.id == selectedId
+                  ? TextStyle(color: tokens.accentRamp.s200)
+                  : null,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _Transport extends StatelessWidget {
   const _Transport({this.compact = false});
 
@@ -83,26 +141,68 @@ class _Transport extends StatelessWidget {
     final scope = FundusScope.of(context);
     final player = scope.player;
     final work = player.work!;
-    final tokens = context.fundus;
-    final theme = Theme.of(context);
 
-    // A film shows its picture where an audiobook shows its cover.
+    // A film shows its picture where an audiobook shows its cover — and it
+    // gets the room: a picture squeezed into a padded box on a large window
+    // is the one thing a video player must not do.
     final video = player.videoSurface();
+    if (video != null) {
+      final caption = Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: FundusSpace.x6,
+          vertical: FundusSpace.x4,
+        ),
+        child: Column(
+          children: [
+            Text(
+              player.currentSource?.title ?? work.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: FundusSpace.x3),
+            const _Controls(),
+            // Auf dem Telefon gibt es keine zweite Spalte, in der die Folgen
+            // stehen könnten — sie gehören dann unter die Bedienung.
+            if (compact) ...[
+              const SizedBox(height: FundusSpace.x6),
+              const _ContextPanel(shrinkWrap: true),
+            ],
+          ],
+        ),
+      );
 
+      if (compact) {
+        return Column(
+          children: [
+            AspectRatio(aspectRatio: 16 / 9, child: video),
+            Expanded(child: SingleChildScrollView(child: caption)),
+          ],
+        );
+      }
+      return Column(
+        children: [
+          Expanded(
+            child: ColoredBox(
+              color: const Color(0xFF000000),
+              child: Center(child: video),
+            ),
+          ),
+          caption,
+        ],
+      );
+    }
+
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(FundusSpace.x10),
       child: Column(
         children: [
-          if (video != null)
-            ClipRRect(
-              borderRadius: FundusRadius.mdAll,
-              child: AspectRatio(aspectRatio: 16 / 9, child: video),
-            )
-          else
-            SizedBox(
-              width: compact ? 220 : 260,
-              child: WorkCover(work: work, showProgress: false),
-            ),
+          SizedBox(
+            width: compact ? 220 : 260,
+            child: WorkCover(work: work, showProgress: false),
+          ),
           const SizedBox(height: FundusSpace.x8),
           Text(
             work.title,
@@ -118,81 +218,99 @@ class _Transport extends StatelessWidget {
             ),
           ),
           const SizedBox(height: FundusSpace.x8),
-          Row(
-            children: [
-              Text(
-                formatPlaybackTime(player.position),
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: tokens.textFaint,
-                ),
-              ),
-              Expanded(
-                child: Slider(
-                  value: player.progressFraction,
-                  onChanged: (value) {
-                    final total = player.duration;
-                    if (total == null) return;
-                    player.seek(total * value);
-                  },
-                ),
-              ),
-              Text(
-                player.duration == null
-                    ? '--:--'
-                    : formatPlaybackTime(player.duration!),
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: tokens.textFaint,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: FundusSpace.x4),
-          Wrap(
-            spacing: FundusSpace.x3,
-            runSpacing: FundusSpace.x3,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            alignment: WrapAlignment.center,
-            children: [
-              TextButton(
-                onPressed: () =>
-                    player.seekRelative(const Duration(seconds: -15)),
-                child: const Text('−15 s'),
-              ),
-              IconButton(
-                onPressed: player.previous,
-                icon: Icon(FundusIcons.skipBack, size: FundusIcons.sizeLg),
-                tooltip: 'Vorheriger Titel',
-              ),
-              IconButton.filled(
-                onPressed: player.playOrPause,
-                iconSize: FundusIcons.sizeLg,
-                icon: Icon(
-                  player.isPlaying ? FundusIcons.pause : FundusIcons.play,
-                ),
-                tooltip: player.isPlaying ? 'Pause' : 'Wiedergabe',
-              ),
-              IconButton(
-                onPressed: player.next,
-                icon: Icon(FundusIcons.skipForward, size: FundusIcons.sizeLg),
-                tooltip: 'Nächster Titel',
-              ),
-              TextButton(
-                onPressed: () =>
-                    player.seekRelative(const Duration(seconds: 30)),
-                child: const Text('+30 s'),
-              ),
-              OutlinedButton(
-                onPressed: player.cycleRate,
-                child: Text('${player.rate}×'),
-              ),
-            ],
-          ),
+          const _Controls(),
           if (compact) ...[
             const SizedBox(height: FundusSpace.x8),
             const _ContextPanel(shrinkWrap: true),
           ],
         ],
       ),
+    );
+  }
+}
+
+/// The seek bar and the buttons — the same set whether a cover or a picture
+/// sits above them.
+class _Controls extends StatelessWidget {
+  const _Controls();
+
+  @override
+  Widget build(BuildContext context) {
+    final player = FundusScope.of(context).player;
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Text(
+              formatPlaybackTime(player.position),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: tokens.textFaint,
+              ),
+            ),
+            Expanded(
+              child: Slider(
+                value: player.progressFraction,
+                onChanged: (value) {
+                  final total = player.duration;
+                  if (total == null) return;
+                  player.seek(total * value);
+                },
+              ),
+            ),
+            Text(
+              player.duration == null
+                  ? '--:--'
+                  : formatPlaybackTime(player.duration!),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: tokens.textFaint,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: FundusSpace.x4),
+        Wrap(
+          spacing: FundusSpace.x3,
+          runSpacing: FundusSpace.x3,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          alignment: WrapAlignment.center,
+          children: [
+            TextButton(
+              onPressed: () =>
+                  player.seekRelative(const Duration(seconds: -15)),
+              child: const Text('−15 s'),
+            ),
+            IconButton(
+              onPressed: player.previous,
+              icon: Icon(FundusIcons.skipBack, size: FundusIcons.sizeLg),
+              tooltip: 'Vorheriger Titel',
+            ),
+            IconButton.filled(
+              onPressed: player.playOrPause,
+              iconSize: FundusIcons.sizeLg,
+              icon: Icon(
+                player.isPlaying ? FundusIcons.pause : FundusIcons.play,
+              ),
+              tooltip: player.isPlaying ? 'Pause' : 'Wiedergabe',
+            ),
+            IconButton(
+              onPressed: player.next,
+              icon: Icon(FundusIcons.skipForward, size: FundusIcons.sizeLg),
+              tooltip: 'Nächster Titel',
+            ),
+            TextButton(
+              onPressed: () => player.seekRelative(const Duration(seconds: 30)),
+              child: const Text('+30 s'),
+            ),
+            OutlinedButton(
+              onPressed: player.cycleRate,
+              child: Text('${player.rate}×'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

@@ -16,7 +16,11 @@ final class FakeEngine implements PlaybackEngine {
   final _playing = StreamController<bool>.broadcast();
   final _completed = StreamController<bool>.broadcast();
 
+  final _tracks = StreamController<MediaTracks>.broadcast();
+
   final List<Uri> opened = [];
+  final List<String> audioChoices = [];
+  final List<String> subtitleChoices = [];
   final List<Duration> starts = [];
   final List<Duration> seeks = [];
   double rate = 1;
@@ -27,6 +31,7 @@ final class FakeEngine implements PlaybackEngine {
   void emitPosition(Duration value) => _position.add(value);
   void emitDuration(Duration value) => _duration.add(value);
   void emitCompleted() => _completed.add(true);
+  void emitTracks(MediaTracks value) => _tracks.add(value);
 
   @override
   Stream<Duration> get positionStream => _position.stream;
@@ -39,6 +44,9 @@ final class FakeEngine implements PlaybackEngine {
 
   @override
   Stream<bool> get completedStream => _completed.stream;
+
+  @override
+  Stream<MediaTracks> get tracksStream => _tracks.stream;
 
   @override
   Future<void> open(Uri uri, {Duration start = Duration.zero}) async {
@@ -74,12 +82,19 @@ final class FakeEngine implements PlaybackEngine {
   Future<void> setRate(double value) async => rate = value;
 
   @override
+  Future<void> selectAudioTrack(String id) async => audioChoices.add(id);
+
+  @override
+  Future<void> selectSubtitleTrack(String id) async => subtitleChoices.add(id);
+
+  @override
   Future<void> dispose() async {
     disposed = true;
     await _position.close();
     await _duration.close();
     await _playing.close();
     await _completed.close();
+    await _tracks.close();
   }
 }
 

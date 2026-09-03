@@ -7,6 +7,7 @@ import 'package:fundus/app/fundus_scope.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/features/player/player_screen.dart';
 import 'package:fundus/media/playback_controller.dart';
+import 'package:fundus/media/playback_engine.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import 'playback_controller_test.dart' show FakeEngine;
@@ -18,6 +19,7 @@ void main() {
   late Directory root;
   late LibraryController library;
   late AppSettings settings;
+  late FakeEngine engine;
   late PlaybackController player;
 
   Future<void> pumpPlayer(WidgetTester tester) async {
@@ -48,7 +50,8 @@ void main() {
     root = await Directory.systemTemp.createTemp('fundus-panel-');
     library = LibraryController();
     settings = AppSettings.inMemory();
-    player = PlaybackController(engine: FakeEngine());
+    engine = FakeEngine();
+    player = PlaybackController(engine: engine);
   });
 
   tearDown(() async {
@@ -74,6 +77,65 @@ void main() {
     expect(find.text('FOLGEN'), findsOneWidget);
     expect(find.text('KAPITEL'), findsNothing);
     expect(find.textContaining('S01E01'), findsWidgets);
+  });
+
+  testWidgets('zweisprachiger Ton ist wählbar', (tester) async {
+    final series = Directory('${root.path}/Anime/Chainsaw Man')
+      ..createSync(recursive: true);
+    File(
+      '${series.path}/S01E01 - Dog.mkv',
+    ).writeAsBytesSync(List.filled(64, 3));
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+      engine.emitTracks(
+        const MediaTracks(
+          audio: [
+            MediaTrackOption(id: '1', label: 'Japanisch'),
+            MediaTrackOption(id: '2', label: 'Deutsch'),
+          ],
+          subtitles: [
+            MediaTrackOption(id: 'no', label: 'Aus'),
+            MediaTrackOption(id: '3', label: 'Deutsch'),
+          ],
+          selectedAudioId: '1',
+          selectedSubtitleId: 'no',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    });
+    await pumpPlayer(tester);
+
+    await tester.tap(find.byTooltip('Tonspur'));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+    await tester.tap(find.text('Deutsch').last);
+    await tester.pump();
+
+    expect(engine.audioChoices, ['2']);
+  });
+
+  testWidgets('ohne Auswahl steht kein Menü da', (tester) async {
+    final series = Directory('${root.path}/Anime/Chainsaw Man')
+      ..createSync(recursive: true);
+    File(
+      '${series.path}/S01E01 - Dog.mkv',
+    ).writeAsBytesSync(List.filled(64, 3));
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+    });
+    await pumpPlayer(tester);
+
+    expect(find.byTooltip('Tonspur'), findsNothing);
+    expect(find.byTooltip('Untertitel'), findsNothing);
   });
 
   testWidgets('mehrere Hörbuchdateien heißen Dateien', (tester) async {
