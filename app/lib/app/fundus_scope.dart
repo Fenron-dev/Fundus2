@@ -15,6 +15,7 @@ import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
 import 'app_navigation.dart';
 import 'fullscreen.dart';
+import 'pairing_scanner.dart';
 import 'storage_access.dart';
 import 'app_settings.dart';
 
@@ -34,6 +35,7 @@ class FundusScope extends StatefulWidget {
     this.host,
     this.captureSink = const FileCaptureSink(),
     this.storage = const PlatformStorageAccess(),
+    this.scanner = const CameraPairingScanner(),
   });
 
   final AppSettings settings;
@@ -62,6 +64,10 @@ class FundusScope extends StatefulWidget {
 
   /// Whether the device lets the app read its files. Only Android asks.
   final StorageAccess storage;
+
+  /// How a pairing code is read off the other screen. The default opens the
+  /// camera, which a test has none of.
+  final PairingScanner scanner;
   final Widget child;
 
   static FundusScopeState of(BuildContext context) {
@@ -98,6 +104,7 @@ class FundusScopeState extends State<FundusScope> {
   AppSettings get settings => widget.settings;
   CaptureSink get captureSink => widget.captureSink;
   StorageAccess get storage => widget.storage;
+  PairingScanner get scanner => widget.scanner;
   LibraryController get library => widget.library;
   WorkFilter get filter => _filter;
 

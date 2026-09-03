@@ -70,6 +70,11 @@ abstract final class FundusIcons {
   static final fullscreen = PhosphorIcons.cornersOut();
   static final camera = PhosphorIcons.camera();
 
+  // Pairing.
+  static final qrCode = PhosphorIcons.qrCode();
+  static final scan = PhosphorIcons.scan();
+  static final torch = PhosphorIcons.flashlight();
+
   // Views and states.
   static final viewGrid = PhosphorIcons.gridFour();
   static final viewTable = PhosphorIcons.rows();

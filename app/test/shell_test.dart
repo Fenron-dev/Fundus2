@@ -172,7 +172,7 @@ void main() {
     // Nie zwei Seitenleisten: die Bereiche ersetzen die Medientypen.
     expect(find.text('Zurück zum Dashboard'), findsOneWidget);
     expect(find.text('Hörbücher'), findsNothing);
-    expect(find.text('Server & Geräte'), findsWidgets);
+    expect(find.text('Geräte & Abgleich'), findsWidgets);
     // Downloads und Einstellungen bleiben unten stehen.
     expect(find.text('Downloads'), findsOneWidget);
   });

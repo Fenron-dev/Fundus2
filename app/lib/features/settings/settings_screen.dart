@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
+import '../../app/pairing_scanner.dart';
 import '../../data/media_type.dart';
 import '../../data/server_host.dart';
 import '../library/unassigned_folders_card.dart';
@@ -25,7 +27,6 @@ class SettingsScreen extends StatelessWidget {
     return switch (category) {
       'darstellung' => const _Appearance(),
       'bibliotheken' => const _Libraries(),
-      'server' => const _Devices(),
       'synchronisation' => const _Sync(),
       'diagnose' => const _Diagnostics(),
       _ => _Planned(category: category),
@@ -318,146 +319,6 @@ List<(String, String)> _mediaRoots(FundusScopeState scope) {
   return entries;
 }
 
-class _Devices extends StatefulWidget {
-  const _Devices();
-
-  @override
-  State<_Devices> createState() => _DevicesState();
-}
-
-class _DevicesState extends State<_Devices> {
-  final _nameController = TextEditingController();
-  Future<List<DeviceProfile>>? _profiles;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final scope = FundusScope.of(context);
-    if (_nameController.text.isEmpty) {
-      _nameController.text = scope.settings.deviceName;
-    }
-    // Created once: a future built inside build() restarts on every rebuild.
-    _profiles ??= scope.library.library?.listDeviceProfiles();
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scope = FundusScope.of(context);
-    final tokens = context.fundus;
-    final profiles = _profiles;
-
-    return _SettingsPage(
-      title: 'Server & Geräte',
-      subtitle:
-          'Gerätekennung und Schlüssel bleiben lokal. Was jedes Gerät sich '
-          'merkt — Reader und Darstellung — liegt bei der Bibliothek.',
-      children: [
-        _Card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Dieses Gerät',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: FundusSpace.x3),
-              TextField(
-                controller: _nameController,
-                onSubmitted: scope.settings.setDeviceName,
-                decoration: const InputDecoration(labelText: 'Gerätename'),
-              ),
-              const SizedBox(height: FundusSpace.x2),
-              Text(
-                'Kennung ${scope.settings.deviceKey}',
-                style: Theme.of(
-                  context,
-                ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
-              ),
-            ],
-          ),
-        ),
-        if (profiles != null)
-          FutureBuilder<List<DeviceProfile>>(
-            future: profiles,
-            builder: (context, snapshot) {
-              final profiles = (snapshot.data ?? const <DeviceProfile>[])
-                  .where((p) => p.key != scope.settings.deviceKey)
-                  .toList();
-              if (profiles.isEmpty) return const SizedBox.shrink();
-              return _Card(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Einstellungen übernehmen',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: FundusSpace.x2),
-                    Text(
-                      'Diese Bibliothek trägt Einstellungen anderer Geräte. '
-                      'Nach einer Neuinstallation lassen sie sich hier '
-                      'zurückholen — die Kennung bleibt dabei diese.',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: tokens.textMuted),
-                    ),
-                    const SizedBox(height: FundusSpace.x4),
-                    for (final profile in profiles)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: FundusSpace.x2),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '${profile.displayName}'
-                                '${profile.platform.isEmpty ? '' : ' · ${profile.platform}'}',
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                            ),
-                            OutlinedButton(
-                              onPressed: () =>
-                                  scope.adoptDeviceProfile(profile),
-                              child: const Text('Übernehmen'),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              );
-            },
-          ),
-        _Card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'LAN-Freigabe',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: FundusSpace.x2),
-              Text(
-                'Der Peer-Server aus packages/server wird mit dem Netz-Schnitt '
-                'angeschlossen: TLS, QR-Pairing und widerrufbare '
-                'Geräteberechtigungen sind dort bereits gebaut.',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: tokens.textMuted),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _Diagnostics extends StatelessWidget {
   const _Diagnostics();
 
@@ -571,7 +432,11 @@ class _Planned extends StatelessWidget {
   }
 }
 
-/// Connecting to another Fundus, and keeping both sides in step.
+/// This device, the devices it is connected to, and the door between them.
+///
+/// One page rather than two: a device that is only named and a device that is
+/// connected are the same device, and splitting them meant one screen showed
+/// half the story while the other announced the rest as planned.
 class _Sync extends StatefulWidget {
   const _Sync();
 
@@ -582,12 +447,40 @@ class _Sync extends StatefulWidget {
 class _SyncState extends State<_Sync> {
   final _codeController = TextEditingController();
   final _pinController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _pinFocus = FocusNode();
+  Future<List<DeviceProfile>>? _profiles;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final scope = FundusScope.of(context);
+    if (_nameController.text.isEmpty) {
+      _nameController.text = scope.settings.deviceName;
+    }
+    // Created once: a future built inside build() restarts on every rebuild.
+    _profiles ??= scope.library.library?.listDeviceProfiles();
+  }
 
   @override
   void dispose() {
     _codeController.dispose();
     _pinController.dispose();
+    _nameController.dispose();
+    _pinFocus.dispose();
     super.dispose();
+  }
+
+  /// Reads the code off the other screen and puts the cursor in the PIN field.
+  ///
+  /// The PIN stays out of the code on purpose — a code that carries it would
+  /// make a photograph of the screen enough — so the scan ends one step short,
+  /// and the least it can do is say which step.
+  Future<void> _scan(PairingScanner scanner) async {
+    final code = await scanner.scan(context);
+    if (code == null || !mounted) return;
+    _codeController.text = code;
+    _pinFocus.requestFocus();
   }
 
   @override
@@ -598,12 +491,34 @@ class _SyncState extends State<_Sync> {
     final theme = Theme.of(context);
 
     return _SettingsPage(
-      title: 'Synchronisation',
+      title: 'Geräte & Abgleich',
       subtitle:
           'Zwei Geräte, dieselbe Bibliothek, derselbe Stand. Abgeglichen wird, '
           'was man mit sich trägt: wo man ist, und was man sich angestrichen '
           'hat. Dateien wandern nicht mit.',
       children: [
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Dieses Gerät', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x3),
+              TextField(
+                controller: _nameController,
+                onSubmitted: scope.settings.setDeviceName,
+                decoration: const InputDecoration(labelText: 'Gerätename'),
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Kennung ${scope.settings.deviceKey} · unter diesem Namen '
+                'erscheint das Gerät auf der anderen Seite.',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.textFaint,
+                ),
+              ),
+            ],
+          ),
+        ),
         _Sharing(host: scope.host),
         _Card(
           child: Column(
@@ -612,13 +527,22 @@ class _SyncState extends State<_Sync> {
               Text('Gerät koppeln', style: theme.textTheme.titleMedium),
               const SizedBox(height: FundusSpace.x2),
               Text(
-                'Lass dir auf dem anderen Gerät den Kopplungscode zeigen und '
-                'gib die sechsstellige PIN dazu ein. Der Code allein reicht '
-                'nicht — wer ihn abfotografiert, hat noch keine Verbindung.',
+                'Lass dir auf dem anderen Gerät den Kopplungscode zeigen — '
+                'scanne den QR-Code oder füge den Text ein — und gib die '
+                'sechsstellige PIN dazu ein. Der Code allein reicht nicht: wer '
+                'ihn abfotografiert, hat noch keine Verbindung.',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: tokens.textMuted,
                 ),
               ),
+              if (scope.scanner.isAvailable) ...[
+                const SizedBox(height: FundusSpace.x4),
+                FilledButton.tonalIcon(
+                  onPressed: sync.isBusy ? null : () => _scan(scope.scanner),
+                  icon: Icon(FundusIcons.scan, size: FundusIcons.sizeSm),
+                  label: const Text('QR-Code scannen'),
+                ),
+              ],
               const SizedBox(height: FundusSpace.x4),
               TextField(
                 controller: _codeController,
@@ -636,6 +560,7 @@ class _SyncState extends State<_Sync> {
                     width: 140,
                     child: TextField(
                       controller: _pinController,
+                      focusNode: _pinFocus,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(labelText: 'PIN'),
                     ),
@@ -746,7 +671,71 @@ class _SyncState extends State<_Sync> {
             ],
           ),
         ),
+        _adoption(context),
       ],
+    );
+  }
+
+  /// What the vault remembers of other devices.
+  ///
+  /// Not a sync — these settings never left the library folder. It is the
+  /// answer to a reinstall: the reader settings are still lying there under
+  /// another device's name, and this fetches them back.
+  Widget _adoption(BuildContext context) {
+    final profiles = _profiles;
+    if (profiles == null) return const SizedBox.shrink();
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    return FutureBuilder<List<DeviceProfile>>(
+      future: profiles,
+      builder: (context, snapshot) {
+        final others = (snapshot.data ?? const <DeviceProfile>[])
+            .where((profile) => profile.key != scope.settings.deviceKey)
+            .toList();
+        if (others.isEmpty) return const SizedBox.shrink();
+        return _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Einstellungen übernehmen',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Diese Bibliothek trägt Einstellungen anderer Geräte. Nach '
+                'einer Neuinstallation lassen sie sich hier zurückholen — die '
+                'Kennung bleibt dabei diese.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              for (final profile in others)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: FundusSpace.x2),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${profile.displayName}'
+                          '${profile.platform.isEmpty ? '' : ' · ${profile.platform}'}',
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ),
+                      OutlinedButton(
+                        onPressed: () => scope.adoptDeviceProfile(profile),
+                        child: const Text('Übernehmen'),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -909,25 +898,28 @@ class _PairingInvitation extends StatelessWidget {
             letterSpacing: 6,
           ),
         ),
-        const SizedBox(height: FundusSpace.x3),
+        const SizedBox(height: FundusSpace.x4),
         Text('Kopplungscode', style: theme.textTheme.labelLarge),
-        const SizedBox(height: FundusSpace.x1),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(FundusSpace.x3),
-          decoration: BoxDecoration(
-            color: tokens.background,
-            borderRadius: FundusRadius.mdAll,
-          ),
-          child: SelectableText(
-            code ?? '',
-            maxLines: 4,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontFamily: 'monospace',
-              color: tokens.textMuted,
+        const SizedBox(height: FundusSpace.x2),
+        if (code != null)
+          // On white, always: a scanner reads contrast, not a colour scheme,
+          // and a dark code on a dark ground is a code nothing reads.
+          Container(
+            padding: const EdgeInsets.all(FundusSpace.x3),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: FundusRadius.mdAll,
+            ),
+            child: QrImageView(
+              data: code,
+              size: 260,
+              backgroundColor: Colors.white,
+              // The code carries a certificate fingerprint, so it is long;
+              // the lowest correction level keeps the squares large enough to
+              // read from arm's length.
+              errorCorrectionLevel: QrErrorCorrectLevel.L,
             ),
           ),
-        ),
         const SizedBox(height: FundusSpace.x3),
         Row(
           children: [
@@ -942,6 +934,31 @@ class _PairingInvitation extends StatelessWidget {
             TextButton(
               onPressed: host.cancelPairing,
               child: const Text('Abbrechen'),
+            ),
+          ],
+        ),
+        const SizedBox(height: FundusSpace.x2),
+        // Kept, but out of the way: scanning is the normal path, pasting the
+        // one for a device without a camera.
+        ExpansionTile(
+          title: Text('Code als Text', style: theme.textTheme.labelLarge),
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(FundusSpace.x3),
+              decoration: BoxDecoration(
+                color: tokens.background,
+                borderRadius: FundusRadius.mdAll,
+              ),
+              child: SelectableText(
+                code ?? '',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: tokens.textMuted,
+                ),
+              ),
             ),
           ],
         ),
