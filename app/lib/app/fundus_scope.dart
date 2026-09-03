@@ -11,13 +11,14 @@ import 'package:path_provider/path_provider.dart';
 import '../data/library_controller.dart';
 import '../data/server_host.dart';
 import '../data/peer_connection.dart';
+import '../data/download_controller.dart';
 import '../data/peer_library.dart';
 import '../data/sync_controller.dart';
 import '../data/work_filter.dart';
-import '../data/media_type.dart';
 import '../data/work_view.dart';
 import '../media/capture.dart';
 import '../media/peer_file_cache.dart';
+import '../media/photo_controller.dart';
 import '../media/remote_comic_source.dart';
 import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
@@ -44,6 +45,8 @@ class FundusScope extends StatefulWidget {
     this.sync,
     this.host,
     this.peerLibrary,
+    this.downloads,
+    this.photos,
     this.captureSink = const FileCaptureSink(),
     this.storage = const PlatformStorageAccess(),
     this.scanner = const CameraPairingScanner(),
@@ -72,6 +75,12 @@ class FundusScope extends StatefulWidget {
 
   /// And for a paired library, so a test never reaches for one.
   final PeerLibraryController? peerLibrary;
+
+  /// And for downloads, so a test never writes into app storage.
+  final DownloadController? downloads;
+
+  /// And for the gallery.
+  final PhotoController? photos;
 
   /// Where a saved page or frame goes. The default opens a system dialog.
   final CaptureSink captureSink;
@@ -115,6 +124,13 @@ class FundusScopeState extends State<FundusScope> {
   late final PeerLibraryController peerLibrary =
       widget.peerLibrary ??
       PeerLibraryController(settings: widget.settings, library: widget.library);
+  late final PhotoController photos = widget.photos ?? PhotoController();
+  late final DownloadController downloads =
+      widget.downloads ??
+      DownloadController(
+        library: widget.library,
+        storageRoot: getApplicationSupportDirectory,
+      );
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
@@ -138,6 +154,8 @@ class FundusScopeState extends State<FundusScope> {
     sync.addListener(_bump);
     host.addListener(_bump);
     peerLibrary.addListener(_bump);
+    downloads.addListener(_bump);
+    photos.addListener(_bump);
     peerLibrary.addListener(_handOverProxy);
     player.addListener(_syncWhenClosed);
     reader.addListener(_syncWhenClosed);
@@ -153,9 +171,11 @@ class FundusScopeState extends State<FundusScope> {
   Future<void> _handOverProxy() async {
     final proxy = peerLibrary.proxy;
     player.proxy = proxy;
+    downloads.proxy = proxy;
     if (proxy == null) {
       reader.cache = null;
       textReader.cache = null;
+      photos.cache = null;
       reader.remotePages = null;
       return;
     }
@@ -166,6 +186,7 @@ class FundusScopeState extends State<FundusScope> {
     final cache = PeerFileCache(proxy: proxy, directory: room);
     reader.cache = cache;
     textReader.cache = cache;
+    photos.cache = cache;
 
     // A comic is paged rather than fetched whole, so the reader is given a
     // way to open one against the connection itself.
@@ -194,6 +215,8 @@ class FundusScopeState extends State<FundusScope> {
     sync.removeListener(_bump);
     host.removeListener(_bump);
     peerLibrary.removeListener(_bump);
+    downloads.removeListener(_bump);
+    photos.removeListener(_bump);
     peerLibrary.removeListener(_handOverProxy);
     player.removeListener(_syncWhenClosed);
     reader.removeListener(_syncWhenClosed);
@@ -206,6 +229,8 @@ class FundusScopeState extends State<FundusScope> {
     if (widget.sync == null) sync.dispose();
     if (widget.host == null) host.dispose();
     if (widget.peerLibrary == null) peerLibrary.dispose();
+    if (widget.downloads == null) downloads.dispose();
+    if (widget.photos == null) photos.dispose();
     navigation.dispose();
     super.dispose();
   }
@@ -277,24 +302,21 @@ class FundusScopeState extends State<FundusScope> {
       if (textReader.failure == null) library.refresh();
       return;
     }
-    final unsupported = _missingReaderFor(work);
-    if (unsupported != null) {
-      player.reject(work, unsupported);
+    if (PhotoController.handles(work)) {
+      // A gallery is not a player: an album handed to libmpv would be a
+      // slideshow nobody asked for.
+      await photos.open(vault, work);
       return;
     }
     await player.open(vault, work);
     if (player.failure == null) library.refresh();
   }
 
-  /// The media types whose viewer is still missing. Naming them is the honest
-  /// answer; handing the file to the audio engine is not.
-  ///
-  /// Only photos are left: a gallery is not a player, and an album of
-  /// pictures handed to libmpv would be a slideshow nobody asked for.
-  String? _missingReaderFor(WorkView work) =>
-      work.mediaType?.progressKind == ProgressKind.none
-      ? 'Die Fotoansicht fehlt noch — dieses Werk lässt sich noch nicht öffnen.'
-      : null;
+  /// Leaves the gallery and returns to the library.
+  void leavePhotos() {
+    photos.close();
+    leaveFullscreen();
+  }
 
   /// Opens a media type. The filter follows the place, so switching areas
   /// never leaves a stale filter behind that would explain an empty screen.

@@ -213,6 +213,24 @@ final class FundusLibrary {
     return _database.mirrorRemoteCatalogue(sourceId: sourceId, works: works);
   }
 
+  /// Records a downloaded copy of a remote file.
+  void setOfflineCopy({required String fileId, required String path}) {
+    _ensureWritable();
+    _database.setOfflineCopy(fileId: fileId, path: path);
+  }
+
+  /// Gives a file back to the network — the copy is gone or unwanted.
+  void clearOfflineCopy(String fileId) {
+    _ensureWritable();
+    _database.clearOfflineCopy(fileId);
+  }
+
+  /// Every content file of a work, with where its bytes are.
+  List<
+    ({String fileId, String filename, String? offlinePath, String availability})
+  >
+  contentFiles(String workId) => _database.contentFiles(workId);
+
   /// Whether a source is answering right now.
   ///
   /// Works of an unreachable source stay in the index and stay visible; only
@@ -557,15 +575,20 @@ final class FundusLibrary {
     return _database
         .playbackTracks(workId)
         .map((track) {
+          // A downloaded copy is a file like any other, and from here on it
+          // is *the* file: the players and readers open it and never ask the
+          // network again.
+          final copy = track.offlinePath;
+          final remote =
+              track.sourceId != FundusDatabase.localSourceId && copy == null;
           // A remote file has no path on this device, and joining one onto
           // the vault root would invent a file that is not there. The caller
           // asks the source where the bytes are; here it only says that they
           // are elsewhere.
-          final remote = track.sourceId != FundusDatabase.localSourceId;
-          final absolutePath = remote
-              ? ''
-              : p.normalize(p.join(root.path, track.path));
-          if (!remote && !p.isWithin(root.path, absolutePath)) {
+          final absolutePath =
+              copy ??
+              (remote ? '' : p.normalize(p.join(root.path, track.path)));
+          if (!remote && copy == null && !p.isWithin(root.path, absolutePath)) {
             throw StateError(
               'Unsicherer Medienpfad im Bibliotheksindex: ${track.path}',
             );
@@ -574,7 +597,7 @@ final class FundusLibrary {
             fileId: track.fileId,
             relativePath: track.path,
             absolutePath: absolutePath,
-            sourceId: track.sourceId,
+            sourceId: remote ? track.sourceId : FundusDatabase.localSourceId,
             title: track.title,
             index: track.position,
             duration: track.durationMs == null

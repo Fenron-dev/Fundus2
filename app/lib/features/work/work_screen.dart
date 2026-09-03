@@ -3,6 +3,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
+import '../../data/download_controller.dart';
 import '../../media/reader_controller.dart';
 import '../../data/media_type.dart';
 import '../../data/work_view.dart';
@@ -137,6 +138,8 @@ class _Hero extends StatelessWidget {
                             : (work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
                       ),
                     ),
+                    const SizedBox(width: FundusSpace.x3),
+                    _OfflineButton(work: work),
                     const SizedBox(width: FundusSpace.x3),
                     if (work.summary.tags.isNotEmpty)
                       Wrap(
@@ -572,6 +575,65 @@ class _DevicesState extends State<_Devices> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Taking this work along, or giving it back to the network.
+///
+/// Only offered where it means something: a work that is already on this
+/// disk has nothing to download, and a work on a machine this device cannot
+/// reach has nothing to download it from.
+class _OfflineButton extends StatelessWidget {
+  const _OfflineButton({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final downloads = scope.downloads;
+    final job = downloads.jobFor(work.id);
+
+    if (downloads.isSecured(work.id)) {
+      return OutlinedButton.icon(
+        onPressed: () => downloads.remove(work.id),
+        icon: Icon(FundusIcons.originOffline, size: FundusIcons.sizeSm),
+        label: const Text('Offline · entfernen'),
+      );
+    }
+
+    if (job != null) {
+      return switch (job.state) {
+        DownloadState.failed => OutlinedButton.icon(
+          onPressed: () => downloads.download(work),
+          icon: Icon(FundusIcons.warning, size: FundusIcons.sizeSm),
+          label: const Text('Erneut versuchen'),
+        ),
+        DownloadState.done => const SizedBox.shrink(),
+        _ => OutlinedButton.icon(
+          onPressed: job.state == DownloadState.queued
+              ? () => downloads.cancel(work.id)
+              : null,
+          icon: SizedBox(
+            width: FundusIcons.sizeSm,
+            height: FundusIcons.sizeSm,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              value: job.progress == 0 ? null : job.progress,
+            ),
+          ),
+          label: Text('${(job.progress * 100).round()} %'),
+        ),
+      };
+    }
+
+    if (!downloads.canDownload(work)) return const SizedBox.shrink();
+
+    return OutlinedButton.icon(
+      onPressed: () => downloads.download(work),
+      icon: Icon(FundusIcons.downloads, size: FundusIcons.sizeSm),
+      label: const Text('Mitnehmen'),
     );
   }
 }

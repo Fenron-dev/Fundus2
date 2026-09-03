@@ -830,6 +830,7 @@ final class FundusDatabase {
       String fileId,
       String path,
       String sourceId,
+      String? offlinePath,
       String title,
       int position,
       int? durationMs,
@@ -841,7 +842,8 @@ final class FundusDatabase {
     final rows = _database.select(
       '''
       SELECT f.id, f.path, f.filename, wf.position, f.duration_ms,
-             f.source_id, f.container, f.audio_codec, f.codec_profile,
+             f.source_id, f.offline_path, f.availability,
+             f.container, f.audio_codec, f.codec_profile,
              f.audio_channels, f.sample_rate_hz,
              ${columnExists('files', 'video_episode_json') ? 'f.video_episode_json' : 'NULL'} AS video_episode_json
       FROM work_files wf
@@ -858,6 +860,7 @@ final class FundusDatabase {
             fileId: row['id'] as String,
             path: row['path'] as String,
             sourceId: row['source_id'] as String? ?? localSourceId,
+            offlinePath: row['offline_path'] as String?,
             title: row['filename'] as String,
             position: row['position'] as int,
             durationMs: row['duration_ms'] as int?,
@@ -2219,6 +2222,96 @@ final class FundusDatabase {
       ],
     );
   }
+
+  /// Records that a remote file now also exists on this device.
+  ///
+  /// The copy is what the player and the readers open from then on: a file
+  /// with an offline copy stops being a network question. Both facts are
+  /// kept — where the bytes are here, and which source they belong to —
+  /// because a download that is deleted has to fall back to being remote
+  /// rather than disappear.
+  void setOfflineCopy({required String fileId, required String path}) {
+    _database.execute(
+      "UPDATE files SET availability = 'offline_copy', offline_path = ? "
+      'WHERE id = ?',
+      [path, fileId],
+    );
+    _refreshWorkAvailability(fileId);
+  }
+
+  /// Gives a file back to the network. Called when a copy is deleted or is
+  /// found to be gone.
+  void clearOfflineCopy(String fileId) {
+    _database.execute(
+      "UPDATE files SET availability = 'remote', offline_path = NULL "
+      'WHERE id = ? AND availability = ?',
+      [fileId, 'offline_copy'],
+    );
+    _refreshWorkAvailability(fileId);
+  }
+
+  /// A work counts as secured when every one of its content files is.
+  ///
+  /// Half a series downloaded is not an offline series: the mark has to mean
+  /// "this will play on the train", and one missing episode makes it a lie.
+  void _refreshWorkAvailability(String fileId) {
+    final works = _database.select(
+      'SELECT DISTINCT work_id FROM work_files '
+      "WHERE file_id = ? AND role = 'content'",
+      [fileId],
+    );
+    for (final row in works) {
+      final workId = row['work_id'] as String;
+      final counts = _database.select(
+        'SELECT COUNT(*) AS total, '
+        "SUM(CASE WHEN f.availability = 'offline_copy' THEN 1 ELSE 0 END) "
+        'AS secured '
+        'FROM work_files wf JOIN files f ON f.id = wf.file_id '
+        "WHERE wf.work_id = ? AND wf.role = 'content'",
+        [workId],
+      );
+      if (counts.isEmpty) continue;
+      final total = (counts.first['total'] as num?)?.toInt() ?? 0;
+      final secured = (counts.first['secured'] as num?)?.toInt() ?? 0;
+      if (total == 0) continue;
+      final source = _database.select(
+        'SELECT source_id FROM works WHERE id = ?',
+        [workId],
+      );
+      final isLocal =
+          source.isNotEmpty && source.first['source_id'] == localSourceId;
+      _database.execute('UPDATE works SET availability = ? WHERE id = ?', [
+        secured == total
+            ? 'offline_copy'
+            : isLocal
+            ? 'available'
+            : 'remote',
+        workId,
+      ]);
+    }
+  }
+
+  /// Every content file of a work, with where its bytes are.
+  List<
+    ({String fileId, String filename, String? offlinePath, String availability})
+  >
+  contentFiles(String workId) => _database
+      .select(
+        'SELECT f.id, f.filename, f.offline_path, f.availability '
+        'FROM work_files wf JOIN files f ON f.id = wf.file_id '
+        "WHERE wf.work_id = ? AND wf.role = 'content' "
+        'ORDER BY wf.position',
+        [workId],
+      )
+      .map(
+        (row) => (
+          fileId: row['id'] as String,
+          filename: row['filename'] as String,
+          offlinePath: row['offline_path'] as String?,
+          availability: row['availability'] as String,
+        ),
+      )
+      .toList(growable: false);
 
   /// Marks a source as answering or not.
   ///

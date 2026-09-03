@@ -7,6 +7,7 @@ import '../../features/library/library_screen.dart';
 import '../../features/player/player_bar.dart';
 import '../../features/player/player_screen.dart';
 import '../../features/reader/reader_screen.dart';
+import '../../features/photos/photo_screen.dart';
 import '../../features/reader/text_reader_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/vault/vault_screen.dart';
@@ -39,7 +40,8 @@ class FundusShell extends StatelessWidget {
     final overlaid =
         scope.player.isExpanded ||
         scope.reader.isOpen ||
-        scope.textReader.isOpen;
+        scope.textReader.isOpen ||
+        scope.photos.isOpen;
     return Scaffold(
       drawer: isCompact ? const _NavigationDrawer() : null,
       drawerEnableOpenDragGesture: isCompact && !overlaid,
@@ -57,6 +59,9 @@ class FundusShell extends StatelessWidget {
           if (scope.reader.isOpen) const Positioned.fill(child: ReaderScreen()),
           if (scope.textReader.isOpen)
             const Positioned.fill(child: TextReaderScreen()),
+          // An album covers the shell the same way a reader does: pictures
+          // want the window, not a column beside the navigation.
+          if (scope.photos.isOpen) const Positioned.fill(child: PhotoScreen()),
         ],
       ),
     );

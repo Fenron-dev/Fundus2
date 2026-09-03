@@ -181,11 +181,59 @@ final class FundusServerHandler {
         _restoreProgressRevision,
       );
     return Pipeline()
+        .addMiddleware(_compression())
         .addMiddleware(_requestDiagnostics())
         .addMiddleware(_authentication())
         .addMiddleware(_jsonErrors())
         .addHandler(router.call);
   }
+
+  /// Packs JSON on the way out, where the client says it can unpack it.
+  ///
+  /// A catalogue is the case this exists for: thousands of works described in
+  /// text, most of it repeated words — titles, authors, kinds. It compresses
+  /// to a fraction, and over a home network that fraction is the difference
+  /// between a list that appears and a list that arrives.
+  ///
+  /// Only text, and only above a size where the packing costs less than it
+  /// saves. Media is already compressed; packing a video again would burn
+  /// processor time to make it very slightly larger.
+  Middleware _compression() {
+    return (inner) {
+      return (request) async {
+        final response = await inner(request);
+        final accepts =
+            request.headers['accept-encoding']?.toLowerCase().contains(
+              'gzip',
+            ) ??
+            false;
+        final type = response.headers['content-type'] ?? '';
+        if (!accepts ||
+            !type.startsWith('application/json') ||
+            response.headers.containsKey('content-encoding')) {
+          return response;
+        }
+        final body = await response.readAsString();
+        if (body.length < _compressAbove) {
+          return response.change(body: body);
+        }
+        final packed = gzip.encode(utf8.encode(body));
+        return response.change(
+          headers: {
+            'content-encoding': 'gzip',
+            'content-length': '${packed.length}',
+            // Anything in front of this has to know the answer varies.
+            'vary': 'Accept-Encoding',
+          },
+          body: packed,
+        );
+      };
+    };
+  }
+
+  /// Below this, packing is noise: a few hundred bytes of JSON travel in one
+  /// packet either way.
+  static const _compressAbove = 1024;
 
   Middleware _requestDiagnostics() {
     return (inner) {
