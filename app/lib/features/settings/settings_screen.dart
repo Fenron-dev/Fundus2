@@ -572,9 +572,14 @@ class _SyncState extends State<_Sync> {
             children: [
               Text('Dieses Gerät', style: theme.textTheme.titleMedium),
               const SizedBox(height: FundusSpace.x3),
+              // Saved as it is typed. It used to save on Enter only, and a
+              // phone keyboard has a Done key most people never press — so
+              // the name someone set before pairing was thrown away, and the
+              // device turned up on the other side as „Android-Gerät".
               TextField(
                 controller: _nameController,
-                onSubmitted: scope.settings.setDeviceName,
+                textInputAction: TextInputAction.done,
+                onChanged: scope.settings.setDeviceName,
                 decoration: const InputDecoration(labelText: 'Gerätename'),
               ),
               const SizedBox(height: FundusSpace.x2),

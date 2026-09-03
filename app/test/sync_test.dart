@@ -139,7 +139,9 @@ void main() {
     );
 
     expect(await sync.syncWith(peer()), isNull);
-    expect(sync.failure, 'Es ist keine Bibliothek geöffnet.');
+    // Und die Meldung sagt, was fehlt, statt Unmögliches zu verlangen.
+    expect(sync.failure, contains('keine eigene Bibliothek'));
+    expect(sync.failure, isNot(contains('dieselbe Bibliothek geöffnet')));
   });
 
   test(
@@ -159,7 +161,8 @@ void main() {
 
       final sync = controller();
       expect(await sync.syncWith(peer()), isNull);
-      expect(sync.failure, contains('gibt es diese Bibliothek nicht'));
+      // Sie nennt auch, was drüben stattdessen liegt.
+      expect(sync.failure, contains('„Fremdes"'));
     },
   );
 

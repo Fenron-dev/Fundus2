@@ -47,6 +47,35 @@ class MainActivity : AudioServiceActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DEVICE_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "name" -> result.success(deviceName())
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /**
+     * The name the phone already has.
+     *
+     * A person with two Samsungs has named them; „Android-Gerät" twice in a
+     * list of paired devices helps nobody. DEVICE_NAME is what they set, and
+     * the model is a duller but still distinguishing fallback.
+     */
+    private fun deviceName(): String {
+        val chosen = Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME)
+        if (!chosen.isNullOrBlank()) return chosen
+        val model = Build.MODEL
+        if (model.isNullOrBlank()) return "Android-Gerät"
+        val brand = Build.MANUFACTURER
+        return if (!brand.isNullOrBlank() && !model.startsWith(brand, ignoreCase = true)) {
+            "$brand $model"
+        } else {
+            model
+        }
     }
 
     private fun hasDirectStorageAccess(): Boolean {
@@ -125,6 +154,7 @@ class MainActivity : AudioServiceActivity() {
 
     companion object {
         private const val STORAGE_CHANNEL = "dev.fundus/android_storage_access"
+        private const val DEVICE_CHANNEL = "dev.fundus/device"
         private const val REQUEST_MANAGE_STORAGE = 7301
         private const val REQUEST_LEGACY_STORAGE = 7302
     }

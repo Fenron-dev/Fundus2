@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../data/peer_connection.dart';
+import 'device_name.dart';
 
 /// Everything this device remembers on its own.
 ///
@@ -51,7 +52,7 @@ class AppSettings extends ChangeNotifier {
     final settings = AppSettings._(file, values);
     if (settings.deviceKey.isEmpty) {
       settings._values['device_key'] = _generateKey();
-      settings._values['device_name'] ??= _defaultDeviceName();
+      settings._values['device_name'] ??= await platformDeviceName();
       await settings._persist();
     }
     return settings;
@@ -67,8 +68,15 @@ class AppSettings extends ChangeNotifier {
 
   String get deviceKey => _values['device_key'] as String? ?? '';
 
-  String get deviceName =>
-      _values['device_name'] as String? ?? _defaultDeviceName();
+  /// What this device calls itself. Asked of the platform once, on the first
+  /// start; a getter cannot wait for a channel, so this is the dull fallback
+  /// for the moment before that answer is stored.
+  String get deviceName {
+    final stored = _values['device_name'];
+    return stored is String && stored.trim().isNotEmpty
+        ? stored
+        : 'Dieses Gerät';
+  }
 
   ThemeMode get themeMode => switch (_values['theme_mode']) {
     'light' => ThemeMode.light,
@@ -120,7 +128,15 @@ class AppSettings extends ChangeNotifier {
     return value is List ? value.whereType<String>().toList() : const [];
   }
 
-  Future<void> setDeviceName(String value) => _set('device_name', value.trim());
+  /// Renames this device, unless the new name says nothing.
+  ///
+  /// An empty field is a field someone cleared on the way to typing, not a
+  /// request to be called nothing.
+  Future<void> setDeviceName(String value) async {
+    final name = value.trim();
+    if (name.isEmpty || name == deviceName) return;
+    await _set('device_name', name);
+  }
 
   Future<void> setThemeMode(ThemeMode mode) => _set('theme_mode', mode.name);
 
@@ -173,13 +189,5 @@ class AppSettings extends ChangeNotifier {
     final now = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     final noise = identityHashCode(Object()).toRadixString(16);
     return 'dev-$now-$noise';
-  }
-
-  static String _defaultDeviceName() {
-    if (Platform.isAndroid) return 'Android-Gerät';
-    if (Platform.isMacOS) return 'Mac';
-    if (Platform.isWindows) return 'Windows-PC';
-    if (Platform.isLinux) return 'Linux-Rechner';
-    return 'Dieses Gerät';
   }
 }

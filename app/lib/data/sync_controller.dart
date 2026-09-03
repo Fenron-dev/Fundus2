@@ -87,10 +87,21 @@ class SyncController extends ChangeNotifier {
   }
 
   /// Brings this vault and the peer's matching library to the same state.
+  ///
+  /// What this reconciles is reading state — positions, bookmarks, highlights
+  /// — between two copies of the same vault. It is not a way to reach the
+  /// other side's files: a work exists on both sides or there is nothing to
+  /// reconcile. Opening a paired Fundus's library on a device that has none
+  /// of its own is the next piece of work, and until it exists this says so
+  /// rather than asking for something that cannot be done.
   Future<SyncReport?> syncWith(PeerConnection peer) async {
     final vault = library.library;
     if (vault == null) {
-      _failure = 'Es ist keine Bibliothek geöffnet.';
+      _failure =
+          'Dieses Gerät hat keine eigene Bibliothek. Der Abgleich hält '
+          'zurzeit zwei Kopien derselben Bibliothek auf demselben Stand — '
+          'er holt die Bibliothek von „${peer.name}" noch nicht hierher. '
+          'Das kommt als Nächstes.';
       notifyListeners();
       return null;
     }
@@ -106,9 +117,14 @@ class SyncController extends ChangeNotifier {
         vault.manifest.libraryId,
       );
       if (libraryId == null) {
-        _failure =
-            'Auf „${peer.name}" gibt es diese Bibliothek nicht. Beide Seiten '
-            'müssen dieselbe Bibliothek geöffnet haben.';
+        final offered = await client.libraries();
+        _failure = offered.isEmpty
+            ? 'Auf „${peer.name}" ist gerade keine Bibliothek freigegeben.'
+            : 'Die hier geöffnete Bibliothek gibt es auf „${peer.name}" '
+                  'nicht — dort liegt ${_naming(offered)}. Abgeglichen '
+                  'werden kann nur zwischen zwei Kopien derselben '
+                  'Bibliothek; eine fremde Bibliothek hier zu öffnen, kommt '
+                  'als Nächstes.';
         _busy = false;
         notifyListeners();
         return null;
@@ -153,6 +169,10 @@ class SyncController extends ChangeNotifier {
     }
     return last;
   }
+
+  static String _naming(List<RemoteLibrary> libraries) => libraries.length == 1
+      ? '„${libraries.single.name}"'
+      : '${libraries.length} andere';
 
   /// Which library over there is the one open here.
   ///
