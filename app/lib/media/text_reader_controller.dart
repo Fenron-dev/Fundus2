@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../data/media_type.dart';
 import '../data/work_view.dart';
+import 'peer_file_cache.dart';
 
 /// The file types this reader can open.
 const _readableExtensions = {
@@ -197,6 +198,47 @@ class TextReaderController extends ChangeNotifier {
   static bool isReadableFile(String path) =>
       _readableExtensions.contains(p.extension(path).toLowerCase());
 
+  /// Where remote volumes are fetched from while a paired library is open.
+  PeerFileCache? cache;
+
+  double? _fetching;
+
+  /// How far a remote volume has been fetched, or null when nothing is being
+  /// fetched. A reader that sits blank for a minute has to say why.
+  double? get fetchProgress => _fetching;
+
+  /// Where the bytes are on this device.
+  ///
+  /// A reader needs a file — an archive's index sits at its end, an EPUB is a
+  /// zip of many entries — so a volume from a paired Fundus is fetched once
+  /// and kept. [cache] is set while such a library is open and null
+  /// otherwise, which is the difference between "fetch it" and "there is
+  /// nothing to fetch it from".
+  Future<String> _pathFor(LibraryPlaybackTrack volume) async {
+    if (!volume.isRemote) return volume.absolutePath;
+    final cache = this.cache;
+    if (cache == null) {
+      throw StateError(
+        'Diese Datei liegt auf einem gekoppelten Gerät, zu dem gerade keine '
+        'Verbindung besteht.',
+      );
+    }
+    _fetching = 0;
+    notifyListeners();
+    try {
+      return await cache.fileFor(
+        volume,
+        onProgress: (fraction) {
+          _fetching = fraction;
+          notifyListeners();
+        },
+      );
+    } finally {
+      _fetching = null;
+      notifyListeners();
+    }
+  }
+
   Future<void> open(FundusLibrary library, WorkView work) async {
     _failure = null;
     _library = library;
@@ -242,7 +284,7 @@ class TextReaderController extends ChangeNotifier {
     notifyListeners();
     try {
       final volume = _volumes[index];
-      final source = _openSource(volume.absolutePath, volume.title);
+      final source = _openSource(await _pathFor(volume), volume.title);
       _chapters = await source.chapters();
       _volumeIndex = index;
       if (_chapters.isEmpty) {

@@ -7,6 +7,7 @@ import 'package:fundus_design/fundus_design.dart';
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/library_controller.dart';
+import '../../data/peer_connection.dart';
 
 /// Choosing a vault — the one screen that works without one.
 ///
@@ -93,6 +94,30 @@ class VaultScreen extends StatelessWidget {
                   ),
                 ],
               ),
+              if (scope.settings.peers.isNotEmpty) ...[
+                const SizedBox(height: FundusSpace.x10),
+                Text('GEKOPPELTE GERÄTE', style: theme.textTheme.labelSmall),
+                const SizedBox(height: FundusSpace.x2),
+                Text(
+                  'Deren Bibliothek wird hier geführt, die Dateien bleiben '
+                  'dort. Zum Lesen und Hören muss das Gerät im selben Netz '
+                  'erreichbar sein.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                ),
+                const SizedBox(height: FundusSpace.x3),
+                for (final peer in scope.settings.peers) _PeerTile(peer: peer),
+                if (scope.peerLibrary.failure case final failure?) ...[
+                  const SizedBox(height: FundusSpace.x3),
+                  Text(
+                    failure,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: tokens.danger,
+                    ),
+                  ),
+                ],
+              ],
               const SizedBox(height: FundusSpace.x10),
               Text('ZULETZT VERWENDET', style: theme.textTheme.labelSmall),
               const SizedBox(height: FundusSpace.x3),
@@ -275,6 +300,72 @@ class _FailureNotice extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A paired Fundus, offered as a library to open.
+///
+/// It opens like any other: from here on the app is looking at a catalogue
+/// and does not care that the files are on another machine.
+class _PeerTile extends StatelessWidget {
+  const _PeerTile({required this.peer});
+
+  final PeerConnection peer;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+    final busy = scope.peerLibrary.isBusy;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: FundusSpace.x2),
+      child: InkWell(
+        borderRadius: FundusRadius.mdAll,
+        onTap: busy ? null : () => scope.openPeerLibrary(peer),
+        child: Padding(
+          padding: const EdgeInsets.all(FundusSpace.x3),
+          child: Row(
+            children: [
+              Icon(
+                FundusIcons.originStream,
+                size: FundusIcons.sizeMd,
+                color: tokens.textMuted,
+              ),
+              const SizedBox(width: FundusSpace.x4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(peer.name, style: theme.textTheme.bodyMedium),
+                    Text(
+                      peer.baseUrl,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (busy)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Icon(
+                  FundusIcons.forward,
+                  size: FundusIcons.sizeMd,
+                  color: tokens.textFaint,
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
@@ -75,3 +76,82 @@ final class LocalFileSource implements MediaByteSource {
   @override
   Future<bool> isReachable() => File(path).exists();
 }
+
+/// A file on a Fundus this device is paired with.
+///
+/// The bytes never come through Dart on the way to the player: the engine
+/// opens the loopback address the proxy hands out, and the proxy is what
+/// carries the token and the pinned certificate. Seeking therefore works the
+/// way it does for a local file — the engine asks for a range and the range
+/// comes back — which is the whole reason this is a proxy and not a download.
+final class RemoteFileSource implements MediaByteSource {
+  const RemoteFileSource({
+    required this.fileId,
+    required this.title,
+    required this.uri,
+    this.duration,
+    this.origin = FundusOrigin.stream,
+  });
+
+  factory RemoteFileSource.fromTrack(
+    LibraryPlaybackTrack track, {
+    required FundusStreamProxy proxy,
+  }) => RemoteFileSource(
+    fileId: track.fileId,
+    title: track.title,
+    uri: proxy.uriFor(track.fileId, extension: _extensionOf(track.title)),
+    duration: track.duration,
+  );
+
+  @override
+  final String fileId;
+
+  @override
+  final String title;
+
+  final Uri uri;
+
+  @override
+  final Duration? duration;
+
+  @override
+  final FundusOrigin origin;
+
+  @override
+  Future<Uri> resolve() async => uri;
+
+  @override
+  Future<bool> isReachable() async {
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 4);
+      final request = await client.openUrl('HEAD', uri);
+      final response = await request.close();
+      await response.drain<void>();
+      client.close(force: true);
+      return response.statusCode < 400;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// mpv chooses a demuxer by extension before it reads a byte.
+  static String _extensionOf(String filename) {
+    final dot = filename.lastIndexOf('.');
+    if (dot < 0) return '';
+    final value = filename.substring(dot).toLowerCase();
+    return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(value) ? value : '';
+  }
+}
+
+/// Where the bytes of a track are, wherever they happen to live.
+///
+/// The one place in the app that decides between a file and a peer. Every
+/// player and reader asks this and then stops caring.
+MediaByteSource sourceForTrack(
+  LibraryPlaybackTrack track, {
+  required FundusOrigin origin,
+  FundusStreamProxy? proxy,
+}) => track.isRemote && proxy != null
+    ? RemoteFileSource.fromTrack(track, proxy: proxy)
+    : LocalFileSource.fromTrack(track, origin: origin);

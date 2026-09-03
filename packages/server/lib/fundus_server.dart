@@ -123,6 +123,7 @@ final class FundusServerHandler {
       ..get('/v1/capabilities', _capabilities)
       ..get('/v1/libraries', _libraries)
       ..get('/v1/libraries/<libraryId>/works', _works)
+      ..get('/v1/libraries/<libraryId>/catalogue', _catalogue)
       ..get('/v1/libraries/<libraryId>/works/<workId>', _work)
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
@@ -296,6 +297,29 @@ final class FundusServerHandler {
         _libraryJson(entry, includeAdultExplicit: _canViewAdult(request)),
     ],
   });
+
+  /// Everything a client needs to build its own index, in one answer.
+  ///
+  /// A device that mirrors this library would otherwise ask for each work
+  /// separately just to learn its files — a thousand round trips for a
+  /// thousand works, over a network that is the reason mirroring exists.
+  Response _catalogue(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    return _json({
+      'library_id': libraryId,
+      'works': [
+        for (final work in entry.works)
+          if (_canViewWork(request, work))
+            {
+              ..._workJson(work),
+              'files': [
+                for (final track in entry.tracksFor(work.id)) _trackJson(track),
+              ],
+            },
+      ],
+    });
+  }
 
   Response _works(Request request, String libraryId) {
     final entry = registry.lookup(libraryId);

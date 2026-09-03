@@ -6,6 +6,7 @@ export 'src/import/abs_metadata.dart';
 export 'src/import/embedded_cover.dart';
 export 'src/import/document_importer.dart';
 export 'src/library/fundus_library.dart';
+export 'src/library/remote_catalogue.dart';
 export 'src/library/work_annotations.dart';
 export 'src/model/device_profile.dart';
 export 'src/model/fundus_id.dart';

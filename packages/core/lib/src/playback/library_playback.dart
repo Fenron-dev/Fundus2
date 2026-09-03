@@ -8,6 +8,7 @@ final class LibraryPlaybackTrack {
     required this.relativePath,
     required this.absolutePath,
     required this.title,
+    this.sourceId = 'local',
     required this.index,
     this.duration,
     this.audioMetadata,
@@ -16,8 +17,16 @@ final class LibraryPlaybackTrack {
 
   final String fileId;
   final String relativePath;
+
+  /// Empty for a file that is not on this device — see [sourceId].
   final String absolutePath;
+
+  /// Which source the bytes belong to. `local` is the vault itself; anything
+  /// else is another Fundus, and [absolutePath] is then empty.
+  final String sourceId;
   final String title;
+
+  bool get isRemote => sourceId != 'local';
   final int index;
   final Duration? duration;
   final AudioTechnicalMetadata? audioMetadata;

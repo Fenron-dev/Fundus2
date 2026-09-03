@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
+import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 
 import '../data/work_view.dart';
@@ -17,6 +18,13 @@ import 'playback_engine.dart';
 class PlaybackController extends ChangeNotifier {
   PlaybackController({PlaybackEngine? engine, this.deviceId = 'device'})
     : _engineOrNull = engine;
+
+  /// Where remote bytes come from while a paired library is open.
+  ///
+  /// Set by the scope when a peer library opens and cleared when it closes.
+  /// The controller never asks who the peer is — it hands a track to
+  /// [sourceForTrack] and opens whatever address comes back.
+  FundusStreamProxy? proxy;
 
   /// How often a position is written back. The design fixes this per media
   /// type — thirty seconds for audio and video, two minutes for text.
@@ -169,7 +177,7 @@ class PlaybackController extends ChangeNotifier {
       }
       _sources = [
         for (final track in tracks)
-          LocalFileSource.fromTrack(track, origin: work.origin),
+          sourceForTrack(track, origin: work.origin, proxy: proxy),
       ];
       _chapters = await library.playbackChapters(work.id);
       _attachStreams();

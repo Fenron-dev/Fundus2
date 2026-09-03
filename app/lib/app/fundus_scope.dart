@@ -1,15 +1,22 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../data/library_controller.dart';
 import '../data/server_host.dart';
+import '../data/peer_connection.dart';
+import '../data/peer_library.dart';
 import '../data/sync_controller.dart';
 import '../data/work_filter.dart';
 import '../data/media_type.dart';
 import '../data/work_view.dart';
 import '../media/capture.dart';
+import '../media/peer_file_cache.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
@@ -33,6 +40,7 @@ class FundusScope extends StatefulWidget {
     this.fullscreen,
     this.sync,
     this.host,
+    this.peerLibrary,
     this.captureSink = const FileCaptureSink(),
     this.storage = const PlatformStorageAccess(),
     this.scanner = const CameraPairingScanner(),
@@ -58,6 +66,9 @@ class FundusScope extends StatefulWidget {
 
   /// And for the served side, so a test never opens a port.
   final ServerHostController? host;
+
+  /// And for a paired library, so a test never reaches for one.
+  final PeerLibraryController? peerLibrary;
 
   /// Where a saved page or frame goes. The default opens a system dialog.
   final CaptureSink captureSink;
@@ -98,6 +109,9 @@ class FundusScopeState extends State<FundusScope> {
   late final ServerHostController host =
       widget.host ??
       ServerHostController(settings: widget.settings, library: widget.library);
+  late final PeerLibraryController peerLibrary =
+      widget.peerLibrary ??
+      PeerLibraryController(settings: widget.settings, library: widget.library);
   WorkFilter _filter = const WorkFilter();
   int _revision = 0;
 
@@ -120,6 +134,33 @@ class FundusScopeState extends State<FundusScope> {
     fullscreen.addListener(_bump);
     sync.addListener(_bump);
     host.addListener(_bump);
+    peerLibrary.addListener(_bump);
+    peerLibrary.addListener(_handOverProxy);
+  }
+
+  /// Keeps the players pointed at the peer that is open.
+  ///
+  /// The player and the readers never learn who the peer is; they are handed
+  /// the one thing they need — a door to fetch bytes through — and it is null
+  /// when there is no peer, which is exactly what "this is a local library"
+  /// means to them.
+  Future<void> _handOverProxy() async {
+    final proxy = peerLibrary.proxy;
+    player.proxy = proxy;
+    if (proxy == null) {
+      reader.cache = null;
+      textReader.cache = null;
+      return;
+    }
+    final support = await getApplicationSupportDirectory();
+    final cache = PeerFileCache(
+      proxy: proxy,
+      directory: Directory(
+        p.join(support.path, 'peer-cache', peerLibrary.peer?.serverId ?? 'x'),
+      ),
+    );
+    reader.cache = cache;
+    textReader.cache = cache;
   }
 
   @override
@@ -133,6 +174,8 @@ class FundusScopeState extends State<FundusScope> {
     fullscreen.removeListener(_bump);
     sync.removeListener(_bump);
     host.removeListener(_bump);
+    peerLibrary.removeListener(_bump);
+    peerLibrary.removeListener(_handOverProxy);
     // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
     if (widget.reader == null) reader.dispose();
@@ -140,6 +183,7 @@ class FundusScopeState extends State<FundusScope> {
     if (widget.fullscreen == null) fullscreen.dispose();
     if (widget.sync == null) sync.dispose();
     if (widget.host == null) host.dispose();
+    if (widget.peerLibrary == null) peerLibrary.dispose();
     navigation.dispose();
     super.dispose();
   }
@@ -147,6 +191,25 @@ class FundusScopeState extends State<FundusScope> {
   void _bump() => setState(() => _revision++);
 
   void setFilter(WorkFilter value) => setState(() => _filter = value);
+
+  /// Opens the library of a paired Fundus.
+  ///
+  /// The index is written here, the files stay there. Afterwards nothing in
+  /// the app is aware of the difference except the origin mark on a tile.
+  Future<void> openPeerLibrary(PeerConnection peer) async {
+    final opened = await peerLibrary.open(peer);
+    if (!opened) return;
+    await _handOverProxy();
+    navigation.reset(const DashboardRoute());
+  }
+
+  /// Lets go of a paired library and returns to the vault chooser.
+  Future<void> closePeerLibrary() async {
+    await peerLibrary.close();
+    await _handOverProxy();
+    library.close();
+    navigation.reset(const VaultRoute());
+  }
 
   /// Starts or resumes a work. One entry point, whatever the media type — a
   /// screen never decides between a player and a reader, and neither asks

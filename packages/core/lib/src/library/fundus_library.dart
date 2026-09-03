@@ -20,6 +20,7 @@ import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
+import 'remote_catalogue.dart';
 import '../publication/epub_package.dart';
 import '../publication/publication_engine.dart';
 import '../scan/library_scanner.dart';
@@ -171,6 +172,78 @@ final class FundusLibrary {
         syncCursor: existing?.syncCursor ?? 0,
         status: LibrarySourceStatus.available,
         lastSeenAt: DateTime.now(),
+      ),
+    );
+  }
+
+  /// Records another Fundus as a source this vault carries works from.
+  ///
+  /// A vault is normally its own source and nothing else. A device without
+  /// media of its own — a phone — is the case this exists for: the vault is
+  /// then an index and a place for reading state, and the works in it live on
+  /// the machine named here.
+  LibrarySource registerPeerSource({
+    required String sourceId,
+    required String displayName,
+    required String libraryId,
+    required String baseUrl,
+    String? certificatePin,
+  }) {
+    _ensureWritable();
+    final source = LibrarySource(
+      id: sourceId,
+      kind: LibrarySourceKind.peer,
+      displayName: displayName,
+      libraryId: libraryId,
+      baseUrl: baseUrl,
+      certificatePin: certificatePin,
+      status: LibrarySourceStatus.available,
+      lastSeenAt: DateTime.now(),
+    );
+    _database.upsertSource(source);
+    return source;
+  }
+
+  /// Writes what the peer has into this vault's index.
+  RemoteMirrorReport mirrorRemoteCatalogue({
+    required String sourceId,
+    required List<RemoteWorkRecord> works,
+  }) {
+    _ensureWritable();
+    return _database.mirrorRemoteCatalogue(sourceId: sourceId, works: works);
+  }
+
+  /// Whether a source is answering right now.
+  ///
+  /// Works of an unreachable source stay in the index and stay visible; only
+  /// their origin changes, so a library does not empty itself because the
+  /// other machine is asleep.
+  void setSourceReachable(String sourceId, {required bool reachable}) {
+    _ensureWritable();
+    _database.setSourceReachable(sourceId, reachable: reachable);
+  }
+
+  /// Renames the vault as this device shows it.
+  ///
+  /// The folder name is the default and usually right. It is not right for a
+  /// vault that only holds another machine's catalogue: there the library is
+  /// called what that machine is called, not what its folder happens to be.
+  void setVaultDisplayName(String name) {
+    _ensureWritable();
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final existing = _database.loadSource(FundusDatabase.localSourceId);
+    if (existing == null) return;
+    _database.upsertSource(
+      LibrarySource(
+        id: existing.id,
+        kind: existing.kind,
+        displayName: trimmed,
+        libraryId: existing.libraryId,
+        vaultPath: existing.vaultPath,
+        syncCursor: existing.syncCursor,
+        status: existing.status,
+        lastSeenAt: existing.lastSeenAt,
       ),
     );
   }
@@ -484,8 +557,15 @@ final class FundusLibrary {
     return _database
         .playbackTracks(workId)
         .map((track) {
-          final absolutePath = p.normalize(p.join(root.path, track.path));
-          if (!p.isWithin(root.path, absolutePath)) {
+          // A remote file has no path on this device, and joining one onto
+          // the vault root would invent a file that is not there. The caller
+          // asks the source where the bytes are; here it only says that they
+          // are elsewhere.
+          final remote = track.sourceId != FundusDatabase.localSourceId;
+          final absolutePath = remote
+              ? ''
+              : p.normalize(p.join(root.path, track.path));
+          if (!remote && !p.isWithin(root.path, absolutePath)) {
             throw StateError(
               'Unsicherer Medienpfad im Bibliotheksindex: ${track.path}',
             );
@@ -494,6 +574,7 @@ final class FundusLibrary {
             fileId: track.fileId,
             relativePath: track.path,
             absolutePath: absolutePath,
+            sourceId: track.sourceId,
             title: track.title,
             index: track.position,
             duration: track.durationMs == null

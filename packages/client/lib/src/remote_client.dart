@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:fundus_core/fundus_core.dart';
@@ -267,9 +268,93 @@ final class FundusRemoteClient {
     body: {'tags': tags},
   );
 
+  /// The whole catalogue, works and their files, in one answer.
+  ///
+  /// This is what a mirror reads. The alternative — the works list, then one
+  /// request per work for its files — is a thousand round trips over the very
+  /// network the mirror exists to stop depending on.
+  Future<List<RemoteWorkRecord>> catalogue(String libraryId) async {
+    final decoded = await _get('/v1/libraries/$libraryId/catalogue');
+    final entries = decoded['works'];
+    if (entries is! List) return const [];
+    return [
+      for (final entry in entries)
+        if (entry is Map) _recordFrom(Map<String, Object?>.from(entry)),
+    ];
+  }
+
+  static RemoteWorkRecord _recordFrom(Map<String, Object?> value) {
+    final authors = value['authors'];
+    final files = value['files'];
+    return RemoteWorkRecord(
+      id: '${value['id'] ?? ''}',
+      kind: '${value['kind'] ?? 'document'}',
+      title: '${value['title'] ?? 'Ohne Titel'}',
+      author: authors is List && authors.isNotEmpty ? '${authors.first}' : null,
+      subtitle: value['subtitle'] is String
+          ? value['subtitle'] as String
+          : null,
+      series: value['series'] is String ? value['series'] as String : null,
+      seriesSequence: (value['series_sequence'] as num?)?.toDouble(),
+      hasCover: value['has_cover'] == true,
+      tags: [
+        if (value['tags'] case final List tags)
+          for (final tag in tags) '$tag',
+      ],
+      metadata: {
+        if (value['language'] != null) 'language': value['language'],
+        if (value['description'] != null) 'description': value['description'],
+        if (value['publisher'] != null) 'publisher': value['publisher'],
+        if (value['published_year'] != null)
+          'published_year': value['published_year'],
+        if (value['narrators'] case final List narrators)
+          if (narrators.isNotEmpty)
+            'narrators': [for (final name in narrators) '$name'],
+      },
+      files: [
+        if (files is List)
+          for (var index = 0; index < files.length; index++)
+            if (files[index] case final Map file)
+              _fileFrom(Map<String, Object?>.from(file), index),
+      ],
+    );
+  }
+
+  static RemoteFileRecord _fileFrom(Map<String, Object?> value, int fallback) {
+    final filename = '${value['title'] ?? ''}';
+    final dot = filename.lastIndexOf('.');
+    final seconds = (value['duration_seconds'] as num?)?.toDouble();
+    return RemoteFileRecord(
+      id: '${value['id'] ?? ''}',
+      filename: filename,
+      position: (value['position'] as num?)?.toInt() ?? fallback,
+      extension: dot > 0 ? filename.substring(dot).toLowerCase() : '',
+      durationMs: seconds == null ? null : (seconds * 1000).round(),
+    );
+  }
+
   /// Where a work's cover can be fetched, for the catalogue mirror.
   Uri coverUri(String libraryId, String workId) =>
       baseUri.resolve('/v1/libraries/$libraryId/works/$workId/cover');
+
+  /// Fetches raw bytes — a cover, a page, a file.
+  Future<Uint8List> getBytes(String path) async {
+    final http.Response response;
+    try {
+      response = await _http
+          .get(baseUri.resolve(path), headers: _headers)
+          .timeout(timeout);
+    } on Object catch (error) {
+      throw _unreachable(error);
+    }
+    if (response.statusCode >= 400) {
+      throw FundusRemoteException(
+        _messageFor('', response.statusCode),
+        statusCode: response.statusCode,
+      );
+    }
+    return response.bodyBytes;
+  }
 
   Future<Map<String, Object?>> _get(String path) async {
     final http.Response response;

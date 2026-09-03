@@ -745,8 +745,76 @@ class _SyncState extends State<_Sync> {
             ],
           ),
         ),
+        if (scope.peerLibrary.isOpen) _peerLibraryCard(context),
         _adoption(context),
       ],
+    );
+  }
+
+  /// The paired library that is open, and the way to read it in again.
+  ///
+  /// The catalogue is a copy, so it goes out of date the moment the other
+  /// machine scans. Fetching it again is one button rather than a rule about
+  /// when to do it behind the person's back.
+  Widget _peerLibraryCard(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final peer = scope.peerLibrary.peer;
+    final mirror = scope.peerLibrary.lastMirror;
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Geöffnete Fremdbibliothek', style: theme.textTheme.titleMedium),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Der Katalog von „${peer?.name ?? ''}" liegt hier als Kopie — '
+            'deshalb ist die Liste auch ohne Netz da. Die Dateien werden '
+            'beim Abspielen geholt.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          if (mirror != null) ...[
+            const SizedBox(height: FundusSpace.x2),
+            Text(
+              '${mirror.written} Werke im Bestand'
+              '${mirror.removed == 0 ? '' : ' · ${mirror.removed} entfallen'}',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: tokens.textFaint,
+              ),
+            ),
+          ],
+          const SizedBox(height: FundusSpace.x4),
+          Row(
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: scope.peerLibrary.isBusy
+                    ? null
+                    : scope.peerLibrary.refresh,
+                icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
+                label: const Text('Katalog holen'),
+              ),
+              const SizedBox(width: FundusSpace.x3),
+              TextButton(
+                onPressed: scope.peerLibrary.isBusy
+                    ? null
+                    : scope.closePeerLibrary,
+                child: const Text('Bibliothek schließen'),
+              ),
+            ],
+          ),
+          if (scope.peerLibrary.failure case final failure?) ...[
+            const SizedBox(height: FundusSpace.x3),
+            Text(
+              failure,
+              style: theme.textTheme.bodyMedium?.copyWith(color: tokens.danger),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

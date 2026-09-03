@@ -5,6 +5,7 @@ import 'package:sqlite3/sqlite3.dart';
 
 import '../import/abs_importer.dart';
 import '../import/document_importer.dart';
+import '../library/remote_catalogue.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
 import '../model/library_playlist.dart';
@@ -828,6 +829,7 @@ final class FundusDatabase {
     ({
       String fileId,
       String path,
+      String sourceId,
       String title,
       int position,
       int? durationMs,
@@ -839,7 +841,7 @@ final class FundusDatabase {
     final rows = _database.select(
       '''
       SELECT f.id, f.path, f.filename, wf.position, f.duration_ms,
-             f.container, f.audio_codec, f.codec_profile,
+             f.source_id, f.container, f.audio_codec, f.codec_profile,
              f.audio_channels, f.sample_rate_hz,
              ${columnExists('files', 'video_episode_json') ? 'f.video_episode_json' : 'NULL'} AS video_episode_json
       FROM work_files wf
@@ -855,6 +857,7 @@ final class FundusDatabase {
           (row) => (
             fileId: row['id'] as String,
             path: row['path'] as String,
+            sourceId: row['source_id'] as String? ?? localSourceId,
             title: row['filename'] as String,
             position: row['position'] as int,
             durationMs: row['duration_ms'] as int?,
@@ -2055,6 +2058,162 @@ final class FundusDatabase {
         source.syncCursor,
         source.status.name,
         source.lastSeenAt?.millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  /// Writes a peer's catalogue into this vault's own tables.
+  ///
+  /// The point of mirroring rather than keeping a second, remote-shaped model
+  /// is that everything above the database stops caring where a work came
+  /// from: one list, one work screen, one progress table. Origin becomes a
+  /// column — `availability` — instead of a branch through the app.
+  ///
+  /// The ids are the peer's. They were minted in the vault's sidecars, so
+  /// both sides already agree what `w-3f9…` is, and reading positions line up
+  /// without a translation table.
+  RemoteMirrorReport mirrorRemoteCatalogue({
+    required String sourceId,
+    required List<RemoteWorkRecord> works,
+  }) {
+    if (sourceId == localSourceId) {
+      throw ArgumentError.value(
+        sourceId,
+        'sourceId',
+        'Der lokale Bestand wird gescannt, nicht gespiegelt.',
+      );
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var written = 0;
+    _database.execute('BEGIN');
+    try {
+      for (final work in works) {
+        _writeRemoteWork(sourceId, work, now);
+        written++;
+      }
+      final keep = {for (final work in works) work.id};
+      final existing = _database
+          .select('SELECT id FROM works WHERE source_id = ?', [sourceId])
+          .map((row) => row['id'] as String)
+          .toList();
+      final gone = existing.where((id) => !keep.contains(id)).toList();
+      for (final id in gone) {
+        // Marked missing, not deleted. `progress` and the annotation tables
+        // cascade from `works`, so removing the row would take the reading
+        // position with it — and a work is missing from a mirror for all
+        // sorts of reasons that are none of the reader's doing: a renamed
+        // folder, a scan halfway through, a drive not plugged in yet. It
+        // drops out of the listing either way, and comes back with its place
+        // in it intact.
+        _database.execute("UPDATE works SET status = 'missing' WHERE id = ?", [
+          id,
+        ]);
+        _database.execute(
+          "DELETE FROM search_index WHERE entity_type = 'work' AND entity_id = ?",
+          [id],
+        );
+      }
+      _database.execute('COMMIT');
+      return RemoteMirrorReport(written: written, removed: gone.length);
+    } on Object {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _writeRemoteWork(String sourceId, RemoteWorkRecord work, int now) {
+    final metadata = <String, Object?>{
+      ...work.metadata,
+      'title': work.title,
+      if (work.author != null) 'author': work.author,
+      if (work.subtitle != null) 'subtitle': work.subtitle,
+      if (work.series != null) 'series': work.series,
+      if (work.seriesSequence != null) 'series_sequence': work.seriesSequence,
+    };
+    _database.execute(
+      '''
+      INSERT INTO works (
+        id, source_id, kind, source_path, title, sort_title, series_name,
+        series_sequence, metadata_json, availability, added_at, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'remote', ?, 'available')
+      ON CONFLICT(id) DO UPDATE SET
+        source_id = excluded.source_id,
+        kind = excluded.kind,
+        title = excluded.title,
+        sort_title = excluded.sort_title,
+        series_name = excluded.series_name,
+        series_sequence = excluded.series_sequence,
+        metadata_json = excluded.metadata_json,
+        availability = 'remote',
+        status = 'available'
+      ''',
+      [
+        work.id,
+        sourceId,
+        work.kind,
+        'peer/${work.id}',
+        work.title,
+        work.title.toLowerCase(),
+        work.series,
+        work.seriesSequence,
+        jsonEncode(metadata),
+        now,
+      ],
+    );
+
+    _database.execute('DELETE FROM work_files WHERE work_id = ?', [work.id]);
+    for (final file in work.files) {
+      _database.execute(
+        '''
+        INSERT INTO files (
+          id, source_id, path, filename, extension, size, mime_type,
+          duration_ms, availability, file_modified_at, indexed_at, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'remote', ?, ?, 'available')
+        ON CONFLICT(id) DO UPDATE SET
+          source_id = excluded.source_id,
+          path = excluded.path,
+          filename = excluded.filename,
+          extension = excluded.extension,
+          size = excluded.size,
+          mime_type = excluded.mime_type,
+          duration_ms = excluded.duration_ms,
+          availability = 'remote',
+          indexed_at = excluded.indexed_at,
+          status = 'available'
+        ''',
+        [
+          file.id,
+          sourceId,
+          'peer/${file.id}',
+          file.filename,
+          file.extension,
+          file.sizeBytes,
+          file.mimeType,
+          file.durationMs,
+          now,
+          now,
+        ],
+      );
+      _database.execute(
+        'INSERT INTO work_files (work_id, file_id, position, role) '
+        "VALUES (?, ?, ?, 'content')",
+        [work.id, file.id, file.position],
+      );
+    }
+
+    _database.execute(
+      "DELETE FROM search_index WHERE entity_type = 'work' AND entity_id = ?",
+      [work.id],
+    );
+    _database.execute(
+      'INSERT INTO search_index (entity_type, entity_id, title, body, tags) '
+      'VALUES (?, ?, ?, ?, ?)',
+      [
+        'work',
+        work.id,
+        work.title,
+        '${work.author ?? ''} ${work.series ?? ''}',
+        work.tags.join(' '),
       ],
     );
   }
