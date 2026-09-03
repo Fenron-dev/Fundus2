@@ -34,7 +34,15 @@ class FundusShell extends StatelessWidget {
 
     final isCompact =
         MediaQuery.sizeOf(context).width < FundusShellMetrics.compactBreakpoint;
+    // A reader or a full player owns its gestures. An edge swipe there means
+    // turn the page, not open the navigation.
+    final overlaid =
+        scope.player.isExpanded ||
+        scope.reader.isOpen ||
+        scope.textReader.isOpen;
     return Scaffold(
+      drawer: isCompact ? const _NavigationDrawer() : null,
+      drawerEnableOpenDragGesture: isCompact && !overlaid,
       body: Stack(
         children: [
           SafeArea(
@@ -78,6 +86,31 @@ class _WideShell extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The navigation column, pulled in from the edge.
+///
+/// Same column, same entries — a phone has no room to keep it standing, so it
+/// waits at the left edge instead of becoming a second, smaller navigation.
+class _NavigationDrawer extends StatelessWidget {
+  const _NavigationDrawer();
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    return Drawer(
+      width: FundusShellMetrics.navigationWidth + FundusSpace.x12,
+      backgroundColor: tokens.background,
+      shape: const RoundedRectangleBorder(),
+      child: SafeArea(
+        child: NavigationPane(
+          collapsed: false,
+          width: double.infinity,
+          onNavigate: () => Navigator.of(context).maybePop(),
+        ),
+      ),
     );
   }
 }
@@ -157,6 +190,11 @@ class _CompactHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
+          IconButton(
+            onPressed: Scaffold.of(context).openDrawer,
+            icon: Icon(FundusIcons.sidebar, size: FundusIcons.sizeMd),
+            tooltip: 'Navigation',
+          ),
           if (scope.navigation.canGoBack)
             IconButton(
               onPressed: scope.navigation.back,

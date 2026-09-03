@@ -11,6 +11,7 @@ import '../../app/pairing_scanner.dart';
 import '../../data/media_type.dart';
 import '../../data/server_host.dart';
 import '../library/unassigned_folders_card.dart';
+import 'settings_catalog.dart';
 
 /// Settings, with the scope of each one visible.
 ///
@@ -20,17 +21,85 @@ import '../library/unassigned_folders_card.dart';
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, required this.category});
 
-  final String category;
+  /// Null shows the overview rather than an area chosen for the person.
+  final String? category;
 
   @override
   Widget build(BuildContext context) {
     return switch (category) {
+      null => const _Index(),
       'darstellung' => const _Appearance(),
       'bibliotheken' => const _Libraries(),
       'synchronisation' => const _Sync(),
       'diagnose' => const _Diagnostics(),
-      _ => _Planned(category: category),
+      _ => _Planned(category: category!),
     };
+  }
+}
+
+/// Every area, one tap away.
+///
+/// The navigation column carries this list on a desktop. A phone has no
+/// column, so without this the settings were whichever area happened to be
+/// the default — and nothing else was reachable at all.
+class _Index extends StatelessWidget {
+  const _Index();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    return _SettingsPage(
+      title: 'Einstellungen',
+      subtitle:
+          'Was hier steht, gilt für dieses Gerät. Was zur Bibliothek gehört, '
+          'steht unter „Bibliotheken".',
+      children: [
+        for (final area in SettingsAreas.all)
+          _Card(
+            child: InkWell(
+              borderRadius: FundusRadius.mdAll,
+              onTap: () =>
+                  scope.navigation.go(SettingsRoute(category: area.key)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: FundusSpace.x2),
+                child: Row(
+                  children: [
+                    Icon(
+                      area.icon,
+                      size: FundusIcons.sizeLg,
+                      color: tokens.textMuted,
+                    ),
+                    const SizedBox(width: FundusSpace.x4),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(area.label, style: theme.textTheme.titleSmall),
+                          const SizedBox(height: FundusSpace.x1),
+                          Text(
+                            area.description,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: tokens.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      FundusIcons.forward,
+                      size: FundusIcons.sizeMd,
+                      color: tokens.textFaint,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
 

@@ -3,6 +3,7 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../../data/media_type.dart';
 import '../app_navigation.dart';
+import '../../features/settings/settings_catalog.dart';
 import '../fundus_scope.dart';
 
 /// One entry in the navigation column.
@@ -33,9 +34,21 @@ final class NavigationEntry {
 /// same column over, keeping the vault switch at the top and downloads,
 /// settings and the device at the bottom.
 class NavigationPane extends StatelessWidget {
-  const NavigationPane({super.key, required this.collapsed});
+  const NavigationPane({
+    super.key,
+    required this.collapsed,
+    this.width,
+    this.onNavigate,
+  });
 
   final bool collapsed;
+
+  /// Overrides the column width. A drawer hands it its own.
+  final double? width;
+
+  /// Called after any entry was tapped. A drawer closes itself with it; the
+  /// permanent column has nothing to do.
+  final VoidCallback? onNavigate;
 
   @override
   Widget build(BuildContext context) {
@@ -45,9 +58,11 @@ class NavigationPane extends StatelessWidget {
     final inSettings = route is SettingsRoute;
 
     return Container(
-      width: collapsed
-          ? FundusShellMetrics.navigationCollapsedWidth
-          : FundusShellMetrics.navigationWidth,
+      width:
+          width ??
+          (collapsed
+              ? FundusShellMetrics.navigationCollapsedWidth
+              : FundusShellMetrics.navigationWidth),
       decoration: BoxDecoration(
         border: Border(right: BorderSide(color: tokens.divider)),
       ),
@@ -67,10 +82,13 @@ class NavigationPane extends StatelessWidget {
             ),
           ),
           Divider(height: 1, color: tokens.divider),
-          ..._footerEntries(
-            context,
-            scope,
-          ).map((entry) => _NavigationTile(entry: entry, collapsed: collapsed)),
+          ..._footerEntries(context, scope).map(
+            (entry) => _NavigationTile(
+              entry: entry,
+              collapsed: collapsed,
+              onNavigate: onNavigate,
+            ),
+          ),
           _DeviceRow(collapsed: collapsed),
         ],
       ),
@@ -133,27 +151,21 @@ class NavigationPane extends StatelessWidget {
 
     return [
       for (final entry in entries)
-        _NavigationTile(entry: entry, collapsed: collapsed),
+        _NavigationTile(
+          entry: entry,
+          collapsed: collapsed,
+          onNavigate: onNavigate,
+        ),
     ];
   }
 
   List<Widget> _settingsEntries(BuildContext context, FundusScopeState scope) {
     final route = scope.navigation.current as SettingsRoute;
-    const categories = <String, (String, String)>{
-      'darstellung': ('Darstellung', 'view'),
-      'wiedergabe': ('Wiedergabe', 'play'),
-      'reader': ('Reader', 'book'),
-      'bibliotheken': ('Bibliotheken', 'library'),
-      'suche': ('Suche & Filter', 'search'),
-      'synchronisation': ('Geräte & Abgleich', 'devices'),
-      'wartung': ('Serverwartung', 'maintenance'),
-      'schutz': ('Schutzmodus', 'lock'),
-      'diagnose': ('Diagnose & Logging', 'warning'),
-    };
 
     return [
       _NavigationTile(
         collapsed: collapsed,
+        onNavigate: onNavigate,
         entry: NavigationEntry(
           label: 'Zurück zum Dashboard',
           icon: FundusIcons.back,
@@ -161,32 +173,19 @@ class NavigationPane extends StatelessWidget {
           ruleAfter: true,
         ),
       ),
-      for (final entry in categories.entries)
+      for (final area in SettingsAreas.all)
         _NavigationTile(
           collapsed: collapsed,
+          onNavigate: onNavigate,
           entry: NavigationEntry(
-            label: entry.value.$1,
-            icon: _settingsIcon(entry.value.$2),
-            active: route.category == entry.key,
-            onTap: () =>
-                scope.navigation.go(SettingsRoute(category: entry.key)),
+            label: area.label,
+            icon: area.icon,
+            active: route.category == area.key,
+            onTap: () => scope.navigation.go(SettingsRoute(category: area.key)),
           ),
         ),
     ];
   }
-
-  static IconData _settingsIcon(String key) => switch (key) {
-    'view' => FundusIcons.viewGrid,
-    'play' => FundusIcons.play,
-    'book' => FundusIcons.book,
-    'library' => FundusIcons.vault,
-    'search' => FundusIcons.search,
-    'devices' => FundusIcons.devices,
-    'maintenance' => FundusIcons.vault,
-    'sync' => FundusIcons.sync,
-    'lock' => FundusIcons.protected,
-    _ => FundusIcons.warning,
-  };
 
   List<NavigationEntry> _footerEntries(
     BuildContext context,
@@ -219,10 +218,15 @@ class NavigationPane extends StatelessWidget {
 }
 
 class _NavigationTile extends StatelessWidget {
-  const _NavigationTile({required this.entry, required this.collapsed});
+  const _NavigationTile({
+    required this.entry,
+    required this.collapsed,
+    this.onNavigate,
+  });
 
   final NavigationEntry entry;
   final bool collapsed;
+  final VoidCallback? onNavigate;
 
   @override
   Widget build(BuildContext context) {
@@ -230,7 +234,10 @@ class _NavigationTile extends StatelessWidget {
     final foreground = entry.active ? tokens.accentRamp.s200 : tokens.textMuted;
 
     final tile = InkWell(
-      onTap: entry.onTap,
+      onTap: () {
+        entry.onTap();
+        onNavigate?.call();
+      },
       borderRadius: FundusRadius.mdAll,
       hoverColor: tokens.hover,
       child: Container(

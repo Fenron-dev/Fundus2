@@ -128,19 +128,35 @@ class _TileGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final density = context.fundus.density;
-    // A grid of thousands of tiles has to be virtualised; GridView.builder
-    // only builds what is on screen.
-    return GridView.builder(
-      padding: const EdgeInsets.all(FundusSpace.x6),
-      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: density.tileMinWidth,
-        mainAxisSpacing: density.gap,
-        crossAxisSpacing: density.gap,
-        childAspectRatio: 0.56,
-      ),
-      itemCount: works.length,
-      itemBuilder: (context, index) =>
-          WorkTile(work: works[index], onTap: () => onOpen(works[index])),
+    const padding = EdgeInsets.all(FundusSpace.x6);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The same arithmetic the delegate below uses, so the height can be
+        // worked out for the width a tile will actually get.
+        final available = constraints.maxWidth - padding.horizontal;
+        final columns = (available / density.tileMinWidth).ceil().clamp(1, 12);
+        final tileWidth = (available - density.gap * (columns - 1)) / columns;
+
+        // A grid of thousands of tiles has to be virtualised;
+        // GridView.builder only builds what is on screen.
+        return GridView.builder(
+          padding: padding,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: density.gap,
+            crossAxisSpacing: density.gap,
+            mainAxisExtent: workTileExtent(
+              tileWidth: tileWidth,
+              density: density,
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+          ),
+          itemCount: works.length,
+          itemBuilder: (context, index) =>
+              WorkTile(work: works[index], onTap: () => onOpen(works[index])),
+        );
+      },
     );
   }
 }
@@ -206,9 +222,39 @@ class _GroupingBar extends StatelessWidget {
   final GroupingMode selected;
   final void Function(GroupingMode) onSelect;
 
+  /// Below this the heading and the sorting control no longer fit on one
+  /// line — a phone, or a narrow window on a desktop.
+  static const _stackBelow = 560.0;
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final tokens = context.fundus;
+
+    final heading = [
+      Flexible(
+        child: Text(
+          title,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.headlineMedium,
+        ),
+      ),
+      const SizedBox(width: FundusSpace.x3),
+      Text(
+        '$count',
+        style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+      ),
+    ];
+
+    final sorting = [
+      Text(
+        'Ordnen nach',
+        style: theme.textTheme.labelMedium?.copyWith(color: tokens.textFaint),
+      ),
+      const SizedBox(width: FundusSpace.x3),
+      _Segmented(groupings: groupings, selected: selected, onSelect: onSelect),
+    ];
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         FundusSpace.x6,
@@ -216,30 +262,25 @@ class _GroupingBar extends StatelessWidget {
         FundusSpace.x6,
         FundusSpace.x3,
       ),
-      child: Row(
-        children: [
-          Text(title, style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(width: FundusSpace.x3),
-          Text(
-            '$count',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: tokens.textFaint),
-          ),
-          const Spacer(),
-          Text(
-            'Ordnen nach',
-            style: Theme.of(
-              context,
-            ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
-          ),
-          const SizedBox(width: FundusSpace.x3),
-          _Segmented(
-            groupings: groupings,
-            selected: selected,
-            onSelect: onSelect,
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= _stackBelow) {
+            return Row(children: [...heading, const Spacer(), ...sorting]);
+          }
+          // Two lines rather than a squeezed one, and the modes scroll if
+          // there are more of them than the screen is wide.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: heading),
+              const SizedBox(height: FundusSpace.x3),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: sorting),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

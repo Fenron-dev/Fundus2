@@ -43,9 +43,12 @@ final class SearchRoute extends FundusRoute {
 }
 
 final class SettingsRoute extends FundusRoute {
-  const SettingsRoute({this.category = 'darstellung'});
+  const SettingsRoute({this.category});
 
-  final String category;
+  /// Null is the overview of all areas. A phone lands there — with no
+  /// permanent column, an area picked for the person is an area they cannot
+  /// leave.
+  final String? category;
 }
 
 final class DownloadsRoute extends FundusRoute {

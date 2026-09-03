@@ -21,9 +21,14 @@ class VaultScreen extends StatelessWidget {
     final tokens = context.fundus;
     final theme = Theme.of(context);
 
+    // A phone has no room for the desktop's generous frame, and at a large
+    // system font the title stopped fitting between the margins.
+    final narrow =
+        MediaQuery.sizeOf(context).width < FundusShellMetrics.compactBreakpoint;
+
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(FundusSpace.x16),
+        padding: EdgeInsets.all(narrow ? FundusSpace.x6 : FundusSpace.x16),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
           child: Column(
@@ -46,7 +51,13 @@ class VaultScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: FundusSpace.x4),
-                  Text('Fundus', style: theme.textTheme.displayMedium),
+                  Flexible(
+                    child: Text(
+                      'Fundus',
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.displayMedium,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: FundusSpace.x4),

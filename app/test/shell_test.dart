@@ -185,7 +185,8 @@ void main() {
       tester,
       library: library,
       settings: settings,
-      route: const SettingsRoute(),
+      // Ohne Bereich ist die Route die Übersicht; das Thema steht in einem.
+      route: const SettingsRoute(category: 'darstellung'),
     );
 
     expect(settings.themeMode, ThemeMode.dark);
