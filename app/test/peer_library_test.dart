@@ -7,7 +7,6 @@ import 'package:fundus/data/peer_connection.dart';
 import 'package:fundus/data/peer_library.dart';
 import 'package:fundus/data/sync_controller.dart';
 import 'package:fundus/media/peer_file_cache.dart';
-import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
