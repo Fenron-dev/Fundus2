@@ -107,11 +107,44 @@ class VaultScreen extends StatelessWidget {
     required bool createIfMissing,
   }) async {
     final scope = FundusScope.of(context);
-    final selected = await FilePicker.getDirectoryPath(
-      dialogTitle: createIfMissing
-          ? 'Ordner für die neue Bibliothek'
-          : 'Bibliotheksordner öffnen',
-    );
+    final messenger = ScaffoldMessenger.of(context);
+
+    // Auf Android muss der Zugriff auf die Dateien erst erteilt werden. Ohne
+    // ihn liefert die Auswahl einen Ordner, den niemand lesen kann — und die
+    // Bibliothek bliebe ohne Erklärung leer.
+    if (scope.storage.isRequired && !await scope.storage.isGranted()) {
+      final granted = await scope.storage.request();
+      if (!granted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Ohne Dateizugriff lässt sich keine Bibliothek öffnen. '
+              'Der Zugriff lässt sich in den Systemeinstellungen erteilen.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    final String? selected;
+    try {
+      selected = await FilePicker.getDirectoryPath(
+        dialogTitle: createIfMissing
+            ? 'Ordner für die neue Bibliothek'
+            : 'Bibliotheksordner öffnen',
+        initialDirectory: await scope.storage.storageRoot(),
+      );
+    } on Object catch (error) {
+      // Ein Dialog, der nicht aufgeht, darf nicht als Absturz enden — der
+      // Weg über einen zuletzt benutzten Ordner bleibt ja offen.
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Der Ordnerdialog lässt sich nicht öffnen: $error'),
+        ),
+      );
+      return;
+    }
     if (selected == null) return;
     await _open(scope, selected, createIfMissing: createIfMissing);
   }

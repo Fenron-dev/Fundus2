@@ -13,6 +13,7 @@ import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
 import 'app_navigation.dart';
 import 'fullscreen.dart';
+import 'storage_access.dart';
 import 'app_settings.dart';
 
 /// The app's shared state, handed down once instead of threaded through every
@@ -28,6 +29,7 @@ class FundusScope extends StatefulWidget {
     this.textReader,
     this.fullscreen,
     this.captureSink = const FileCaptureSink(),
+    this.storage = const PlatformStorageAccess(),
   });
 
   final AppSettings settings;
@@ -47,6 +49,9 @@ class FundusScope extends StatefulWidget {
 
   /// Where a saved page or frame goes. The default opens a system dialog.
   final CaptureSink captureSink;
+
+  /// Whether the device lets the app read its files. Only Android asks.
+  final StorageAccess storage;
   final Widget child;
 
   static FundusScopeState of(BuildContext context) {
@@ -76,6 +81,7 @@ class FundusScopeState extends State<FundusScope> {
 
   AppSettings get settings => widget.settings;
   CaptureSink get captureSink => widget.captureSink;
+  StorageAccess get storage => widget.storage;
   LibraryController get library => widget.library;
   WorkFilter get filter => _filter;
 
@@ -142,15 +148,15 @@ class FundusScopeState extends State<FundusScope> {
     if (player.failure == null) library.refresh();
   }
 
-  /// The media types whose reader is still missing. Naming them is the honest
+  /// The media types whose viewer is still missing. Naming them is the honest
   /// answer; handing the file to the audio engine is not.
-  String? _missingReaderFor(
-    WorkView work,
-  ) => switch (work.mediaType?.progressKind) {
-    ProgressKind.documentPage =>
-      'Der Dokumentenleser für PDF fehlt noch — dieses Werk lässt sich noch nicht öffnen.',
-    _ => null,
-  };
+  ///
+  /// Only photos are left: a gallery is not a player, and an album of
+  /// pictures handed to libmpv would be a slideshow nobody asked for.
+  String? _missingReaderFor(WorkView work) =>
+      work.mediaType?.progressKind == ProgressKind.none
+      ? 'Die Fotoansicht fehlt noch — dieses Werk lässt sich noch nicht öffnen.'
+      : null;
 
   /// Opens a media type. The filter follows the place, so switching areas
   /// never leaves a stale filter behind that would explain an empty screen.

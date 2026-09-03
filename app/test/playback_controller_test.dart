@@ -32,6 +32,7 @@ final class FakeEngine implements PlaybackEngine {
   void emitPosition(Duration value) => _position.add(value);
   void emitDuration(Duration value) => _duration.add(value);
   void emitCompleted() => _completed.add(true);
+  void emitPlaying(bool value) => _playing.add(value);
   void emitTracks(MediaTracks value) => _tracks.add(value);
 
   @override

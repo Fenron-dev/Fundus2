@@ -3,15 +3,24 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../data/library_controller.dart';
 import 'app_settings.dart';
+import '../media/playback_controller.dart';
 import 'fundus_scope.dart';
 import 'shell/fundus_shell.dart';
 
 /// The application root: theme, density and the one shell.
 class FundusApp extends StatelessWidget {
-  const FundusApp({super.key, required this.settings, required this.library});
+  const FundusApp({
+    super.key,
+    required this.settings,
+    required this.library,
+    this.player,
+  });
 
   final AppSettings settings;
   final LibraryController library;
+
+  /// Built before the app so the media session can hold it.
+  final PlaybackController? player;
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +37,7 @@ class FundusApp extends StatelessWidget {
         home: FundusScope(
           settings: settings,
           library: library,
+          player: player,
           child: const FundusShell(),
         ),
       ),

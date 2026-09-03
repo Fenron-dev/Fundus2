@@ -4,6 +4,7 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/media/comic_archive.dart';
+import 'package:fundus/data/media_type.dart';
 import 'package:fundus/media/reader_controller.dart';
 import 'package:fundus_core/fundus_core.dart';
 
@@ -217,7 +218,7 @@ void main() {
       await reader.open(library.library!, work);
 
       if (reader.volumes.isEmpty) {
-        expect(reader.failure, contains('kein lesbares Archiv'));
+        expect(reader.failure, contains('keine lesbare Datei'));
       }
     });
   });
@@ -342,6 +343,72 @@ void main() {
       expect(reader.showsChrome, isFalse);
       reader.showChrome();
       expect(reader.showsChrome, isTrue);
+    });
+  });
+
+  group('Ein PDF ist eine Seitenfolge wie jede andere', () {
+    late Directory root;
+    late LibraryController library;
+    late ReaderController reader;
+
+    setUp(() async {
+      root = await Directory.systemTemp.createTemp('fundus-pdf-');
+      final work = Directory('${root.path}/Dokumente/Regelwerk')
+        ..createSync(recursive: true);
+      File('${work.path}/Grundregeln.pdf').writeAsBytesSync(List.filled(64, 4));
+      File('${work.path}/cover.jpg').writeAsBytesSync(List.filled(64, 1));
+      library = LibraryController();
+      reader = ReaderController(
+        openSource: (path, name) => FakePageSource(name, 120),
+      );
+    });
+
+    tearDown(() async {
+      reader.dispose();
+      library.dispose();
+      await root.delete(recursive: true);
+    });
+
+    test('ein Dokument landet im Leser, nicht im Player', () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+
+      final work = library.works.first;
+      expect(work.mediaType?.progressKind, ProgressKind.documentPage);
+      expect(ReaderController.handles(work), isTrue);
+    });
+
+    test('das PDF ist die Datei, das Cover nicht', () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await reader.open(library.library!, library.works.first);
+
+      expect(reader.failure, isNull);
+      expect(reader.volumes, hasLength(1));
+      expect(reader.volumes.single.title, endsWith('.pdf'));
+    });
+
+    test('die Seite wird gemerkt wie bei einem Comic', () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await reader.open(library.library!, library.works.first);
+      await reader.goToPage(41);
+
+      final saved = library.library!.loadProgress(library.works.first.id);
+      expect(saved!.position.kind, MediaPositionKind.page);
+      expect(saved.position.numericValue, 42);
+      // Ein Dokument nennt die Seite und rechnet sie nicht in Prozent um.
+      expect(
+        library.works.first.mediaType?.progressKind,
+        ProgressKind.documentPage,
+      );
+    });
+
+    test('PDF gilt als lesbare Datei, eine Textdatei nicht', () {
+      expect(ReaderController.isReadableFile('a/Regelwerk.pdf'), isTrue);
+      expect(ReaderController.isReadableFile('a/Band.cbz'), isTrue);
+      expect(ReaderController.isReadableFile('a/Notiz.txt'), isFalse);
+      expect(ReaderController.isReadableFile('a/cover.jpg'), isFalse);
     });
   });
 

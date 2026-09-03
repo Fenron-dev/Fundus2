@@ -10,13 +10,14 @@ import '../data/media_type.dart';
 import '../data/work_view.dart';
 import 'comic_archive.dart';
 import 'comic_layout.dart';
+import 'pdf_source.dart';
 
 /// The file types this reader can open.
 ///
 /// A work carries more than its chapters — covers, a ComicInfo, sometimes a
 /// banner. Those are files of the work, not volumes of it, and putting them
 /// in the chapter list is how a reader ends up "opening" a cover.
-const _readableExtensions = {'.cbz', '.zip'};
+const _readableExtensions = {'.cbz', '.zip', '.pdf'};
 
 /// The one reader for paged works.
 ///
@@ -29,9 +30,14 @@ class ReaderController extends ChangeNotifier {
   ReaderController({
     this.deviceId = 'device',
     ComicPageSource Function(String path, String name)? openSource,
-  }) : _openSource =
-           openSource ??
-           ((path, name) => ArchiveComicPageSource(path, name: name));
+  }) : _openSource = openSource ?? _sourceFor;
+
+  /// A comic comes out of an archive, a document out of a PDF — the reader
+  /// above them does not care which.
+  static ComicPageSource _sourceFor(String path, String name) =>
+      p.extension(path).toLowerCase() == '.pdf'
+      ? PdfComicPageSource(path, name: name)
+      : ArchiveComicPageSource(path, name: name);
 
   /// How the archive is opened. Injectable so the reader's rules can be
   /// tested without building a real CBZ for every case.
@@ -166,8 +172,13 @@ class ReaderController extends ChangeNotifier {
       .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
 
   /// True for the media types this reader serves.
-  static bool handles(WorkView work) =>
-      work.mediaType?.progressKind == ProgressKind.pagePerVolume;
+  ///
+  /// A comic counts pages in a volume, a document counts pages in a file —
+  /// different units of progress, the same act of turning a page.
+  static bool handles(WorkView work) => switch (work.mediaType?.progressKind) {
+    ProgressKind.pagePerVolume || ProgressKind.documentPage => true,
+    _ => false,
+  };
 
   /// Whether a file of a work is a volume rather than a cover or a sidecar.
   static bool isReadableFile(String path) =>
@@ -189,7 +200,9 @@ class ReaderController extends ChangeNotifier {
           .where((track) => isReadableFile(track.relativePath))
           .toList(growable: false);
       if (_volumes.isEmpty) {
-        _failure = 'Zu diesem Werk ist kein lesbares Archiv erfasst.';
+        _failure =
+            'Zu diesem Werk ist keine lesbare Datei erfasst — erwartet '
+            'werden CBZ, ZIP oder PDF.';
         _busy = false;
         notifyListeners();
         return;
