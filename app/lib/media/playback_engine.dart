@@ -36,14 +36,18 @@ abstract interface class PlaybackEngine {
 
 /// The real engine: libmpv through media_kit.
 final class MediaKitEngine implements PlaybackEngine {
-  MediaKitEngine([Player? player]) : _player = player ?? Player();
+  MediaKitEngine([Player? player]) : _player = player ?? Player() {
+    // The video output has to exist before the first file is opened —
+    // attaching it afterwards leaves the picture black while the sound plays.
+    _video = VideoController(_player);
+  }
 
   /// How long to wait for the file to report a length before checking that the
   /// resume point actually took.
   static const _readyTimeout = Duration(seconds: 3);
 
   final Player _player;
-  VideoController? _video;
+  late final VideoController _video;
 
   @override
   Stream<Duration> get positionStream => _player.stream.position;
@@ -93,10 +97,8 @@ final class MediaKitEngine implements PlaybackEngine {
   Future<void> setRate(double rate) => _player.setRate(rate);
 
   @override
-  Widget? videoSurface() {
-    final controller = _video ??= VideoController(_player);
-    return Video(controller: controller, controls: NoVideoControls);
-  }
+  Widget? videoSurface() =>
+      Video(controller: _video, controls: NoVideoControls);
 
   @override
   Future<void> dispose() async => _player.dispose();

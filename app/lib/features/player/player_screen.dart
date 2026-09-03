@@ -209,17 +209,25 @@ class _ContextPanel extends StatelessWidget {
     final tokens = context.fundus;
     final chapters = player.chapters;
     final tracks = player.sources;
-    final useChapters = chapters.length > 1;
+    // Chapters only when they really are marks inside a file. A work made of
+    // several files also yields one "chapter" per file, all sitting at
+    // 00:00 — as a list of twelve episodes that is worse than useless, so
+    // those are shown as what they are, with their length.
+    final useChapters =
+        chapters.length > 1 &&
+        chapters.any((chapter) => chapter.position > Duration.zero);
+    final heading = useChapters
+        ? 'KAPITEL'
+        : player.showsVideo
+        ? 'FOLGEN'
+        : 'DATEIEN';
 
     return ListView(
       shrinkWrap: shrinkWrap,
       physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
       padding: const EdgeInsets.all(FundusSpace.x4),
       children: [
-        Text(
-          useChapters ? 'KAPITEL' : 'DATEIEN',
-          style: Theme.of(context).textTheme.labelSmall,
-        ),
+        Text(heading, style: Theme.of(context).textTheme.labelSmall),
         const SizedBox(height: FundusSpace.x3),
         if (useChapters)
           for (final chapter in chapters)

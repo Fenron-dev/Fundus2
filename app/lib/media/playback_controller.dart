@@ -134,10 +134,14 @@ class PlaybackController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final uri = await source.resolve();
-    await _engine.open(uri, start: at);
+    // Erst der bekannte Stand, dann öffnen: die Engine meldet die Länge
+    // während des Öffnens, und eine Zuweisung danach hat sie bisher wieder
+    // auf null gesetzt — bei Video, wo der Index keine Länge kennt, blieb
+    // deshalb „--:--" stehen.
     _duration = source.duration;
     _position = at;
+    final uri = await source.resolve();
+    await _engine.open(uri, start: at);
     _startSaveTimer();
   }
 
