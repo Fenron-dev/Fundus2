@@ -26,6 +26,14 @@ class LibraryController extends ChangeNotifier {
   LibraryIndexEvent? _scanProgress;
   Map<String, int> _lastRootCounts = const {};
 
+  /// Works this must not hand out at all.
+  ///
+  /// Set by the scope from the protection mode. It sits here rather than in
+  /// each screen because this is the one funnel every list, count, search and
+  /// „Fortsetzen" comes through — a rule applied in twelve places is a rule
+  /// that will be forgotten in one of them.
+  bool Function(WorkView work)? hides;
+
   LibraryStatus get status => _status;
   String? get error => _error;
   List<WorkView> get works => _works;
@@ -176,9 +184,11 @@ class LibraryController extends ChangeNotifier {
     // `includeMissing` on purpose: a file that is gone is a state to show, not
     // a row to hide — the origin mark says "nicht erreichbar" and the work
     // keeps its notes, rating and progress.
+    final gate = hides;
     _works = library
         .listWorks(includeMissing: true)
         .map(WorkView.fromSummary)
+        .where((work) => gate == null || !gate(work))
         .toList(growable: false);
     _sources = library.listSources();
     _scanProgress = null;

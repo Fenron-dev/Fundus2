@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:fundus_design/fundus_design.dart';
 
+import '../../app/fundus_scope.dart';
 import '../../data/work_view.dart';
 
 /// The stand-in grounds the prototype uses where a work has no cover yet.
@@ -54,6 +56,24 @@ class WorkCover extends StatelessWidget {
               Image.file(file, fit: BoxFit.cover, errorBuilder: _fallback)
             else
               _placeholder(context),
+            // Veiled rather than removed: the work is still listed, and what
+            // the protected shelf hides is the picture, not the fact.
+            if (FundusScope.of(context).protection.veils(work))
+              ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                  child: ColoredBox(
+                    color: tokens.background.withValues(alpha: 0.35),
+                    child: Center(
+                      child: Icon(
+                        FundusIcons.protected,
+                        size: FundusIcons.sizeLg,
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (showOrigin)
               Positioned(
                 top: FundusSpace.x2,

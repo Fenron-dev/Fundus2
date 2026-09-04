@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/work_view.dart';
 import 'package:fundus/media/playback_controller.dart';
+import 'package:fundus/media/playback_preference.dart';
 import 'package:fundus/media/playback_engine.dart';
 import 'package:fundus_core/fundus_core.dart';
 
@@ -213,13 +214,25 @@ void main() {
     expect(controller.trackIndex, 0);
   });
 
-  test('die Geschwindigkeit läuft im Kreis', () async {
-    await controller.open(library, work);
+  test(
+    'die Geschwindigkeit läuft im Kreis und endet wieder bei eins',
+    () async {
+      await controller.open(library, work);
 
-    await controller.cycleRate();
-    expect(controller.rate, 1.25);
-    expect(engine.rate, 1.25);
-  });
+      // Der nächste Schritt der eingestellten Reihe, nicht eine feste Zahl:
+      // die Stufen sind jetzt eine Einstellung.
+      final steps = PlaybackPreference.rates;
+      await controller.cycleRate();
+      expect(controller.rate, steps[steps.indexOf(1) + 1]);
+      expect(engine.rate, controller.rate);
+
+      // Einmal ganz herum und man ist wieder da, wo man angefangen hat.
+      for (var step = 1; step < steps.length; step++) {
+        await controller.cycleRate();
+      }
+      expect(controller.rate, 1);
+    },
+  );
 
   test('eine fehlende Datei ist ein Zustand, kein Absturz', () async {
     await controller.open(library, work);

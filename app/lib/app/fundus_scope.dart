@@ -13,12 +13,14 @@ import '../data/server_host.dart';
 import '../data/peer_connection.dart';
 import '../data/download_controller.dart';
 import '../data/peer_library.dart';
+import '../data/protection.dart';
 import '../data/sync_controller.dart';
 import '../data/work_filter.dart';
 import '../data/work_view.dart';
 import '../media/capture.dart';
 import '../media/peer_file_cache.dart';
 import '../media/photo_controller.dart';
+import '../media/playback_preference.dart';
 import '../media/remote_comic_source.dart';
 import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
@@ -47,6 +49,7 @@ class FundusScope extends StatefulWidget {
     this.peerLibrary,
     this.downloads,
     this.photos,
+    this.protection,
     this.captureSink = const FileCaptureSink(),
     this.storage = const PlatformStorageAccess(),
     this.scanner = const CameraPairingScanner(),
@@ -81,6 +84,9 @@ class FundusScope extends StatefulWidget {
 
   /// And for the gallery.
   final PhotoController? photos;
+
+  /// And for the protected shelf.
+  final ProtectionController? protection;
 
   /// Where a saved page or frame goes. The default opens a system dialog.
   final CaptureSink captureSink;
@@ -125,6 +131,8 @@ class FundusScopeState extends State<FundusScope> {
       widget.peerLibrary ??
       PeerLibraryController(settings: widget.settings, library: widget.library);
   late final PhotoController photos = widget.photos ?? PhotoController();
+  late final ProtectionController protection =
+      widget.protection ?? ProtectionController(settings: widget.settings);
   late final DownloadController downloads =
       widget.downloads ??
       DownloadController(
@@ -156,6 +164,8 @@ class FundusScopeState extends State<FundusScope> {
     peerLibrary.addListener(_bump);
     downloads.addListener(_bump);
     photos.addListener(_bump);
+    protection.addListener(_applyProtection);
+    library.hides = protection.hides;
     peerLibrary.addListener(_handOverProxy);
     player.addListener(_syncWhenClosed);
     reader.addListener(_syncWhenClosed);
@@ -217,6 +227,7 @@ class FundusScopeState extends State<FundusScope> {
     peerLibrary.removeListener(_bump);
     downloads.removeListener(_bump);
     photos.removeListener(_bump);
+    protection.removeListener(_applyProtection);
     peerLibrary.removeListener(_handOverProxy);
     player.removeListener(_syncWhenClosed);
     reader.removeListener(_syncWhenClosed);
@@ -231,8 +242,20 @@ class FundusScopeState extends State<FundusScope> {
     if (widget.peerLibrary == null) peerLibrary.dispose();
     if (widget.downloads == null) downloads.dispose();
     if (widget.photos == null) photos.dispose();
+    if (widget.protection == null) protection.dispose();
     navigation.dispose();
     super.dispose();
+  }
+
+  /// Re-reads the library when the shelf is locked or opened.
+  ///
+  /// The gate is applied where works are read, so a change to it means the
+  /// lists have to be built again — otherwise unlocking would show nothing
+  /// until something else happened to trigger a reload.
+  void _applyProtection() {
+    library.hides = protection.hides;
+    library.refresh();
+    _bump();
   }
 
   void _bump() => setState(() => _revision++);
@@ -339,6 +362,9 @@ class FundusScopeState extends State<FundusScope> {
   /// device adopting another's settings should be able to take the reading
   /// setup without the language, or the other way round.
   static const videoProfileKind = 'video';
+
+  /// Speed, skip distances and the sleep timer.
+  static const playbackProfileKind = 'playback';
 
   Future<void> setThemeMode(ThemeMode mode) async {
     await settings.setThemeMode(mode);
@@ -454,9 +480,30 @@ class FundusScopeState extends State<FundusScope> {
       profile?.settingsFor(videoProfileKind) ?? const {},
     );
     player.onPreferenceChanged = _saveTrackPreference;
+    player.habits = PlaybackPreference.fromJson(
+      profile?.settingsFor(playbackProfileKind) ?? const {},
+    );
+    await player.setRate(player.habits.rate);
+    player.onHabitsChanged = _savePlaybackPreference;
   }
 
-  Future<void> _saveTrackPreference(TrackPreference value) async {
+  Future<void> _saveTrackPreference(TrackPreference value) =>
+      _writeProfileSection(videoProfileKind, value.toJson());
+
+  /// Changes how this device plays, and remembers it.
+  Future<void> setPlaybackHabits(PlaybackPreference value) async {
+    player.habits = value;
+    await _savePlaybackPreference(value);
+    _bump();
+  }
+
+  Future<void> _savePlaybackPreference(PlaybackPreference value) =>
+      _writeProfileSection(playbackProfileKind, value.toJson());
+
+  Future<void> _writeProfileSection(
+    String kind,
+    Map<String, Object?> values,
+  ) async {
     final vault = library.library;
     if (vault == null || vault.isReadOnly) return;
     final existing = await vault.loadDeviceProfile(settings.deviceKey);
@@ -467,7 +514,7 @@ class FundusScopeState extends State<FundusScope> {
                   displayName: settings.deviceName,
                   platform: defaultTargetPlatform.name,
                 ))
-            .withSettings(videoProfileKind, value.toJson());
+            .withSettings(kind, values);
     await vault.saveDeviceProfile(profile);
   }
 

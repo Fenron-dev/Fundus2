@@ -8,6 +8,7 @@ import 'package:fundus_core/fundus_core.dart';
 import '../data/work_view.dart';
 import 'media_byte_source.dart';
 import 'playback_engine.dart';
+import 'playback_preference.dart';
 import 'track_preference.dart';
 
 /// The one player.
@@ -19,6 +20,16 @@ import 'track_preference.dart';
 class PlaybackController extends ChangeNotifier {
   PlaybackController({PlaybackEngine? engine, this.deviceId = 'device'})
     : _engineOrNull = engine;
+
+  /// How this device plays — speed, skip distances, the sleep timer. Kept by
+  /// the scope in the vault's device profile.
+  PlaybackPreference habits = const PlaybackPreference();
+  Future<void> Function(PlaybackPreference value)? onHabitsChanged;
+
+  Timer? _sleepTimer;
+  Timer? _sleepTick;
+  DateTime? _sleepEndsAt;
+  bool _sleepingAtChapterEnd = false;
 
   /// The languages this device watches in, and the way to store a change.
   ///
@@ -310,7 +321,13 @@ class PlaybackController extends ChangeNotifier {
         notifyListeners();
       }),
       _engine.completedStream.listen((value) {
-        if (value) next();
+        if (!value) return;
+        if (_sleepingAtChapterEnd) {
+          // This is the end the timer was waiting for.
+          unawaited(_sleepNow());
+          return;
+        }
+        next();
       }),
       _engine.tracksStream.listen((value) {
         _tracks = value;
@@ -381,14 +398,82 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> setRate(double value) async {
     _rate = value.clamp(0.5, 3);
-    await _engine.setRate(_rate);
+    if (_engineOrNull != null) await _engine.setRate(_rate);
+    // Speed is a habit rather than a property of this file, so it is kept.
+    habits = habits.copyWith(rate: _rate);
+    await onHabitsChanged?.call(habits);
     notifyListeners();
   }
 
   Future<void> cycleRate() {
-    const steps = [1.0, 1.25, 1.5, 1.75, 2.0, 0.75];
-    final next = steps[(steps.indexOf(_rate) + 1) % steps.length];
-    return setRate(next);
+    final steps = PlaybackPreference.rates;
+    final index = steps.indexOf(_rate);
+    return setRate(steps[(index + 1) % steps.length]);
+  }
+
+  /// Skips by the distance this device is set to.
+  Future<void> skipBackward() => seekRelative(-habits.skipBack);
+
+  Future<void> skipForward() => seekRelative(habits.skipForward);
+
+  /// Stops playing after a while.
+  ///
+  /// Falling asleep and finding the position three chapters on is what this
+  /// exists to prevent — which is why it can also wait for the end of the
+  /// chapter it lands in, rather than cutting a sentence in half.
+  void startSleepTimer([Duration? after]) {
+    _sleepTimer?.cancel();
+    final span = after ?? habits.sleepTimer;
+    _sleepEndsAt = DateTime.now().add(span);
+    _sleepTimer = Timer(span, _fallAsleep);
+    _sleepTick ??= Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => notifyListeners(),
+    );
+    notifyListeners();
+  }
+
+  void cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTick?.cancel();
+    _sleepTick = null;
+    _sleepEndsAt = null;
+    _sleepingAtChapterEnd = false;
+    notifyListeners();
+  }
+
+  /// How long the sleep timer still has to run, or null when it is off.
+  Duration? get sleepRemaining {
+    final ends = _sleepEndsAt;
+    if (ends == null) return null;
+    final left = ends.difference(DateTime.now());
+    return left.isNegative ? Duration.zero : left;
+  }
+
+  /// True once the timer has run out and it is waiting for the chapter to end.
+  bool get isSleepingAtChapterEnd => _sleepingAtChapterEnd;
+
+  Future<void> _fallAsleep() async {
+    if (habits.sleepAtChapterEnd && _chapterEndsLater) {
+      _sleepingAtChapterEnd = true;
+      notifyListeners();
+      return;
+    }
+    await _sleepNow();
+  }
+
+  Future<void> _sleepNow() async {
+    cancelSleepTimer();
+    saveProgress();
+    if (_engineOrNull != null) await _engine.pause();
+  }
+
+  /// Whether the current chapter still has a way to run.
+  bool get _chapterEndsLater {
+    final total = _duration;
+    if (total == null) return false;
+    return total - _position > const Duration(seconds: 3);
   }
 
   void expand() {
@@ -458,6 +543,8 @@ class PlaybackController extends ChangeNotifier {
   void dispose() {
     saveProgress();
     _saveTimer?.cancel();
+    _sleepTimer?.cancel();
+    _sleepTick?.cancel();
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }

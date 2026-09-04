@@ -9,8 +9,10 @@ import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../app/pairing_scanner.dart';
 import '../../data/media_type.dart';
+import '../../data/protection.dart';
 import '../../data/server_host.dart';
 import '../library/unassigned_folders_card.dart';
+import '../../media/playback_preference.dart';
 import 'settings_catalog.dart';
 
 /// Settings, with the scope of each one visible.
@@ -29,8 +31,10 @@ class SettingsScreen extends StatelessWidget {
     return switch (category) {
       null => const _Index(),
       'darstellung' => const _Appearance(),
+      'wiedergabe' => const _Playback(),
       'bibliotheken' => const _Libraries(),
       'synchronisation' => const _Sync(),
+      'schutz' => const _Protection(),
       'diagnose' => const _Diagnostics(),
       _ => _Planned(category: category!),
     };
@@ -457,6 +461,351 @@ class _Fact extends StatelessWidget {
   }
 }
 
+/// Speed, skip distances and the sleep timer.
+///
+/// All three are habits rather than properties of a work — someone who
+/// listens at 1.4× listens to everything at 1.4× — so they are kept per
+/// device, in the vault, where a reinstall cannot take them.
+class _Playback extends StatelessWidget {
+  const _Playback();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final player = scope.player;
+    final habits = player.habits;
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    return _SettingsPage(
+      title: 'Wiedergabe',
+      subtitle:
+          'Gilt für dieses Gerät und liegt bei der Bibliothek — nach einer '
+          'Neuinstallation ist es wieder da.',
+      children: [
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Geschwindigkeit', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x3),
+              Wrap(
+                spacing: FundusSpace.x2,
+                runSpacing: FundusSpace.x2,
+                children: [
+                  for (final rate in PlaybackPreference.rates)
+                    ChoiceChip(
+                      selected: (habits.rate - rate).abs() < 0.001,
+                      onSelected: (_) => player.setRate(rate),
+                      label: Text('$rate×'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Sprungweiten', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Zurück meist kürzer als vor: man springt zurück, um etwas '
+                'noch einmal zu hören, und vor, um etwas zu überspringen.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              Text('Zurück', style: theme.textTheme.labelLarge),
+              const SizedBox(height: FundusSpace.x2),
+              Wrap(
+                spacing: FundusSpace.x2,
+                runSpacing: FundusSpace.x2,
+                children: [
+                  for (final seconds in PlaybackPreference.skips)
+                    ChoiceChip(
+                      selected: habits.skipBack.inSeconds == seconds,
+                      onSelected: (_) => scope.setPlaybackHabits(
+                        habits.copyWith(skipBack: Duration(seconds: seconds)),
+                      ),
+                      label: Text('$seconds s'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              Text('Vor', style: theme.textTheme.labelLarge),
+              const SizedBox(height: FundusSpace.x2),
+              Wrap(
+                spacing: FundusSpace.x2,
+                runSpacing: FundusSpace.x2,
+                children: [
+                  for (final seconds in PlaybackPreference.skips)
+                    ChoiceChip(
+                      selected: habits.skipForward.inSeconds == seconds,
+                      onSelected: (_) => scope.setPlaybackHabits(
+                        habits.copyWith(
+                          skipForward: Duration(seconds: seconds),
+                        ),
+                      ),
+                      label: Text('$seconds s'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Sleep-Timer', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Die Voreinstellung, wenn der Timer im Player ohne Auswahl '
+                'gestartet wird.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              Wrap(
+                spacing: FundusSpace.x2,
+                runSpacing: FundusSpace.x2,
+                children: [
+                  for (final minutes in PlaybackPreference.sleepChoices)
+                    ChoiceChip(
+                      selected: habits.sleepTimer.inMinutes == minutes,
+                      onSelected: (_) => scope.setPlaybackHabits(
+                        habits.copyWith(sleepTimer: Duration(minutes: minutes)),
+                      ),
+                      label: Text('$minutes min'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: habits.sleepAtChapterEnd,
+                onChanged: (value) => scope.setPlaybackHabits(
+                  habits.copyWith(sleepAtChapterEnd: value),
+                ),
+                title: const Text('Bis zum Kapitelende weiterlaufen'),
+                subtitle: Text(
+                  'Mitten im Satz aufzuhören spart vier Minuten und kostet '
+                  'die Stelle, an der man eingeschlafen ist.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textMuted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The protected shelf.
+///
+/// Two separate things, deliberately: whether protected works are hidden,
+/// and whether this session is unlocked. The first is a setting; the second
+/// happens once and lapses when the app closes, because a lock that stays
+/// open is a decoration.
+class _Protection extends StatefulWidget {
+  const _Protection();
+
+  @override
+  State<_Protection> createState() => _ProtectionState();
+}
+
+class _ProtectionState extends State<_Protection> {
+  final _pinController = TextEditingController();
+  final _unlockController = TextEditingController();
+  String? _complaint;
+
+  @override
+  void dispose() {
+    _pinController.dispose();
+    _unlockController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final protection = scope.protection;
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    return _SettingsPage(
+      title: 'Schutzmodus',
+      subtitle:
+          'Gilt für dieses Gerät. Die PIN liegt hier und nicht in der '
+          'Bibliothek — ein Bibliotheksordner wird geteilt, ein Schlüssel '
+          'nicht.',
+      children: [
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Was verdeckt wird', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x3),
+              RadioGroup<ProtectionMode>(
+                groupValue: protection.mode,
+                onChanged: (value) =>
+                    value == null ? null : protection.setMode(value),
+                child: Column(
+                  children: [
+                    for (final mode in ProtectionMode.values)
+                      RadioListTile<ProtectionMode>(
+                        contentPadding: EdgeInsets.zero,
+                        value: mode,
+                        title: Text(mode.label),
+                        subtitle: Text(
+                          mode.description,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: tokens.textMuted,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('PIN', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                protection.hasPin
+                    ? 'Eine PIN ist gesetzt. Eine neue ersetzt sie; ein '
+                          'leeres Feld nimmt sie weg.'
+                    : 'Ohne PIN lässt sich der Schutz nur ein- und '
+                          'ausschalten, nicht öffnen.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 180,
+                    child: TextField(
+                      controller: _pinController,
+                      obscureText: true,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Neue PIN'),
+                    ),
+                  ),
+                  const SizedBox(width: FundusSpace.x4),
+                  FilledButton(
+                    onPressed: () async {
+                      await protection.setPin(_pinController.text);
+                      _pinController.clear();
+                      setState(() => _complaint = null);
+                    },
+                    child: const Text('Übernehmen'),
+                  ),
+                  if (protection.hasPin) ...[
+                    const SizedBox(width: FundusSpace.x3),
+                    TextButton(
+                      onPressed: () => protection.setPin(''),
+                      child: const Text('PIN entfernen'),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (protection.mode != ProtectionMode.off && protection.hasPin)
+          _Card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Für diese Sitzung',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                    ),
+                    Text(
+                      protection.isUnlocked ? 'Entsperrt' : 'Gesperrt',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: protection.isUnlocked
+                            ? tokens.success
+                            : tokens.textFaint,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                Text(
+                  'Beim nächsten Start ist wieder zu — das ist der Sinn.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textMuted,
+                  ),
+                ),
+                const SizedBox(height: FundusSpace.x4),
+                if (protection.isUnlocked)
+                  OutlinedButton.icon(
+                    onPressed: protection.lock,
+                    icon: Icon(FundusIcons.protected, size: FundusIcons.sizeSm),
+                    label: const Text('Jetzt sperren'),
+                  )
+                else
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 180,
+                        child: TextField(
+                          controller: _unlockController,
+                          obscureText: true,
+                          keyboardType: TextInputType.number,
+                          onSubmitted: (_) => _unlock(protection),
+                          decoration: const InputDecoration(labelText: 'PIN'),
+                        ),
+                      ),
+                      const SizedBox(width: FundusSpace.x4),
+                      FilledButton(
+                        onPressed: () => _unlock(protection),
+                        child: const Text('Entsperren'),
+                      ),
+                    ],
+                  ),
+                if (_complaint case final complaint?) ...[
+                  const SizedBox(height: FundusSpace.x3),
+                  Text(
+                    complaint,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: tokens.danger,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _unlock(ProtectionController protection) {
+    final opened = protection.unlock(_unlockController.text);
+    setState(() => _complaint = opened ? null : 'Die PIN stimmt nicht.');
+    if (opened) _unlockController.clear();
+  }
+}
+
 class _Planned extends StatelessWidget {
   const _Planned({required this.category});
 
@@ -465,11 +814,6 @@ class _Planned extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const descriptions = <String, (String, String)>{
-      'wiedergabe': (
-        'Wiedergabe',
-        'Geschwindigkeit, Sprungweiten, Sleep-Timer und Konfliktauflösung '
-            'gehören zur Medien-Engine und kommen mit ihr.',
-      ),
       'reader': (
         'Reader',
         'Leserichtung, Doppelseiten und Schriftgröße sind gerätegebunden und '
@@ -483,12 +827,6 @@ class _Planned extends StatelessWidget {
       'wartung': (
         'Serverwartung',
         'Speicher, Scan-Zeitplan und Wartungsaufgaben gehören zum Peer-Server.',
-      ),
-      'schutz': (
-        'Schutzmodus',
-        'PIN, unscharfe Vorschau und vollständiges Ausblenden greifen quer '
-            'durch Suche, Fortsetzen und Protokolle — deshalb erst, wenn diese '
-            'Wege alle stehen.',
       ),
     };
     final entry = descriptions[category] ?? ('Einstellungen', '');

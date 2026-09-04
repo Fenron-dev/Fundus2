@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
+import '../../media/playback_preference.dart';
 import '../../media/playback_controller.dart';
 import '../../media/playback_engine.dart';
 import '../library/work_cover.dart';
@@ -170,10 +171,10 @@ class _PlayerKeys extends StatelessWidget {
             player.playOrPause();
             return KeyEventResult.handled;
           case LogicalKeyboardKey.arrowLeft:
-            player.seekRelative(const Duration(seconds: -15));
+            player.skipBackward();
             return KeyEventResult.handled;
           case LogicalKeyboardKey.arrowRight:
-            player.seekRelative(const Duration(seconds: 30));
+            player.skipForward();
             return KeyEventResult.handled;
           case LogicalKeyboardKey.keyF:
             scope.toggleFullscreen();
@@ -449,9 +450,8 @@ class _Controls extends StatelessWidget {
           alignment: WrapAlignment.center,
           children: [
             TextButton(
-              onPressed: () =>
-                  player.seekRelative(const Duration(seconds: -15)),
-              child: const Text('−15 s'),
+              onPressed: player.skipBackward,
+              child: Text('−${player.habits.skipBack.inSeconds} s'),
             ),
             IconButton(
               onPressed: player.previous,
@@ -472,13 +472,14 @@ class _Controls extends StatelessWidget {
               tooltip: 'Nächster Titel',
             ),
             TextButton(
-              onPressed: () => player.seekRelative(const Duration(seconds: 30)),
-              child: const Text('+30 s'),
+              onPressed: player.skipForward,
+              child: Text('+${player.habits.skipForward.inSeconds} s'),
             ),
             OutlinedButton(
               onPressed: player.cycleRate,
               child: Text('${player.rate}×'),
             ),
+            const _SleepButton(),
           ],
         ),
       ],
@@ -602,5 +603,60 @@ class _Entry extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Stopping after a while.
+///
+/// It shows what is left rather than that it is on: „noch 12 min" is the
+/// thing a person wants to know, and „Timer läuft" is not.
+class _SleepButton extends StatelessWidget {
+  const _SleepButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final player = FundusScope.of(context).player;
+    final tokens = context.fundus;
+    final left = player.sleepRemaining;
+
+    if (player.isSleepingAtChapterEnd) {
+      return OutlinedButton.icon(
+        onPressed: player.cancelSleepTimer,
+        icon: Icon(FundusIcons.sleepTimer, size: FundusIcons.sizeSm),
+        label: const Text('Bis Kapitelende'),
+      );
+    }
+
+    if (left != null) {
+      return OutlinedButton.icon(
+        onPressed: player.cancelSleepTimer,
+        icon: Icon(
+          FundusIcons.sleepTimer,
+          size: FundusIcons.sizeSm,
+          color: tokens.accent,
+        ),
+        label: Text('noch ${_short(left)}'),
+      );
+    }
+
+    return MenuAnchor(
+      menuChildren: [
+        for (final minutes in PlaybackPreference.sleepChoices)
+          MenuItemButton(
+            onPressed: () => player.startSleepTimer(Duration(minutes: minutes)),
+            child: Text('$minutes Minuten'),
+          ),
+      ],
+      builder: (context, controller, child) => OutlinedButton.icon(
+        onPressed: controller.isOpen ? controller.close : controller.open,
+        icon: Icon(FundusIcons.sleepTimer, size: FundusIcons.sizeSm),
+        label: const Text('Sleep'),
+      ),
+    );
+  }
+
+  static String _short(Duration value) {
+    if (value.inMinutes >= 1) return '${value.inMinutes} min';
+    return '${value.inSeconds} s';
   }
 }

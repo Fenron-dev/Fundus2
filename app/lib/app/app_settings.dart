@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../data/peer_connection.dart';
+import '../data/protection.dart';
 import 'device_name.dart';
 
 /// Everything this device remembers on its own.
@@ -132,6 +133,22 @@ class AppSettings extends ChangeNotifier {
   ///
   /// An empty field is a field someone cleared on the way to typing, not a
   /// request to be called nothing.
+  /// How much of the protected shelf is shown.
+  ProtectionMode get protectionMode => switch (_values['protection_mode']) {
+    'blur' => ProtectionMode.blur,
+    'hide' => ProtectionMode.hide,
+    _ => ProtectionMode.off,
+  };
+
+  /// The PIN as `salt:digest`, never as digits, and never in the vault: a
+  /// library folder is shared by definition.
+  String get protectionPin => _values['protection_pin'] as String? ?? '';
+
+  Future<void> setProtectionMode(ProtectionMode value) =>
+      _set('protection_mode', value.name);
+
+  Future<void> setProtectionPin(String value) => _set('protection_pin', value);
+
   Future<void> setDeviceName(String value) async {
     final name = value.trim();
     if (name.isEmpty || name == deviceName) return;
