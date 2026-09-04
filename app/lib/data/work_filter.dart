@@ -1,3 +1,4 @@
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import 'media_type.dart';
@@ -211,5 +212,44 @@ abstract final class WorkGrouping {
       'Dezember',
     ];
     return '${months[date.month - 1]} ${date.year}';
+  }
+}
+
+/// Turning a view into something the vault can store, and back.
+///
+/// The stored shape is the core's own query, so a view saved by one client
+/// means the same thing to the next. What does not survive is „Ordnen nach":
+/// that is how a list is laid out, not what is in it, and people flip it
+/// while looking rather than as part of what they were looking for.
+extension WorkFilterQuery on WorkFilter {
+  LibraryWorkQuery toQuery() => LibraryWorkQuery(
+    text: text,
+    kinds: mediaTypeId == null
+        ? const {}
+        : MediaTypes.byId(mediaTypeId!)?.workKinds ?? const {},
+    offlineOnly: origins.contains(FundusOrigin.offline),
+    sort: switch (sort) {
+      WorkSort.recentlyAdded => LibraryWorkSort.recentlyAdded,
+      WorkSort.title => LibraryWorkSort.title,
+      WorkSort.progress => LibraryWorkSort.progress,
+      WorkSort.series => LibraryWorkSort.series,
+    },
+  );
+
+  static WorkFilter fromQuery(LibraryWorkQuery query) {
+    final type = MediaTypes.all
+        .where((entry) => entry.workKinds.intersection(query.kinds).isNotEmpty)
+        .firstOrNull;
+    return WorkFilter(
+      text: query.text,
+      mediaTypeId: type?.id,
+      origins: query.offlineOnly ? const {FundusOrigin.offline} : const {},
+      sort: switch (query.sort) {
+        LibraryWorkSort.title => WorkSort.title,
+        LibraryWorkSort.progress => WorkSort.progress,
+        LibraryWorkSort.series => WorkSort.series,
+        _ => WorkSort.recentlyAdded,
+      },
+    );
   }
 }

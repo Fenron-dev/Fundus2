@@ -1,5 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -9,7 +14,9 @@ import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../app/pairing_scanner.dart';
 import '../../data/media_type.dart';
+import '../../media/comic_layout.dart';
 import '../../data/protection.dart';
+import '../../data/work_filter.dart';
 import '../../data/server_host.dart';
 import '../library/unassigned_folders_card.dart';
 import '../../media/playback_preference.dart';
@@ -32,11 +39,14 @@ class SettingsScreen extends StatelessWidget {
       null => const _Index(),
       'darstellung' => const _Appearance(),
       'wiedergabe' => const _Playback(),
+      'reader' => const _Reader(),
+      'suche' => const _Search(),
+      'wartung' => const _Maintenance(),
       'bibliotheken' => const _Libraries(),
       'synchronisation' => const _Sync(),
       'schutz' => const _Protection(),
       'diagnose' => const _Diagnostics(),
-      _ => _Planned(category: category!),
+      _ => _Unknown(category: category!),
     };
   }
 }
@@ -806,37 +816,643 @@ class _ProtectionState extends State<_Protection> {
   }
 }
 
-class _Planned extends StatelessWidget {
-  const _Planned({required this.category});
+/// What a reader starts with.
+///
+/// A work that has been read keeps its own setting — someone who reads one
+/// series right to left does not want that for everything — so what is set
+/// here is the starting point for works that have not been opened yet. It
+/// lives in the vault, beside the per-work settings it stands in for.
+class _Reader extends StatefulWidget {
+  const _Reader();
+
+  @override
+  State<_Reader> createState() => _ReaderState();
+}
+
+class _ReaderState extends State<_Reader> {
+  PublicationReaderProfile? _pages;
+  ReflowReaderProfile? _text;
+  bool _loading = true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_loading) unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final vault = FundusScope.of(context).library.library;
+    if (vault == null) {
+      setState(() => _loading = false);
+      return;
+    }
+    final pages = await vault.loadReaderProfile();
+    final text = await vault.loadTextProfile();
+    if (!mounted) return;
+    setState(() {
+      _pages = pages;
+      _text = text;
+      _loading = false;
+    });
+  }
+
+  Future<void> _savePages(PublicationReaderProfile value) async {
+    setState(() => _pages = value);
+    await FundusScope.of(context).library.library?.saveReaderProfile(value);
+  }
+
+  Future<void> _saveText(ReflowReaderProfile value) async {
+    setState(() => _text = value);
+    await FundusScope.of(context).library.library?.saveTextProfile(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final pages = _pages;
+    final text = _text;
+
+    return _SettingsPage(
+      title: 'Reader',
+      subtitle:
+          'Womit ein Werk aufgeht, das noch nie geöffnet wurde. Ein gelesenes '
+          'Werk behält, was dort eingestellt wurde.',
+      children: [
+        if (_loading)
+          const _Card(child: LinearProgressIndicator())
+        else if (pages == null || text == null)
+          _Card(
+            child: Text(
+              'Ohne geöffnete Bibliothek gibt es nichts einzustellen — die '
+              'Voreinstellungen liegen bei der Bibliothek.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: tokens.textMuted,
+              ),
+            ),
+          )
+        else ...[
+          _Card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Comics, Manga und Dokumente',
+                  style: theme.textTheme.titleMedium,
+                ),
+                const SizedBox(height: FundusSpace.x4),
+                _Choices(
+                  label: 'Anzeige',
+                  children: [
+                    for (final layout in PublicationReaderLayout.values)
+                      ChoiceChip(
+                        selected: pages.layout == layout,
+                        onSelected: (_) =>
+                            _savePages(pages.copyWith(layout: layout)),
+                        label: Text(layout.label),
+                      ),
+                  ],
+                ),
+                _Choices(
+                  label: 'Leserichtung',
+                  children: [
+                    for (final direction in PublicationReadingDirection.values)
+                      ChoiceChip(
+                        selected: pages.readingDirection == direction,
+                        onSelected: (_) => _savePages(
+                          pages.copyWith(readingDirection: direction),
+                        ),
+                        label: Text(direction.label),
+                      ),
+                  ],
+                ),
+                _Choices(
+                  label: 'Größe',
+                  children: [
+                    for (final scale in PublicationPageScale.values)
+                      ChoiceChip(
+                        selected: pages.pageScale == scale,
+                        onSelected: (_) =>
+                            _savePages(pages.copyWith(pageScale: scale)),
+                        label: Text(scale.label),
+                      ),
+                  ],
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: pages.firstPageIsCover,
+                  onChanged: (value) =>
+                      _savePages(pages.copyWith(firstPageIsCover: value)),
+                  title: const Text('Erste Seite ist das Cover'),
+                  subtitle: Text(
+                    'Sonst steht sie in der ersten Doppelseite.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: tokens.textMuted,
+                    ),
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: pages.invertTapZones,
+                  onChanged: (value) =>
+                      _savePages(pages.copyWith(invertTapZones: value)),
+                  title: const Text('Tippbereiche vertauschen'),
+                  subtitle: Text(
+                    'Für Linkshänder oder für Leserichtungen, die sich falsch '
+                    'anfühlen.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: tokens.textMuted,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _Card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Bücher und Light Novels',
+                  style: theme.textTheme.titleMedium,
+                ),
+                const SizedBox(height: FundusSpace.x4),
+                _Choices(
+                  label: 'Schrift',
+                  children: [
+                    for (final family in ReflowFontFamily.values)
+                      ChoiceChip(
+                        selected: text.fontFamily == family,
+                        onSelected: (_) =>
+                            _saveText(text.copyWith(fontFamily: family)),
+                        label: Text(_fontLabel(family)),
+                      ),
+                  ],
+                ),
+                _Choices(
+                  label: 'Grund',
+                  children: [
+                    for (final ground in ReflowTheme.values)
+                      ChoiceChip(
+                        selected: text.theme == ground,
+                        onSelected: (_) =>
+                            _saveText(text.copyWith(theme: ground)),
+                        label: Text(_groundLabel(ground)),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: FundusSpace.x3),
+                Text('Schriftgröße', style: theme.textTheme.labelLarge),
+                Slider(
+                  value: text.fontSize,
+                  min: 13,
+                  max: 32,
+                  divisions: 19,
+                  label: '${text.fontSize.round()} pt',
+                  onChanged: (value) =>
+                      setState(() => _text = text.copyWith(fontSize: value)),
+                  onChangeEnd: (value) =>
+                      _saveText(text.copyWith(fontSize: value)),
+                ),
+                Text('Zeilenabstand', style: theme.textTheme.labelLarge),
+                Slider(
+                  value: text.lineHeight,
+                  min: 1.2,
+                  max: 2.2,
+                  divisions: 10,
+                  label: text.lineHeight.toStringAsFixed(2),
+                  onChanged: (value) =>
+                      setState(() => _text = text.copyWith(lineHeight: value)),
+                  onChangeEnd: (value) =>
+                      _saveText(text.copyWith(lineHeight: value)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  static String _fontLabel(ReflowFontFamily family) => switch (family) {
+    ReflowFontFamily.system => 'System',
+    ReflowFontFamily.serif => 'Serif',
+    ReflowFontFamily.sansSerif => 'Serifenlos',
+    ReflowFontFamily.monospace => 'Feste Breite',
+  };
+
+  static String _groundLabel(ReflowTheme ground) => switch (ground) {
+    ReflowTheme.followApp => 'Wie die App',
+    ReflowTheme.paper => 'Papier',
+    ReflowTheme.sepia => 'Sepia',
+    ReflowTheme.night => 'Nacht',
+  };
+}
+
+/// A labelled row of choices, as the reader's own sheet lays them out.
+class _Choices extends StatelessWidget {
+  const _Choices({required this.label, required this.children});
+
+  final String label;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: FundusSpace.x4),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: FundusSpace.x2),
+        Wrap(
+          spacing: FundusSpace.x2,
+          runSpacing: FundusSpace.x2,
+          children: children,
+        ),
+      ],
+    ),
+  );
+}
+
+/// Saved views — a filter given a name.
+///
+/// What is saved is what is *filtered*: the area, the origin, the sort and
+/// the search text. Not „Ordnen nach": that is a toggle people flip while
+/// looking at something, not part of what they were looking for. The views
+/// live in the vault, so they are the same on every device that opens it.
+class _Search extends StatefulWidget {
+  const _Search();
+
+  @override
+  State<_Search> createState() => _SearchState();
+}
+
+class _SearchState extends State<_Search> {
+  final _nameController = TextEditingController();
+  List<LibrarySavedView>? _views;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_views == null) unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final vault = FundusScope.of(context).library.library;
+    final views = await vault?.loadSavedViews() ?? const <LibrarySavedView>[];
+    if (!mounted) return;
+    setState(() => _views = views);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final views = _views;
+    final filter = scope.filter;
+
+    return _SettingsPage(
+      title: 'Suche & Filter',
+      subtitle:
+          'Eine Ansicht ist ein Filter mit einem Namen. Sie liegt bei der '
+          'Bibliothek, gilt also auf jedem Gerät, das sie öffnet.',
+      children: [
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Aktuelle Ansicht sichern',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                _describe(filter),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Name der Ansicht',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: FundusSpace.x4),
+                  FilledButton(
+                    onPressed: () async {
+                      final name = _nameController.text.trim();
+                      if (name.isEmpty) return;
+                      final vault = scope.library.library;
+                      if (vault == null) return;
+                      final saved = await vault.saveView(
+                        name,
+                        scope.filter.toQuery(),
+                      );
+                      _nameController.clear();
+                      if (!mounted) return;
+                      setState(() => _views = saved);
+                    },
+                    child: const Text('Sichern'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Gespeicherte Ansichten',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              if (views == null)
+                const LinearProgressIndicator()
+              else if (views.isEmpty)
+                Text(
+                  'Noch keine. Stelle in der Bibliothek ein, was du sehen '
+                  'willst, und sichere es hier unter einem Namen.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                )
+              else
+                for (final view in views)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      FundusIcons.filter,
+                      size: FundusIcons.sizeMd,
+                      color: tokens.textMuted,
+                    ),
+                    title: Text(view.name),
+                    subtitle: Text(
+                      _describeQuery(view.query),
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                    onTap: () => scope.applySavedView(view),
+                    trailing: IconButton(
+                      onPressed: () async {
+                        final vault = scope.library.library;
+                        if (vault == null) return;
+                        final left = await vault.deleteSavedView(view.id);
+                        if (!mounted) return;
+                        setState(() => _views = left);
+                      },
+                      icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
+                      tooltip: 'Ansicht löschen',
+                    ),
+                  ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _describe(WorkFilter filter) {
+    final parts = <String>[
+      if (filter.mediaTypeId case final id?)
+        MediaTypes.byId(id)?.label ?? id
+      else
+        'Alle Werke',
+      if (filter.text.isNotEmpty) 'Suche „${filter.text}"',
+      if (filter.origins.isNotEmpty)
+        filter.origins.map((origin) => origin.label).join(', '),
+      filter.sort.label,
+    ];
+    return parts.join(' · ');
+  }
+
+  static String _describeQuery(LibraryWorkQuery query) {
+    final parts = <String>[
+      if (query.text.isNotEmpty) 'Suche „${query.text}"',
+      if (query.kinds.isNotEmpty)
+        MediaTypes.all
+            .where(
+              (type) => type.workKinds.intersection(query.kinds).isNotEmpty,
+            )
+            .map((type) => type.label)
+            .join(', ')
+            .toString(),
+      if (query.offlineOnly) 'Offline gesichert',
+    ];
+    return parts.isEmpty ? 'Alles' : parts.join(' · ');
+  }
+}
+
+/// What the shared side costs and what to do about it.
+///
+/// „Wartung" here means the two things that actually accumulate: the copies
+/// fetched for reading, and the index of a paired library. Neither holds
+/// anything irreplaceable — that is the point of showing them together with
+/// a way to throw them away.
+class _Maintenance extends StatefulWidget {
+  const _Maintenance();
+
+  @override
+  State<_Maintenance> createState() => _MaintenanceState();
+}
+
+class _MaintenanceState extends State<_Maintenance> {
+  int? _cacheBytes;
+  bool _working = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_cacheBytes == null) unawaited(_measure());
+  }
+
+  Future<Directory> _cacheRoot() async {
+    final support = await getApplicationSupportDirectory();
+    return Directory(p.join(support.path, 'peer-cache'));
+  }
+
+  /// Measures the cache, and does not make a fuss if it cannot.
+  ///
+  /// Asking the platform where its storage is can fail — in a preview, in a
+  /// test, on a system that answers differently. A number nobody could
+  /// measure is worth a shrug, not an error screen over the settings.
+  Future<void> _measure() async {
+    var total = 0;
+    try {
+      final room = await _cacheRoot();
+      if (await room.exists()) {
+        await for (final entity in room.list(recursive: true)) {
+          if (entity is File) total += await entity.length();
+        }
+      }
+    } on Object {
+      total = 0;
+    }
+    if (!mounted) return;
+    setState(() => _cacheBytes = total);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final vault = scope.library.library;
+    final peer = scope.peerLibrary.peer;
+
+    return _SettingsPage(
+      title: 'Serverwartung',
+      subtitle:
+          'Was sich mit der Zeit ansammelt, und wie man es wieder loswird. '
+          'Nichts davon ist unersetzlich.',
+      children: [
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Zwischenspeicher', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Seiten und Dateien, die zum Lesen von einem gekoppelten '
+                'Gerät geholt wurden. Heruntergeladene Werke gehören nicht '
+                'dazu — die stehen unter „Downloads" und bleiben.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _cacheBytes == null
+                          ? 'wird gemessen …'
+                          : _size(_cacheBytes!),
+                      style: theme.textTheme.headlineMedium,
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _working || (_cacheBytes ?? 0) == 0
+                        ? null
+                        : () async {
+                            setState(() => _working = true);
+                            final room = await _cacheRoot();
+                            if (await room.exists()) {
+                              await room.delete(recursive: true);
+                            }
+                            if (!mounted) return;
+                            setState(() {
+                              _working = false;
+                              _cacheBytes = 0;
+                            });
+                          },
+                    child: const Text('Leeren'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Bestand', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x3),
+              _Fact('Werke im Index', '${scope.library.works.length}'),
+              _Fact('Quellen', '${scope.library.sources.length}'),
+              if (peer != null) _Fact('Gespiegelt von', peer.name),
+              if (vault != null) _Fact('Ordner', vault.root.path),
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Neu einlesen', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                scope.peerLibrary.isOpen
+                    ? 'Diese Bibliothek ist gespiegelt — eingelesen wird sie '
+                          'auf dem Gerät, dem sie gehört. Hier wird der '
+                          'Katalog neu geholt.'
+                    : 'Liest den Bibliotheksordner erneut ein. Nötig, wenn '
+                          'außerhalb von Fundus Dateien dazugekommen sind.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              if (scope.peerLibrary.isOpen)
+                FilledButton.tonalIcon(
+                  onPressed: scope.peerLibrary.isBusy
+                      ? null
+                      : scope.peerLibrary.refresh,
+                  icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
+                  label: const Text('Katalog holen'),
+                )
+              else
+                FilledButton.tonalIcon(
+                  onPressed: scope.library.isScanning || vault == null
+                      ? null
+                      : scope.library.scan,
+                  icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
+                  label: Text(
+                    scope.library.isScanning ? 'Läuft …' : 'Jetzt einlesen',
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _size(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    const units = ['kB', 'MB', 'GB', 'TB'];
+    var value = bytes / 1024;
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
+  }
+}
+
+/// A category nothing claims.
+///
+/// Every area in the catalogue has a page now, so this is reached only by an
+/// address that was mistyped or one that used to exist. Saying so beats a
+/// blank screen.
+class _Unknown extends StatelessWidget {
+  const _Unknown({required this.category});
 
   final String category;
 
   @override
-  Widget build(BuildContext context) {
-    const descriptions = <String, (String, String)>{
-      'reader': (
-        'Reader',
-        'Leserichtung, Doppelseiten und Schriftgröße sind gerätegebunden und '
-            'werden mit dem jeweiligen Reader gebaut.',
-      ),
-      'suche': (
-        'Suche & Filter',
-        'Gespeicherte Ansichten und Suchbereich folgen, sobald die Suche über '
-            'mehrere Quellen läuft.',
-      ),
-      'wartung': (
-        'Serverwartung',
-        'Speicher, Scan-Zeitplan und Wartungsaufgaben gehören zum Peer-Server.',
-      ),
-    };
-    final entry = descriptions[category] ?? ('Einstellungen', '');
-
-    return _SettingsPage(
-      title: entry.$1,
-      subtitle: entry.$2,
-      children: const [],
-    );
-  }
+  Widget build(BuildContext context) => _SettingsPage(
+    title: 'Einstellungen',
+    subtitle: 'Den Bereich „$category" gibt es nicht.',
+    children: const [],
+  );
 }
 
 /// This device, the devices it is connected to, and the door between them.

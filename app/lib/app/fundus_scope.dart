@@ -262,6 +262,12 @@ class FundusScopeState extends State<FundusScope> {
 
   void setFilter(WorkFilter value) => setState(() => _filter = value);
 
+  /// Opens a saved view: the filter it stored, and the library showing it.
+  void applySavedView(LibrarySavedView view) {
+    setState(() => _filter = WorkFilterQuery.fromQuery(view.query));
+    navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
+  }
+
   /// Opens the library of a paired Fundus.
   ///
   /// The index is written here, the files stay there. Afterwards nothing in
