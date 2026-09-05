@@ -263,6 +263,53 @@ void main() {
     expect(find.byTooltip('Vollbild'), findsOneWidget);
   });
 
+  testWidgets('auf dem Telefon liegt die Folgenliste zusammengeklappt', (
+    tester,
+  ) async {
+    final series = Directory('${root.path}/Serien/Ted Lasso')
+      ..createSync(recursive: true);
+    for (final episode in ['S01E01 - Pilot', 'S01E02 - Biscuits']) {
+      File('${series.path}/$episode.mkv').writeAsBytesSync(List.filled(64, 3));
+    }
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+    });
+
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: FundusTheme.dark(),
+        home: FundusScope(
+          settings: settings,
+          library: library,
+          player: player,
+          child: const Scaffold(body: PlayerScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+
+    // Sie wird angeboten, aber sie steht nicht im Weg. („Pilot" läuft und
+    // steht deshalb ohnehin über der Bedienung — gesucht ist die Folge, die
+    // nur in der Liste vorkommt.)
+    expect(find.text('FOLGEN · 2'), findsOneWidget);
+    expect(find.textContaining('Biscuits'), findsNothing);
+
+    await tester.tap(find.text('FOLGEN · 2'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Biscuits'), findsOneWidget);
+  });
+
   testWidgets('mehrere Hörbuchdateien heißen Dateien', (tester) async {
     final work = Directory('${root.path}/Hörbücher/Karl May/Der Schacht')
       ..createSync(recursive: true);

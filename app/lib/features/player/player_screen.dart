@@ -536,10 +536,23 @@ class _Controls extends StatelessWidget {
   }
 }
 
-class _ContextPanel extends StatelessWidget {
+/// What else is in this work: chapters, episodes, files.
+///
+/// Where it sits under the controls rather than in a column of its own, it
+/// starts folded away. A list of episodes across the bottom of the phone is
+/// in the way of the thing somebody opened — it is offered by name, and
+/// unfolds when it is wanted, the way chapters do in the reader.
+class _ContextPanel extends StatefulWidget {
   const _ContextPanel({this.shrinkWrap = false});
 
   final bool shrinkWrap;
+
+  @override
+  State<_ContextPanel> createState() => _ContextPanelState();
+}
+
+class _ContextPanelState extends State<_ContextPanel> {
+  bool _open = false;
 
   @override
   Widget build(BuildContext context) {
@@ -563,41 +576,70 @@ class _ContextPanel extends StatelessWidget {
         : player.showsVideo
         ? 'FOLGEN'
         : 'DATEIEN';
+    final count = useChapters ? chapters.length : tracks.length;
+    final foldable = widget.shrinkWrap;
+
+    final entries = <Widget>[
+      if (useChapters)
+        for (final chapter in chapters)
+          _Entry(
+            label: chapter.title,
+            trailing: formatPlaybackTime(chapter.position),
+            active:
+                chapter.fileId == player.currentSource?.fileId &&
+                chapter.position <= player.position,
+            onTap: () => player.jumpToChapter(chapter),
+          )
+      else
+        for (var index = 0; index < tracks.length; index++)
+          _Entry(
+            label: tracks[index].title,
+            trailing: tracks[index].duration == null
+                ? null
+                : formatPlaybackTime(tracks[index].duration!),
+            active: index == player.trackIndex,
+            onTap: () => player.jumpToTrack(index),
+          ),
+      if (tracks.isEmpty && chapters.isEmpty)
+        Text(
+          'Keine Titelliste vorhanden.',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+        ),
+    ];
 
     return ListView(
-      shrinkWrap: shrinkWrap,
-      physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
+      shrinkWrap: widget.shrinkWrap,
+      physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
       padding: const EdgeInsets.all(FundusSpace.x4),
       children: [
-        Text(heading, style: Theme.of(context).textTheme.labelSmall),
-        const SizedBox(height: FundusSpace.x3),
-        if (useChapters)
-          for (final chapter in chapters)
-            _Entry(
-              label: chapter.title,
-              trailing: formatPlaybackTime(chapter.position),
-              active:
-                  chapter.fileId == player.currentSource?.fileId &&
-                  chapter.position <= player.position,
-              onTap: () => player.jumpToChapter(chapter),
-            )
-        else
-          for (var index = 0; index < tracks.length; index++)
-            _Entry(
-              label: tracks[index].title,
-              trailing: tracks[index].duration == null
-                  ? null
-                  : formatPlaybackTime(tracks[index].duration!),
-              active: index == player.trackIndex,
-              onTap: () => player.jumpToTrack(index),
+        if (foldable)
+          InkWell(
+            onTap: () => setState(() => _open = !_open),
+            borderRadius: FundusRadius.mdAll,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: FundusSpace.x2),
+              child: Row(
+                children: [
+                  Text(
+                    '$heading · $count',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  const Spacer(),
+                  Icon(
+                    _open ? FundusIcons.collapse : FundusIcons.expand,
+                    size: FundusIcons.sizeSm,
+                    color: tokens.textFaint,
+                  ),
+                ],
+              ),
             ),
-        if (tracks.isEmpty && chapters.isEmpty)
-          Text(
-            'Keine Titelliste vorhanden.',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: tokens.textFaint),
-          ),
+          )
+        else
+          Text(heading, style: Theme.of(context).textTheme.labelSmall),
+        const SizedBox(height: FundusSpace.x3),
+        if (!foldable || _open) ...entries,
       ],
     );
   }
