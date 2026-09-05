@@ -193,7 +193,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 10;
+  static const schemaVersion = 11;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -517,6 +517,41 @@ final class FundusDatabase {
     _database.execute(
       'UPDATE works SET generated_cover_path = ? WHERE id = ?',
       [path, workId],
+    );
+  }
+
+  /// The files of a work somebody has marked as done.
+  Set<String> finishedFiles(String workId, {String userId = 'default'}) {
+    if (!tableExists('watched_files')) return const {};
+    final rows = _database.select(
+      'SELECT file_id FROM watched_files '
+      'WHERE work_id = ? AND user_id = ? AND finished = 1',
+      [workId, userId],
+    );
+    return {for (final row in rows) row['file_id'] as String};
+  }
+
+  /// Marks one file done, or takes the mark back.
+  void setFileFinished({
+    required String workId,
+    required String fileId,
+    required bool finished,
+    String userId = 'default',
+  }) {
+    if (!finished) {
+      _database.execute(
+        'DELETE FROM watched_files '
+        'WHERE work_id = ? AND file_id = ? AND user_id = ?',
+        [workId, fileId, userId],
+      );
+      return;
+    }
+    _database.execute(
+      'INSERT INTO watched_files (work_id, file_id, user_id, finished, '
+      'updated_at) VALUES (?, ?, ?, 1, ?) '
+      'ON CONFLICT(work_id, file_id, user_id) DO UPDATE SET '
+      'finished = 1, updated_at = excluded.updated_at',
+      [workId, fileId, userId, DateTime.now().millisecondsSinceEpoch],
     );
   }
 
@@ -2705,6 +2740,7 @@ final class FundusDatabase {
     if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
     if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
     if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
+    if (_database.userVersion == 10 && !readOnly) _migrateToVersion11();
   }
 
   void _migrateToVersion1() {
@@ -2918,6 +2954,27 @@ final class FundusDatabase {
         _database.execute('ALTER TABLE works ADD COLUMN backdrop_path TEXT');
       }
       _database.userVersion = 10;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  /// One file of a work, marked as done by hand.
+  ///
+  /// The position table holds one place per work, which is the right shape
+  /// for „wo war ich" and the wrong one for „Folge 3 habe ich gesehen". A
+  /// series is watched out of order, an episode is skipped, a podcast is
+  /// caught up on — none of that is a position, all of it is a fact about one
+  /// file.
+  void _migrateToVersion11() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      for (final statement in _version11Statements) {
+        _database.execute(statement);
+      }
+      _database.userVersion = 11;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -3379,4 +3436,19 @@ const _version9Statements = <String>[
     PRIMARY KEY (work_id, user_id)
   )
   ''',
+];
+
+const _version11Statements = <String>[
+  '''
+  CREATE TABLE IF NOT EXISTS watched_files (
+    work_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    finished INTEGER NOT NULL DEFAULT 1 CHECK (finished IN (0, 1)),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (work_id, file_id, user_id)
+  )
+  ''',
+  'CREATE INDEX IF NOT EXISTS watched_files_work_idx '
+      'ON watched_files(work_id, user_id)',
 ];

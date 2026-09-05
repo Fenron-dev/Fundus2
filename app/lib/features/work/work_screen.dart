@@ -677,6 +677,13 @@ class _KeyValueRow extends StatelessWidget {
   }
 }
 
+/// The files a work is made of, as a list one can actually use.
+///
+/// It was a read-only inventory: numbers, names, lengths, and no way to start
+/// episode seven or to say that episode three has been seen. Both are the
+/// ordinary things somebody wants from a list of episodes, so both are here —
+/// and a series with several seasons picks one rather than showing ninety
+/// entries in a row.
 class _Files extends StatefulWidget {
   const _Files({required this.work});
 
@@ -688,7 +695,11 @@ class _Files extends StatefulWidget {
 
 class _FilesState extends State<_Files> {
   List<LibraryPlaybackTrack>? _tracks;
+  Set<String> _finished = const {};
   String? _failure;
+
+  /// Null is „alle", which is also what a work without seasons shows.
+  int? _season;
 
   @override
   void didChangeDependencies() {
@@ -703,15 +714,49 @@ class _FilesState extends State<_Files> {
     if (library == null) return;
     try {
       final tracks = library.playbackTracks(widget.work.id);
-      setState(() => _tracks = tracks);
+      final finished = library.finishedFiles(widget.work.id);
+      setState(() {
+        _tracks = tracks;
+        _finished = finished;
+        _season ??= _seasons(tracks).firstOrNull;
+      });
     } on Object catch (failure) {
       setState(() => _failure = failure.toString());
     }
   }
 
+  /// The seasons this work has, in order. Empty where nothing says.
+  List<int> _seasons(List<LibraryPlaybackTrack> tracks) {
+    final seasons = <int>{};
+    for (final track in tracks) {
+      final number = episodeNumberOf(track.relativePath).season;
+      if (number != null) seasons.add(number);
+    }
+    return seasons.toList()..sort();
+  }
+
+  Future<void> _toggleFinished(LibraryPlaybackTrack track) async {
+    final scope = FundusScope.of(context);
+    final library = scope.library.library;
+    if (library == null || library.isReadOnly) return;
+    final done = _finished.contains(track.fileId);
+    library.setFileFinished(
+      workId: widget.work.id,
+      fileId: track.fileId,
+      finished: !done,
+    );
+    setState(() {
+      _finished = {
+        for (final id in _finished)
+          if (id != track.fileId) id,
+        if (!done) track.fileId,
+      };
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final tokens = context.fundus;
+    final scope = FundusScope.of(context);
     final tracks = _tracks;
     if (_failure != null) {
       return FundusEmptyState(
@@ -732,57 +777,191 @@ class _FilesState extends State<_Files> {
       );
     }
 
+    final seasons = _seasons(tracks);
+    final shown = seasons.length < 2
+        ? tracks
+        : [
+            for (final track in tracks)
+              if (episodeNumberOf(track.relativePath).season == _season) track,
+          ];
+    final gutter = FundusStageSize.of(context).gutter;
+
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: FundusSpace.x3),
-      itemCount: tracks.length,
+      padding: const EdgeInsets.only(bottom: FundusSpace.x12),
+      itemCount: shown.length + (seasons.length < 2 ? 0 : 1),
       itemBuilder: (context, index) {
-        final track = tracks[index];
-        return Container(
-          height: tokens.density.rowHeight,
-          padding: EdgeInsets.symmetric(
-            horizontal: FundusStageSize.of(context).gutter,
-          ),
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: tokens.divider)),
-          ),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 34,
-                child: Text(
-                  '${index + 1}',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  track.title,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              if (track.duration != null)
-                Text(
-                  _formatDuration(track.duration!),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
-                ),
-            ],
-          ),
+        if (seasons.length >= 2) {
+          if (index == 0) {
+            return _SeasonBar(
+              seasons: seasons,
+              selected: _season ?? seasons.first,
+              count: shown.length,
+              onSelect: (value) => setState(() => _season = value),
+            );
+          }
+          index -= 1;
+        }
+        final track = shown[index];
+        final number = episodeNumberOf(track.relativePath);
+        return _EpisodeRow(
+          track: track,
+          position: number.episode ?? tracks.indexOf(track) + 1,
+          gutter: gutter,
+          finished: _finished.contains(track.fileId),
+          onPlay: () =>
+              unawaited(scope.play(widget.work, startAt: track.fileId)),
+          onToggle: () => unawaited(_toggleFinished(track)),
         );
       },
     );
   }
+}
 
-  static String _formatDuration(Duration value) {
-    final hours = value.inHours;
-    final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
-    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+/// Which season is on show.
+class _SeasonBar extends StatelessWidget {
+  const _SeasonBar({
+    required this.seasons,
+    required this.selected,
+    required this.count,
+    required this.onSelect,
+  });
+
+  final List<int> seasons;
+  final int selected;
+  final int count;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final gutter = FundusStageSize.of(context).gutter;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(gutter, FundusSpace.x4, gutter, 0),
+      child: Row(
+        children: [
+          DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: selected,
+              borderRadius: FundusRadius.mdAll,
+              items: [
+                for (final season in seasons)
+                  DropdownMenuItem(
+                    value: season,
+                    child: Text('Staffel $season'),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) onSelect(value);
+              },
+            ),
+          ),
+          const SizedBox(width: FundusSpace.x4),
+          Text(
+            '$count Folgen',
+            style: Theme.of(
+              context,
+            ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
+          ),
+        ],
+      ),
+    );
   }
+}
+
+/// One episode: tap to start it, tick it off, see how long it is.
+class _EpisodeRow extends StatelessWidget {
+  const _EpisodeRow({
+    required this.track,
+    required this.position,
+    required this.gutter,
+    required this.finished,
+    required this.onPlay,
+    required this.onToggle,
+  });
+
+  final LibraryPlaybackTrack track;
+  final int position;
+  final double gutter;
+  final bool finished;
+  final VoidCallback onPlay;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onPlay,
+      hoverColor: tokens.hover,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: gutter,
+          vertical: FundusSpace.x3,
+        ),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: tokens.divider)),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 34,
+              child: Text(
+                '$position',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.textFaint,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    track.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: finished ? tokens.textMuted : tokens.text,
+                    ),
+                  ),
+                  if (track.duration != null || finished)
+                    Text(
+                      [
+                        if (track.duration case final length?)
+                          _formatDuration(length),
+                        if (finished) 'gesehen',
+                      ].join(' · '),
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: onToggle,
+              tooltip: finished
+                  ? 'Als ungesehen markieren'
+                  : 'Als gesehen markieren',
+              icon: Icon(
+                finished ? FundusIcons.finished : FundusIcons.unfinished,
+                size: FundusIcons.sizeMd,
+                color: finished ? tokens.accent : tokens.textFaint,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _formatDuration(Duration value) {
+  final hours = value.inHours;
+  final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+  final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+  return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
 }
 
 class _Notes extends StatelessWidget {

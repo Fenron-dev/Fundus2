@@ -280,6 +280,7 @@ class PlaybackController extends ChangeNotifier {
     FundusLibrary library,
     WorkView work, {
     bool autoplay = true,
+    String? startAt,
   }) async {
     _failure = null;
     _library = library;
@@ -313,8 +314,15 @@ class PlaybackController extends ChangeNotifier {
       _buildOrder();
       _attachStreams();
 
-      final saved = library.loadProgress(work.id);
-      final startIndex = saved?.fileId == null
+      // Wer eine bestimmte Folge angetippt hat, meint diese Folge — nicht
+      // die Stelle, an der das Werk zuletzt stand.
+      final chosen = startAt == null
+          ? -1
+          : _sources.indexWhere((source) => source.fileId == startAt);
+      final saved = chosen >= 0 ? null : library.loadProgress(work.id);
+      final startIndex = chosen >= 0
+          ? chosen
+          : saved?.fileId == null
           ? 0
           : _sources.indexWhere((s) => s.fileId == saved!.fileId);
       _index = startIndex < 0 ? 0 : startIndex;

@@ -157,22 +157,27 @@ class _PathBar extends StatelessWidget {
       );
       children.add(
         step.onTap == null
-            ? Flexible(child: label)
-            : Flexible(
-                child: InkWell(
-                  onTap: step.onTap,
-                  borderRadius: FundusRadius.smAll,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: FundusSpace.x1,
-                    ),
-                    child: label,
+            ? label
+            : InkWell(
+                onTap: step.onTap,
+                borderRadius: FundusRadius.smAll,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: FundusSpace.x1,
                   ),
+                  child: label,
                 ),
               ),
       );
     }
-    return Row(mainAxisSize: MainAxisSize.min, children: children);
+    // Ein Pfad, der nicht passt, wird geschoben statt abgeschnitten — und
+    // zwar so, dass das Ende sichtbar bleibt: wo man ist, zählt mehr als wo
+    // man hergekommen ist.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      reverse: true,
+      child: Row(mainAxisSize: MainAxisSize.min, children: children),
+    );
   }
 }
 

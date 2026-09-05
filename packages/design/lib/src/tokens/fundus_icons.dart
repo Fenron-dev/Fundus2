@@ -89,6 +89,10 @@ abstract final class FundusIcons {
   static final note = PhosphorIcons.notePencil();
   static final person = PhosphorIcons.userCircle();
   static final check = PhosphorIcons.check(PhosphorIconsStyle.fill);
+
+  /// Was durch ist, und was noch nicht.
+  static final finished = PhosphorIcons.checkCircle(PhosphorIconsStyle.fill);
+  static final unfinished = PhosphorIcons.circle();
   static final close = PhosphorIcons.x();
 
   /// Icon sizes used by the interface. Anything else is a mistake.

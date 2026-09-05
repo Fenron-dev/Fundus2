@@ -479,7 +479,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// Starts or resumes a work. One entry point, whatever the media type — a
   /// screen never decides between a player and a reader, and neither asks
   /// where the bytes come from.
-  Future<void> play(WorkView work) async {
+  /// [startAt] names one file of the work — the episode somebody tapped.
+  /// Without it the work opens where it was left.
+  Future<void> play(WorkView work, {String? startAt}) async {
     final vault = library.library;
     if (vault == null) return;
     final span = FundusLog.instance.start('open', {
@@ -487,7 +489,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       'kind': work.kind,
       'origin': work.origin.name,
     });
-    await settlePosition(vault, work);
+    // Eine bestimmte Folge zu wählen ist selbst die Antwort auf „wo
+    // weitermachen" — dann ist die Frage keine.
+    if (startAt == null) await settlePosition(vault, work);
     span.step('position');
     if (ReaderController.handles(work)) {
       // A comic in the audio player is silence with a progress bar: pages and
@@ -514,7 +518,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       span.done({'via': 'photos'});
       return;
     }
-    await player.open(vault, work);
+    await player.open(vault, work, startAt: startAt);
     if (player.failure == null) library.refreshWork(work.id);
     await _fillTheScreen(work, opened: player.failure == null);
     span.done({'via': 'player'});

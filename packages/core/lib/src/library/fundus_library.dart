@@ -1091,6 +1091,29 @@ final class FundusLibrary {
     );
   }
 
+  /// The files of a work somebody has ticked off.
+  ///
+  /// Separate from the position, because they answer different questions: the
+  /// position is „wo war ich", this is „Folge 3 habe ich gesehen". A series is
+  /// watched out of order often enough that one cannot stand in for the other.
+  Set<String> finishedFiles(String workId, {String userId = 'default'}) =>
+      _database.finishedFiles(workId, userId: userId);
+
+  void setFileFinished({
+    required String workId,
+    required String fileId,
+    required bool finished,
+    String userId = 'default',
+  }) {
+    _ensureWritable();
+    _database.setFileFinished(
+      workId: workId,
+      fileId: fileId,
+      finished: finished,
+      userId: userId,
+    );
+  }
+
   LibraryPlaybackProgress saveProgress({
     required String workId,
     required String fileId,
