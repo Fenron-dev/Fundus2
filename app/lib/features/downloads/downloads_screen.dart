@@ -29,11 +29,11 @@ class DownloadsScreen extends StatelessWidget {
     if (running.isEmpty && offline.isEmpty) {
       return FundusEmptyState(
         title: 'Nichts heruntergeladen',
-        reason: scope.peerLibrary.isOpen
+        reason: scope.peerLibraries.hasConnection
             ? 'Öffne ein Werk und wähle „Mitnehmen" — es liegt dann auch '
                   'ohne Netz hier.'
-            : 'Werke einer gekoppelten Bibliothek lassen sich mitnehmen. '
-                  'Öffne dafür die Bibliothek eines gekoppelten Geräts.',
+            : 'Werke eines gekoppelten Geräts lassen sich mitnehmen, solange '
+                  'es erreichbar ist. Gerade antwortet keines.',
         icon: null,
       );
     }

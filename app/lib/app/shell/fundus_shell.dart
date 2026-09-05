@@ -213,20 +213,13 @@ class _CompactHeader extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
-          if (scope.peerLibrary.isOpen)
+          if (scope.peerLibraries.hasConnection)
             Padding(
               padding: const EdgeInsets.only(right: FundusSpace.x2),
               child: FundusConnectionDot(
-                state: scope.peerLibrary.connection,
+                state: scope.peerLibraries.connection,
                 showLabel: false,
-                label: switch (scope.peerLibrary.connection) {
-                  FundusConnectionState.connected =>
-                    '„${scope.peerLibrary.peer?.name ?? ''}" antwortet',
-                  FundusConnectionState.refused =>
-                    '„${scope.peerLibrary.peer?.name ?? ''}" weist ab',
-                  FundusConnectionState.idle =>
-                    '„${scope.peerLibrary.peer?.name ?? ''}" antwortet nicht',
-                },
+                label: connectionLabel(scope),
               ),
             ),
           IconButton(
@@ -258,4 +251,27 @@ class ShellContent extends StatelessWidget {
       SearchRoute() => const LibraryScreen(route: LibraryRoute()),
     };
   }
+}
+
+/// What the mark means, named by machine.
+///
+/// „Zwei von drei Geräten antworten" is what a person can act on; a green dot
+/// on its own only says that something, somewhere, is fine.
+String connectionLabel(FundusScopeState scope) {
+  final all = scope.peerLibraries.connected;
+  final answering = all
+      .where((entry) => entry.connection == FundusConnectionState.connected)
+      .map((entry) => entry.peer.name)
+      .toList();
+  if (answering.isEmpty) {
+    return all.length == 1
+        ? '„${all.single.peer.name}" antwortet gerade nicht'
+        : 'Kein gekoppeltes Gerät antwortet';
+  }
+  if (answering.length == all.length) {
+    return answering.length == 1
+        ? '„${answering.single}" antwortet'
+        : 'Alle gekoppelten Geräte antworten';
+  }
+  return '${answering.join(', ')} antwortet — ${all.length - answering.length} nicht';
 }

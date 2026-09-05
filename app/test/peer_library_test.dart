@@ -29,7 +29,7 @@ void main() {
   late HttpServer socket;
   late LibraryController library;
   late AppSettings settings;
-  late PeerLibraryController peers;
+  late PeerLibraries peers;
 
   setUp(() async {
     temporary = await Directory.systemTemp.createTemp('fundus-peer-');
@@ -68,7 +68,7 @@ void main() {
 
     library = LibraryController();
     settings = AppSettings.inMemory();
-    peers = PeerLibraryController(
+    peers = PeerLibraries(
       settings: settings,
       library: library,
       storageRoot: () async => Directory('${temporary.path}/handy-speicher'),
@@ -91,19 +91,22 @@ void main() {
   );
 
   test('die Bibliothek des Macs steht danach in der normalen Liste', () async {
-    expect(await peers.open(peer()), isTrue, reason: peers.failure ?? '');
+    expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
 
     expect(library.isOpen, isTrue);
     expect(
       library.works.map((work) => work.title),
       containsAll(['Der Schacht', 'Klingenwind']),
     );
-    // Und sie heißt, wie das Gerät heißt — nicht wie ihr Ordner.
-    expect(library.displayName, 'Mac');
+    // Der Vault heißt nach dem, was er ist: der eigene, in dem die
+    // Bibliotheken mehrerer Geräte zusammenlaufen.
+    expect(library.displayName, 'Meine Werke');
+    // Und das Werk weiß, von welchem Gerät es kommt.
+    expect(library.works.first.summary.sourceId, 'peer-server-test');
   });
 
   test('das Werk sagt, dass es von woanders kommt', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
 
     expect(
       library.works
@@ -115,7 +118,7 @@ void main() {
   });
 
   test('ein gespiegeltes CBZ gilt dem Leser als lesbar', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final comic = library.works.firstWhere(
       (work) => work.title == 'Klingenwind',
     );
@@ -132,7 +135,7 @@ void main() {
   });
 
   test('ein Comic wird seitenweise gelesen, nicht am Stück geholt', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final comic = library.works.firstWhere(
       (work) => work.title == 'Klingenwind',
     );
@@ -140,8 +143,8 @@ void main() {
 
     final pageRoom = Directory('${temporary.path}/seiten');
     final source = RemoteComicPageSource(
-      client: peers.client!,
-      libraryId: peers.peer!.libraryId,
+      client: peers.connected.single.client,
+      libraryId: peers.connected.single.libraryId,
       fileId: volume.fileId,
       name: volume.title,
       cacheDirectory: pageRoom,
@@ -159,14 +162,14 @@ void main() {
   });
 
   test('der Leser bekommt das Archiv und findet seine Seiten', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final comic = library.works.firstWhere(
       (work) => work.title == 'Klingenwind',
     );
     final volume = library.library!.playbackTracks(comic.id).first;
 
     final cache = PeerFileCache(
-      proxy: peers.proxy!,
+      proxy: peers.connected.single.proxy,
       directory: Directory('${temporary.path}/leser-cache'),
     );
     final path = await cache.fileFor(volume);
@@ -177,25 +180,28 @@ void main() {
   });
 
   test('der Player bekommt eine Adresse, keine Datei', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final track = library.library!
         .playbackTracks(_audiobook(library).id)
         .single;
 
     expect(track.isRemote, isTrue);
-    final uri = peers.proxy!.uriFor(track.fileId, extension: '.mp3');
+    final uri = peers.connected.single.proxy.uriFor(
+      track.fileId,
+      extension: '.mp3',
+    );
     expect(uri.host, '127.0.0.1');
     expect(uri.path, endsWith('.mp3'));
   });
 
   test('ein Leser bekommt die Datei wirklich hierher', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final track = library.library!
         .playbackTracks(_audiobook(library).id)
         .single;
 
     final cache = PeerFileCache(
-      proxy: peers.proxy!,
+      proxy: peers.connected.single.proxy,
       directory: Directory('${temporary.path}/cache'),
     );
     final path = await cache.fileFor(track);
@@ -206,7 +212,7 @@ void main() {
   });
 
   test('der Lesestand geht zurück zum Mac', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final workId = _audiobook(library).id;
     final fileId = library.library!.playbackTracks(workId).single.fileId;
     library.library!.saveProgress(
@@ -228,11 +234,11 @@ void main() {
   });
 
   test('ein schlafender Mac leert die Bibliothek nicht', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final before = library.works.length;
 
     await socket.close(force: true);
-    expect(await peers.refresh(), isFalse);
+    await peers.refresh();
 
     // Die Liste steht noch; nur die Meldung sagt, was los ist.
     expect(library.works, hasLength(before));

@@ -99,16 +99,16 @@ class VaultScreen extends StatelessWidget {
                 Text('GEKOPPELTE GERÄTE', style: theme.textTheme.labelSmall),
                 const SizedBox(height: FundusSpace.x2),
                 Text(
-                  'Deren Bibliothek wird hier geführt, die Dateien bleiben '
-                  'dort. Zum Lesen und Hören muss das Gerät im selben Netz '
-                  'erreichbar sein.',
+                  'Deren Bibliotheken laufen hier zusammen — die Dateien '
+                  'bleiben dort. Zum Lesen und Hören muss das Gerät im '
+                  'selben Netz erreichbar sein.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: tokens.textFaint,
                   ),
                 ),
                 const SizedBox(height: FundusSpace.x3),
                 for (final peer in scope.settings.peers) _PeerTile(peer: peer),
-                if (scope.peerLibrary.failure case final failure?) ...[
+                if (scope.peerLibraries.failure case final failure?) ...[
                   const SizedBox(height: FundusSpace.x3),
                   Text(
                     failure,
@@ -319,7 +319,8 @@ class _PeerTile extends StatelessWidget {
     final scope = FundusScope.of(context);
     final tokens = context.fundus;
     final theme = Theme.of(context);
-    final busy = scope.peerLibrary.isBusy;
+    final busy = scope.peerLibraries.isBusy;
+    final connected = scope.peerLibraries.peerFor(peer.serverId);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: FundusSpace.x2),
@@ -351,11 +352,11 @@ class _PeerTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (scope.peerLibrary.peer?.serverId == peer.serverId)
+              if (connected != null)
                 Padding(
                   padding: const EdgeInsets.only(right: FundusSpace.x3),
                   child: FundusConnectionDot(
-                    state: scope.peerLibrary.connection,
+                    state: connected.connection,
                     showLabel: false,
                   ),
                 ),

@@ -83,7 +83,9 @@ class DownloadController extends ChangeNotifier {
   final Future<Directory> Function() storageRoot;
 
   final Map<String, DownloadJob> _jobs = {};
-  FundusStreamProxy? proxy;
+
+  /// Where a work's bytes come from, by the source it belongs to.
+  FundusStreamProxy? Function(String sourceId)? proxyForSource;
   bool _running = false;
 
   List<DownloadJob> get jobs => _jobs.values.toList(growable: false);
@@ -91,8 +93,22 @@ class DownloadController extends ChangeNotifier {
   DownloadJob? jobFor(String workId) => _jobs[workId];
 
   /// Whether a work can be taken along at all.
+  ///
+  /// Only what is somewhere else: a work already on this disk has nothing to
+  /// fetch, and a machine that is not answering has nothing to fetch from.
   bool canDownload(WorkView work) =>
-      proxy != null && !isSecured(work.id) && !_jobs.containsKey(work.id);
+      _proxyFor(work.id) != null &&
+      !isSecured(work.id) &&
+      !_jobs.containsKey(work.id);
+
+  /// The door for a work's files, if the machine holding them is answering.
+  FundusStreamProxy? _proxyFor(String workId) {
+    final vault = library.library;
+    if (vault == null) return null;
+    final tracks = vault.playbackTracks(workId);
+    if (tracks.isEmpty) return null;
+    return proxyForSource?.call(tracks.first.sourceId);
+  }
 
   /// Whether every file of a work is already here.
   bool isSecured(String workId) {
@@ -106,7 +122,7 @@ class DownloadController extends ChangeNotifier {
   /// Queues a work and starts working through the queue.
   Future<void> download(WorkView work) async {
     final vault = library.library;
-    if (vault == null || proxy == null) return;
+    if (vault == null || _proxyFor(work.id) == null) return;
     if (_jobs.containsKey(work.id)) return;
     final files = vault.contentFiles(work.id);
     if (files.isEmpty) return;
@@ -171,7 +187,7 @@ class DownloadController extends ChangeNotifier {
 
   Future<void> _fetch(DownloadJob job) async {
     final vault = library.library;
-    final proxy = this.proxy;
+    final proxy = _proxyFor(job.workId);
     if (vault == null || proxy == null) {
       _jobs[job.workId] = job.copyWith(
         state: DownloadState.failed,

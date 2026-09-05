@@ -25,7 +25,7 @@ void main() {
   late HttpServer socket;
   late LibraryController library;
   late AppSettings settings;
-  late PeerLibraryController peers;
+  late PeerLibraries peers;
   late DownloadController downloads;
 
   setUp(() async {
@@ -53,7 +53,7 @@ void main() {
 
     library = LibraryController();
     settings = AppSettings.inMemory();
-    peers = PeerLibraryController(
+    peers = PeerLibraries(
       settings: settings,
       library: library,
       storageRoot: () async => Directory('${temporary.path}/speicher'),
@@ -63,7 +63,7 @@ void main() {
       storageRoot: () async => Directory('${temporary.path}/speicher'),
     );
 
-    await peers.open(
+    await peers.connect(
       PeerConnection(
         serverId: 'server-test',
         name: 'Mac',
@@ -71,7 +71,8 @@ void main() {
         token: 'geheim',
       ),
     );
-    downloads.proxy = peers.proxy;
+    // Der Download fragt pro Quelle, weil ein Vault mehrere Geräte trägt.
+    downloads.proxyForSource = (sourceId) => peers.forSource(sourceId)?.proxy;
   });
 
   tearDown(() async {

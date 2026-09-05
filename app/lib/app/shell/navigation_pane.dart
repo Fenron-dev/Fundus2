@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../data/media_type.dart';
@@ -156,6 +157,7 @@ class NavigationPane extends StatelessWidget {
           collapsed: collapsed,
           onNavigate: onNavigate,
         ),
+      ..._sourceEntries(context, scope),
     ];
   }
 
@@ -182,6 +184,58 @@ class NavigationPane extends StatelessWidget {
             icon: area.icon,
             active: route.category == area.key,
             onTap: () => scope.navigation.go(SettingsRoute(category: area.key)),
+          ),
+        ),
+    ];
+  }
+
+  /// The machines whose libraries run together in this vault.
+  ///
+  /// Only when there is more than one shelf to separate: a vault that is its
+  /// own only source has nothing to filter by, and a list with one entry
+  /// called „dieses Gerät" is a line of furniture.
+  List<Widget> _sourceEntries(BuildContext context, FundusScopeState scope) {
+    final mirrored = scope.library.sources
+        .where((source) => !source.isVault)
+        .toList();
+    if (mirrored.isEmpty) return const [];
+
+    final counts = <String, int>{};
+    for (final work in scope.library.works) {
+      counts[work.summary.sourceId] = (counts[work.summary.sourceId] ?? 0) + 1;
+    }
+    final route = scope.navigation.current;
+    final active = route is LibraryRoute ? scope.filter.sourceId : null;
+
+    return [
+      _NavigationTile(
+        collapsed: collapsed,
+        onNavigate: onNavigate,
+        entry: NavigationEntry(
+          label: 'GERÄTE',
+          icon: FundusIcons.devices,
+          onTap: () {},
+        ),
+      ),
+      for (final source in [
+        ...scope.library.sources.where((source) => source.isVault),
+        ...mirrored,
+      ])
+        _NavigationTile(
+          collapsed: collapsed,
+          onNavigate: onNavigate,
+          entry: NavigationEntry(
+            label: source.isVault ? 'Auf diesem Gerät' : source.displayName,
+            icon: source.isVault
+                ? FundusIcons.originLocal
+                : switch (source.status) {
+                    LibrarySourceStatus.available => FundusIcons.originStream,
+                    _ => FundusIcons.originUnreachable,
+                  },
+            count: _formatCount(counts[source.id] ?? 0),
+            active: active == source.id,
+            onTap: () =>
+                scope.showSource(active == source.id ? null : source.id),
           ),
         ),
     ];

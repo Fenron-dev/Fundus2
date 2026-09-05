@@ -347,6 +347,17 @@ final class FundusLibrary {
     );
   }
 
+  /// Forgets a source and everything this vault only knew through it.
+  ///
+  /// Only for a mirrored source: the works were never here as files, so
+  /// removing them removes an index and nothing else. What the person did —
+  /// positions, marks — goes with them, which is the point: they were about
+  /// works this device can no longer reach or name.
+  void dropSource(String sourceId) {
+    _ensureWritable();
+    _database.dropSource(sourceId);
+  }
+
   /// Whether a source is answering right now.
   ///
   /// Works of an unreachable source stay in the index and stay visible; only

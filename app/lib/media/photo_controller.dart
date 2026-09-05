@@ -42,8 +42,8 @@ class PhotoController extends ChangeNotifier {
   static bool handles(WorkView work) =>
       work.mediaType?.progressKind == ProgressKind.none;
 
-  /// Where remote pictures are fetched from while a paired library is open.
-  PeerFileCache? cache;
+  /// Where a remote picture is fetched from, by the source it belongs to.
+  PeerFileCache? Function(String sourceId)? cacheForSource;
 
   WorkView? _work;
   List<LibraryPlaybackTrack> _pictures = const [];
@@ -98,7 +98,7 @@ class PhotoController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final cache = this.cache;
+    final cache = cacheForSource?.call(picture.sourceId);
     if (cache == null || !_fetching.add(picture.fileId)) return;
     try {
       _paths[picture.fileId] = await cache.fileFor(picture);

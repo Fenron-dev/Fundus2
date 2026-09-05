@@ -2317,6 +2317,40 @@ final class FundusDatabase {
       )
       .toList(growable: false);
 
+  /// Removes a mirrored source and its works.
+  ///
+  /// The local vault is never a candidate: its works are files on this disk,
+  /// and „forget the source" would mean forgetting the library itself.
+  void dropSource(String sourceId) {
+    if (sourceId == localSourceId) {
+      throw ArgumentError.value(
+        sourceId,
+        'sourceId',
+        'Der eigene Bestand lässt sich nicht vergessen.',
+      );
+    }
+    final works = _database
+        .select('SELECT id FROM works WHERE source_id = ?', [sourceId])
+        .map((row) => row['id'] as String)
+        .toList();
+    _database.execute('BEGIN');
+    try {
+      for (final id in works) {
+        _database.execute(
+          "DELETE FROM search_index WHERE entity_type = 'work' AND entity_id = ?",
+          [id],
+        );
+      }
+      // The rows hang off the source by foreign key, so this takes the works,
+      // their files and everything that referenced them.
+      _database.execute('DELETE FROM sources WHERE id = ?', [sourceId]);
+      _database.execute('COMMIT');
+    } on Object {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Marks a source as answering or not.
   ///
   /// An unreachable source never overwrites what is already known about its

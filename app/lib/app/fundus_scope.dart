@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
@@ -46,7 +47,7 @@ class FundusScope extends StatefulWidget {
     this.fullscreen,
     this.sync,
     this.host,
-    this.peerLibrary,
+    this.peerLibraries,
     this.downloads,
     this.photos,
     this.protection,
@@ -76,8 +77,8 @@ class FundusScope extends StatefulWidget {
   /// And for the served side, so a test never opens a port.
   final ServerHostController? host;
 
-  /// And for a paired library, so a test never reaches for one.
-  final PeerLibraryController? peerLibrary;
+  /// And for the paired machines, so a test never reaches for one.
+  final PeerLibraries? peerLibraries;
 
   /// And for downloads, so a test never writes into app storage.
   final DownloadController? downloads;
@@ -127,9 +128,9 @@ class FundusScopeState extends State<FundusScope> {
   late final ServerHostController host =
       widget.host ??
       ServerHostController(settings: widget.settings, library: widget.library);
-  late final PeerLibraryController peerLibrary =
-      widget.peerLibrary ??
-      PeerLibraryController(settings: widget.settings, library: widget.library);
+  late final PeerLibraries peerLibraries =
+      widget.peerLibraries ??
+      PeerLibraries(settings: widget.settings, library: widget.library);
   late final PhotoController photos = widget.photos ?? PhotoController();
   late final ProtectionController protection =
       widget.protection ?? ProtectionController(settings: widget.settings);
@@ -161,57 +162,66 @@ class FundusScopeState extends State<FundusScope> {
     fullscreen.addListener(_bump);
     sync.addListener(_bump);
     host.addListener(_bump);
-    peerLibrary.addListener(_bump);
+    peerLibraries.addListener(_bump);
     downloads.addListener(_bump);
     photos.addListener(_bump);
     protection.addListener(_applyProtection);
     library.hides = protection.hides;
-    peerLibrary.addListener(_handOverProxy);
+    peerLibraries.addListener(_wireSources);
     player.addListener(_syncWhenClosed);
     reader.addListener(_syncWhenClosed);
     textReader.addListener(_syncWhenClosed);
   }
 
-  /// Keeps the players pointed at the peer that is open.
+  /// Where each player and reader gets its bytes.
   ///
-  /// The player and the readers never learn who the peer is; they are handed
-  /// the one thing they need — a door to fetch bytes through — and it is null
-  /// when there is no peer, which is exactly what "this is a local library"
-  /// means to them.
-  Future<void> _handOverProxy() async {
-    final proxy = peerLibrary.proxy;
-    player.proxy = proxy;
-    downloads.proxy = proxy;
-    if (proxy == null) {
-      reader.cache = null;
-      textReader.cache = null;
-      photos.cache = null;
-      reader.remotePages = null;
-      return;
+  /// A work belongs to a source, and the source says which machine holds its
+  /// files. Nothing above this asks who that is: they are handed a way to
+  /// look it up, and get null for a work that lies on this disk — which is
+  /// exactly what „local" means to a player.
+  void _wireSources() {
+    FundusStreamProxy? proxyFor(String sourceId) =>
+        peerLibraries.forSource(sourceId)?.proxy;
+
+    PeerFileCache? cacheFor(String sourceId) {
+      final room = _supportRoot;
+      final entry = peerLibraries.forSource(sourceId);
+      if (room == null || entry == null) return null;
+      return PeerFileCache(
+        proxy: entry.proxy,
+        directory: Directory(
+          p.join(room.path, 'peer-cache', entry.peer.serverId),
+        ),
+      );
     }
-    final support = await getApplicationSupportDirectory();
-    final room = Directory(
-      p.join(support.path, 'peer-cache', peerLibrary.peer?.serverId ?? 'x'),
-    );
-    final cache = PeerFileCache(proxy: proxy, directory: room);
-    reader.cache = cache;
-    textReader.cache = cache;
-    photos.cache = cache;
+
+    player.proxyForSource = proxyFor;
+    downloads.proxyForSource = proxyFor;
+    reader.cacheForSource = cacheFor;
+    textReader.cacheForSource = cacheFor;
+    photos.cacheForSource = cacheFor;
 
     // A comic is paged rather than fetched whole, so the reader is given a
-    // way to open one against the connection itself.
-    final client = peerLibrary.client;
-    final libraryId = peerLibrary.peer?.libraryId;
-    reader.remotePages = client == null || libraryId == null
-        ? null
-        : (volume) => RemoteComicPageSource(
-            client: client,
-            libraryId: libraryId,
-            fileId: volume.fileId,
-            name: volume.title,
-            cacheDirectory: Directory(p.join(room.path, 'pages')),
-          );
+    // way to open one against the connection it belongs to.
+    reader.remotePages = (volume) {
+      final room = _supportRoot;
+      final entry = peerLibraries.forSource(volume.sourceId);
+      if (room == null || entry == null) return null;
+      return RemoteComicPageSource(
+        client: entry.client,
+        libraryId: entry.libraryId,
+        fileId: volume.fileId,
+        name: volume.title,
+        cacheDirectory: Directory(
+          p.join(room.path, 'peer-cache', entry.peer.serverId, 'pages'),
+        ),
+      );
+    };
   }
+
+  /// Where this installation keeps its own things. Read once, because the
+  /// places that need it cannot wait for an answer.
+  Directory? _supportRoot;
 
   @override
   void dispose() {
@@ -224,11 +234,11 @@ class FundusScopeState extends State<FundusScope> {
     fullscreen.removeListener(_bump);
     sync.removeListener(_bump);
     host.removeListener(_bump);
-    peerLibrary.removeListener(_bump);
+    peerLibraries.removeListener(_bump);
     downloads.removeListener(_bump);
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);
-    peerLibrary.removeListener(_handOverProxy);
+    peerLibraries.removeListener(_wireSources);
     player.removeListener(_syncWhenClosed);
     reader.removeListener(_syncWhenClosed);
     textReader.removeListener(_syncWhenClosed);
@@ -239,7 +249,7 @@ class FundusScopeState extends State<FundusScope> {
     if (widget.fullscreen == null) fullscreen.dispose();
     if (widget.sync == null) sync.dispose();
     if (widget.host == null) host.dispose();
-    if (widget.peerLibrary == null) peerLibrary.dispose();
+    if (widget.peerLibraries == null) peerLibraries.dispose();
     if (widget.downloads == null) downloads.dispose();
     if (widget.photos == null) photos.dispose();
     if (widget.protection == null) protection.dispose();
@@ -262,22 +272,52 @@ class FundusScopeState extends State<FundusScope> {
 
   void setFilter(WorkFilter value) => setState(() => _filter = value);
 
+  /// Shows one machine's shelf, or all of them again.
+  void showSource(String? sourceId) {
+    setState(() {
+      _filter = _filter.copyWith(
+        sourceId: sourceId,
+        clearSource: sourceId == null,
+      );
+    });
+    navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
+  }
+
   /// Opens a saved view: the filter it stored, and the library showing it.
   void applySavedView(LibrarySavedView view) {
     setState(() => _filter = WorkFilterQuery.fromQuery(view.query));
     navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
   }
 
-  /// Opens the library of a paired Fundus.
+  /// Brings a paired machine's catalogue in and shows it.
   ///
   /// The index is written here, the files stay there. Afterwards nothing in
-  /// the app is aware of the difference except the origin mark on a tile.
+  /// the app is aware of the difference except the origin mark on a tile and
+  /// the machine's name in the filter.
   Future<void> openPeerLibrary(PeerConnection peer) async {
-    final opened = await peerLibrary.open(peer);
+    final opened = await peerLibraries.connect(peer);
     if (!opened) return;
-    await _handOverProxy();
+    _wireSources();
     await _loadTrackPreference();
     navigation.reset(const DashboardRoute());
+  }
+
+  /// Connects to everything this device is paired with.
+  ///
+  /// The catalogues of the machines that answer come in; the ones that do not
+  /// are simply not there yet, and their works stay in the index from last
+  /// time.
+  Future<void> connectPairedMachines() async {
+    if (settings.peers.isEmpty) return;
+    await peerLibraries.connectAll();
+    _wireSources();
+    await _loadTrackPreference();
+  }
+
+  /// Lets go of every paired machine, keeping their catalogues.
+  Future<void> closePeerLibraries() async {
+    await peerLibraries.closeAll();
+    _wireSources();
   }
 
   /// Sends a work's reading state on the moment it is put down.
@@ -302,14 +342,6 @@ class FundusScopeState extends State<FundusScope> {
   }
 
   String? _lastOpenWorkId;
-
-  /// Lets go of a paired library and returns to the vault chooser.
-  Future<void> closePeerLibrary() async {
-    await peerLibrary.close();
-    await _handOverProxy();
-    library.close();
-    navigation.reset(const VaultRoute());
-  }
 
   /// Starts or resumes a work. One entry point, whatever the media type — a
   /// screen never decides between a player and a reader, and neither asks

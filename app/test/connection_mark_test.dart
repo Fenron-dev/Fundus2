@@ -25,7 +25,7 @@ void main() {
   late HttpServer socket;
   late LibraryController library;
   late AppSettings settings;
-  late PeerLibraryController peers;
+  late PeerLibraries peers;
   late String token;
 
   setUp(() async {
@@ -69,7 +69,7 @@ void main() {
 
     library = LibraryController();
     settings = AppSettings.inMemory();
-    peers = PeerLibraryController(
+    peers = PeerLibraries(
       settings: settings,
       library: library,
       storageRoot: () async => Directory('${temporary.path}/speicher'),
@@ -96,7 +96,7 @@ void main() {
   });
 
   test('nach dem Öffnen leuchtet sie auf beiden Seiten', () async {
-    expect(await peers.open(peer()), isTrue, reason: peers.failure ?? '');
+    expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
 
     // Diese Seite: die Gegenstelle hat eben geantwortet.
     expect(peers.connection, FundusConnectionState.connected);
@@ -115,16 +115,18 @@ void main() {
   test(
     'ein entzogener Zugang wird als Abweisung gezeigt, nicht als Stille',
     () async {
-      await peers.open(peer());
+      await peers.connect(peer());
       await authority.revoke(authority.devices.single.id);
 
-      expect(await peers.refresh(), isFalse);
+      await peers.refresh();
+
       expect(peers.connection, FundusConnectionState.refused);
+      expect(peers.failure, isNotNull);
     },
   );
 
   test('der Herzschlag hält die Marke am Leben', () async {
-    await peers.open(peer());
+    await peers.connect(peer());
     final client = FundusRemoteClient(
       baseUri: Uri.parse('http://localhost:${socket.port}'),
       token: token,

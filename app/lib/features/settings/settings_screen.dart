@@ -1315,7 +1315,7 @@ class _MaintenanceState extends State<_Maintenance> {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     final vault = scope.library.library;
-    final peer = scope.peerLibrary.peer;
+    final peers = scope.peerLibraries.connected;
 
     return _SettingsPage(
       title: 'Serverwartung',
@@ -1378,7 +1378,11 @@ class _MaintenanceState extends State<_Maintenance> {
               const SizedBox(height: FundusSpace.x3),
               _Fact('Werke im Index', '${scope.library.works.length}'),
               _Fact('Quellen', '${scope.library.sources.length}'),
-              if (peer != null) _Fact('Gespiegelt von', peer.name),
+              if (peers.isNotEmpty)
+                _Fact(
+                  'Gespiegelt von',
+                  peers.map((entry) => entry.peer.name).join(', '),
+                ),
               if (vault != null) _Fact('Ordner', vault.root.path),
             ],
           ),
@@ -1390,7 +1394,7 @@ class _MaintenanceState extends State<_Maintenance> {
               Text('Neu einlesen', style: theme.textTheme.titleMedium),
               const SizedBox(height: FundusSpace.x2),
               Text(
-                scope.peerLibrary.isOpen
+                scope.peerLibraries.hasConnection
                     ? 'Diese Bibliothek ist gespiegelt — eingelesen wird sie '
                           'auf dem Gerät, dem sie gehört. Hier wird der '
                           'Katalog neu geholt.'
@@ -1401,11 +1405,11 @@ class _MaintenanceState extends State<_Maintenance> {
                 ),
               ),
               const SizedBox(height: FundusSpace.x4),
-              if (scope.peerLibrary.isOpen)
+              if (scope.peerLibraries.hasConnection)
                 FilledButton.tonalIcon(
-                  onPressed: scope.peerLibrary.isBusy
+                  onPressed: scope.peerLibraries.isBusy
                       ? null
-                      : scope.peerLibrary.refresh,
+                      : scope.peerLibraries.refresh,
                   icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
                   label: const Text('Katalog holen'),
                 )
@@ -1607,6 +1611,9 @@ class _SyncState extends State<_Sync> {
                             if (!paired) return;
                             _codeController.clear();
                             _pinController.clear();
+                            // Gekoppelt und dann nichts zu sehen wäre die
+                            // halbe Antwort: der Katalog kommt gleich mit.
+                            await scope.connectPairedMachines();
                           },
                     child: const Text('Koppeln'),
                   ),
@@ -1638,7 +1645,11 @@ class _SyncState extends State<_Sync> {
                   ),
                   if (sync.peers.isNotEmpty)
                     OutlinedButton.icon(
-                      onPressed: sync.isBusy ? null : sync.syncAll,
+                      // Kataloge zuerst, Lesestände danach: ein Stand für ein
+                      // Werk, das dieses Gerät nicht kennt, hat kein Ziel.
+                      onPressed: sync.isBusy || scope.peerLibraries.isBusy
+                          ? null
+                          : () => sync.catchUp(scope.connectPairedMachines),
                       icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
                       label: const Text('Jetzt abgleichen'),
                     ),
@@ -1701,7 +1712,7 @@ class _SyncState extends State<_Sync> {
             ],
           ),
         ),
-        if (scope.peerLibrary.isOpen) _peerLibraryCard(context),
+        if (scope.peerLibraries.hasConnection) _peerLibraryCard(context),
         if (sync.peers.isNotEmpty) _Journal(peer: sync.peers.first),
         _adoption(context),
       ],
@@ -1717,8 +1728,7 @@ class _SyncState extends State<_Sync> {
     final scope = FundusScope.of(context);
     final theme = Theme.of(context);
     final tokens = context.fundus;
-    final peer = scope.peerLibrary.peer;
-    final mirror = scope.peerLibrary.lastMirror;
+    final peers = scope.peerLibraries.connected;
 
     return _Card(
       child: Column(
@@ -1728,57 +1738,73 @@ class _SyncState extends State<_Sync> {
             children: [
               Expanded(
                 child: Text(
-                  'Geöffnete Fremdbibliothek',
+                  'Bibliotheken anderer Geräte',
                   style: theme.textTheme.titleMedium,
                 ),
               ),
-              FundusConnectionDot(state: scope.peerLibrary.connection),
+              FundusConnectionDot(state: scope.peerLibraries.connection),
             ],
           ),
           const SizedBox(height: FundusSpace.x2),
           Text(
-            'Der Katalog von „${peer?.name ?? ''}" liegt hier als Kopie — '
-            'deshalb ist die Liste auch ohne Netz da. Die Dateien werden '
-            'beim Abspielen geholt.',
+            'Deren Kataloge liegen hier als Kopie — deshalb ist die Liste '
+            'auch ohne Netz da. Die Dateien werden beim Abspielen geholt.',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: tokens.textMuted,
             ),
           ),
-          if (mirror != null) ...[
-            const SizedBox(height: FundusSpace.x2),
-            // What the last pass *changed*, not how large the library is:
-            // only what differs is fetched, so „0 geändert" is the normal
-            // and the good answer.
-            Text(
-              mirror.written == 0 && mirror.removed == 0
-                  ? 'Zuletzt: nichts zu holen, alles war aktuell'
-                  : 'Zuletzt: ${mirror.written} Werke geholt'
-                        '${mirror.removed == 0 ? '' : ', ${mirror.removed} entfallen'}',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: tokens.textFaint,
+          const SizedBox(height: FundusSpace.x3),
+          for (final entry in peers)
+            Padding(
+              padding: const EdgeInsets.only(bottom: FundusSpace.x2),
+              child: Row(
+                children: [
+                  FundusConnectionDot(
+                    state: entry.connection,
+                    showLabel: false,
+                  ),
+                  const SizedBox(width: FundusSpace.x3),
+                  Expanded(
+                    child: Text(
+                      entry.peer.name,
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ),
+                  Text(
+                    entry.lastMirror == null
+                        ? '—'
+                        : entry.lastMirror!.written == 0 &&
+                              entry.lastMirror!.removed == 0
+                        ? 'aktuell'
+                        : '${entry.lastMirror!.written} geholt'
+                              '${entry.lastMirror!.removed == 0 ? '' : ', ${entry.lastMirror!.removed} entfallen'}',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: tokens.textFaint,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-          const SizedBox(height: FundusSpace.x4),
+          const SizedBox(height: FundusSpace.x3),
           Row(
             children: [
               FilledButton.tonalIcon(
-                onPressed: scope.peerLibrary.isBusy
+                onPressed: scope.peerLibraries.isBusy
                     ? null
-                    : scope.peerLibrary.refresh,
+                    : scope.peerLibraries.refresh,
                 icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
-                label: const Text('Katalog holen'),
+                label: const Text('Kataloge holen'),
               ),
               const SizedBox(width: FundusSpace.x3),
               TextButton(
-                onPressed: scope.peerLibrary.isBusy
+                onPressed: scope.peerLibraries.isBusy
                     ? null
-                    : scope.closePeerLibrary,
-                child: const Text('Bibliothek schließen'),
+                    : scope.closePeerLibraries,
+                child: const Text('Verbindungen trennen'),
               ),
             ],
           ),
-          if (scope.peerLibrary.failure case final failure?) ...[
+          if (scope.peerLibraries.failure case final failure?) ...[
             const SizedBox(height: FundusSpace.x3),
             Text(
               failure,

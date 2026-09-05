@@ -186,12 +186,12 @@ class ReaderController extends ChangeNotifier {
       _readableExtensions.contains(p.extension(path).toLowerCase());
 
   /// Opens a work at its stored page.
-  /// Where remote volumes are fetched from while a paired library is open.
-  PeerFileCache? cache;
+  /// Where a remote volume is fetched from, by the source it belongs to.
+  PeerFileCache? Function(String sourceId)? cacheForSource;
 
-  /// How a comic on the other machine is opened page by page. Null when no
-  /// paired library is open, which is when there is nothing to page from.
-  ComicPageSource Function(LibraryPlaybackTrack volume)? remotePages;
+  /// How a comic on another machine is opened page by page. Null for a work
+  /// on this disk, and for a machine that is not answering.
+  ComicPageSource? Function(LibraryPlaybackTrack volume)? remotePages;
 
   double? _fetching;
 
@@ -207,11 +207,9 @@ class ReaderController extends ChangeNotifier {
   /// whole: pdfium seeks all through a document, and there is no page-wise
   /// answer for it.
   Future<ComicPageSource> _openVolumeSource(LibraryPlaybackTrack volume) async {
-    final pages = remotePages;
-    if (volume.isRemote &&
-        pages != null &&
-        p.extension(volume.title).toLowerCase() != '.pdf') {
-      return pages(volume);
+    if (volume.isRemote && p.extension(volume.title).toLowerCase() != '.pdf') {
+      final pages = remotePages?.call(volume);
+      if (pages != null) return pages;
     }
     return _openSource(await _pathFor(volume), volume.title);
   }
@@ -225,7 +223,7 @@ class ReaderController extends ChangeNotifier {
   /// nothing to fetch it from".
   Future<String> _pathFor(LibraryPlaybackTrack volume) async {
     if (!volume.isRemote) return volume.absolutePath;
-    final cache = this.cache;
+    final cache = cacheForSource?.call(volume.sourceId);
     if (cache == null) {
       throw StateError(
         'Diese Datei liegt auf einem gekoppelten Gerät, zu dem gerade keine '

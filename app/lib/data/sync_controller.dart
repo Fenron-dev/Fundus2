@@ -133,7 +133,7 @@ class SyncController extends ChangeNotifier {
         libraryId: libraryId,
         deviceId: settings.deviceKey,
         baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
-      ).run();
+      ).run(workIds: _worksOf(vault, peer));
       await _record(vault, peer, report);
 
       await settings.savePeer(
@@ -200,6 +200,34 @@ class SyncController extends ChangeNotifier {
       last = await syncWith(peer) ?? last;
     }
     return last;
+  }
+
+  /// What „Jetzt abgleichen" should do on a device that mirrors.
+  ///
+  /// Fetching the catalogues comes first: a reading position for a work this
+  /// device has never heard of has nowhere to go, and the very first sync
+  /// after pairing is exactly that case. It used to answer „die hier
+  /// geöffnete Bibliothek gibt es dort nicht", which on a phone is an
+  /// instruction that cannot be followed.
+  Future<SyncReport?> catchUp(Future<void> Function() fetchCatalogues) async {
+    await fetchCatalogues();
+    return syncAll();
+  }
+
+  /// Which works this peer answers for.
+  ///
+  /// A shell vault holds several machines' catalogues at once. Asking one of
+  /// them about another's works would be a round of 404s — correct, and a
+  /// waste of the network the sync is trying not to depend on. Null means
+  /// „everything", which is right for a vault of one's own.
+  static Iterable<String>? _worksOf(FundusLibrary vault, PeerConnection peer) {
+    final sourceId = 'peer-${peer.serverId}';
+    final own = vault
+        .listWorks(includeMissing: true)
+        .where((work) => work.sourceId == sourceId)
+        .map((work) => work.id)
+        .toList();
+    return own.isEmpty ? null : own;
   }
 
   /// Writes down what was agreed and what was decided.

@@ -41,12 +41,13 @@ class PlaybackController extends ChangeNotifier {
   /// Set once per opened file — mpv reports its tracks more than once.
   bool _appliedPreference = false;
 
-  /// Where remote bytes come from while a paired library is open.
+  /// Where a track's bytes come from, by the source it belongs to.
   ///
-  /// Set by the scope when a peer library opens and cleared when it closes.
-  /// The controller never asks who the peer is — it hands a track to
-  /// [sourceForTrack] and opens whatever address comes back.
-  FundusStreamProxy? proxy;
+  /// Set by the scope. The controller never asks which machine that is — it
+  /// hands a track to [sourceForTrack] and opens whatever address comes back.
+  /// Null for a work that lies on this disk, which is what „local" means to
+  /// a player.
+  FundusStreamProxy? Function(String sourceId)? proxyForSource;
 
   /// How often a position is written back. The design fixes this per media
   /// type — thirty seconds for audio and video, two minutes for text.
@@ -247,7 +248,11 @@ class PlaybackController extends ChangeNotifier {
       }
       _sources = [
         for (final track in tracks)
-          sourceForTrack(track, origin: work.origin, proxy: proxy),
+          sourceForTrack(
+            track,
+            origin: work.origin,
+            proxy: proxyForSource?.call(track.sourceId),
+          ),
       ];
       _chapters = await library.playbackChapters(work.id);
       _attachStreams();

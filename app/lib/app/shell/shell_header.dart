@@ -5,6 +5,7 @@ import '../../data/media_type.dart';
 import '../../data/work_filter.dart';
 import '../app_navigation.dart';
 import '../fundus_scope.dart';
+import 'fundus_shell.dart';
 
 /// One step of the path bar.
 @immutable
@@ -313,25 +314,18 @@ class _ConnectionMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
-    final peer = scope.peerLibrary;
+    final peers = scope.peerLibraries;
     final host = scope.host;
 
     // Reading someone else's library is the case where it matters most: what
-    // is on screen depends on that machine answering.
-    if (peer.isOpen) {
+    // is on screen depends on those machines answering.
+    if (peers.hasConnection) {
       return Padding(
         padding: const EdgeInsets.only(right: FundusSpace.x3),
         child: FundusConnectionDot(
-          state: peer.connection,
+          state: peers.connection,
           showLabel: false,
-          label: switch (peer.connection) {
-            FundusConnectionState.connected =>
-              '„${peer.peer?.name ?? ''}" antwortet',
-            FundusConnectionState.refused =>
-              '„${peer.peer?.name ?? ''}" weist ab',
-            FundusConnectionState.idle =>
-              '„${peer.peer?.name ?? ''}" antwortet gerade nicht',
-          },
+          label: connectionLabel(scope),
         ),
       );
     }

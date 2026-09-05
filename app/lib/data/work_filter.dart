@@ -27,6 +27,7 @@ final class WorkFilter {
     this.sort = WorkSort.recentlyAdded,
     this.grouping = GroupingMode.tiles,
     this.unassignedOnly = false,
+    this.sourceId,
   });
 
   final String text;
@@ -42,8 +43,19 @@ final class WorkFilter {
   /// silently dropped.
   final bool unassignedOnly;
 
+  /// One machine's shelf out of the several this device holds.
+  ///
+  /// The vault of a phone is a shell where several Fundus libraries come
+  /// together; this is what separates them again. Null is „alle Geräte",
+  /// which is the normal way to look at it — a work is a work, whichever
+  /// machine keeps its files.
+  final String? sourceId;
+
   bool get hasActiveFilters =>
-      text.isNotEmpty || origins.isNotEmpty || unassignedOnly;
+      text.isNotEmpty ||
+      origins.isNotEmpty ||
+      unassignedOnly ||
+      sourceId != null;
 
   int get activeFilterCount =>
       (text.isEmpty ? 0 : 1) + origins.length + (unassignedOnly ? 1 : 0);
@@ -56,6 +68,8 @@ final class WorkFilter {
     WorkSort? sort,
     GroupingMode? grouping,
     bool? unassignedOnly,
+    String? sourceId,
+    bool clearSource = false,
   }) => WorkFilter(
     text: text ?? this.text,
     mediaTypeId: clearMediaType ? null : (mediaTypeId ?? this.mediaTypeId),
@@ -63,6 +77,7 @@ final class WorkFilter {
     sort: sort ?? this.sort,
     grouping: grouping ?? this.grouping,
     unassignedOnly: unassignedOnly ?? this.unassignedOnly,
+    sourceId: clearSource ? null : (sourceId ?? this.sourceId),
   );
 
   /// Why the result is empty. An empty state without a cause is a dead end,
@@ -70,6 +85,7 @@ final class WorkFilter {
   String emptyReason() {
     final reasons = <String>[];
     if (text.isNotEmpty) reasons.add('die Suche „$text"');
+    if (sourceId != null) reasons.add('das gewählte Gerät');
     if (origins.isNotEmpty) {
       reasons.add(
         'der Herkunftsfilter ${origins.map((o) => o.label).join(', ')}',
@@ -94,6 +110,7 @@ final class WorkFilter {
       if (unassignedOnly && work.mediaType != null) return false;
       if (type != null && work.mediaType?.id != type.id) return false;
       if (origins.isNotEmpty && !origins.contains(work.origin)) return false;
+      if (sourceId != null && work.summary.sourceId != sourceId) return false;
       if (needle.isEmpty) return true;
       return work.title.toLowerCase().contains(needle) ||
           work.subtitle.toLowerCase().contains(needle);

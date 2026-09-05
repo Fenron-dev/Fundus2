@@ -198,8 +198,8 @@ class TextReaderController extends ChangeNotifier {
   static bool isReadableFile(String path) =>
       _readableExtensions.contains(p.extension(path).toLowerCase());
 
-  /// Where remote volumes are fetched from while a paired library is open.
-  PeerFileCache? cache;
+  /// Where a remote volume is fetched from, by the source it belongs to.
+  PeerFileCache? Function(String sourceId)? cacheForSource;
 
   double? _fetching;
 
@@ -216,7 +216,7 @@ class TextReaderController extends ChangeNotifier {
   /// nothing to fetch it from".
   Future<String> _pathFor(LibraryPlaybackTrack volume) async {
     if (!volume.isRemote) return volume.absolutePath;
-    final cache = this.cache;
+    final cache = cacheForSource?.call(volume.sourceId);
     if (cache == null) {
       throw StateError(
         'Diese Datei liegt auf einem gekoppelten Gerät, zu dem gerade keine '
