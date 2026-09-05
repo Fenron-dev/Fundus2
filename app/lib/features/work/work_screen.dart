@@ -697,6 +697,8 @@ class _Files extends StatefulWidget {
 class _FilesState extends State<_Files> {
   List<LibraryPlaybackTrack>? _tracks;
   Set<String> _finished = const {};
+  Map<String, FileDetail> _details = const {};
+  final _expanded = <String>{};
   String? _failure;
 
   /// Null is „alle", which is also what a work without seasons shows.
@@ -716,9 +718,11 @@ class _FilesState extends State<_Files> {
     try {
       final tracks = library.playbackTracks(widget.work.id);
       final finished = library.finishedFiles(widget.work.id);
+      final details = library.fileDetails(widget.work.id);
       setState(() {
         _tracks = tracks;
         _finished = finished;
+        _details = details;
         _season ??= _seasons(tracks).firstOrNull;
       });
     } on Object catch (failure) {
@@ -804,11 +808,21 @@ class _FilesState extends State<_Files> {
         }
         final track = shown[index];
         final number = episodeNumberOf(track.relativePath);
+        final detail = _details[track.fileId];
         return _EpisodeRow(
           track: track,
           position: number.episode ?? tracks.indexOf(track) + 1,
           gutter: gutter,
           finished: _finished.contains(track.fileId),
+          detail: detail,
+          expanded: _expanded.contains(track.fileId),
+          onExpand: detail?.description == null
+              ? null
+              : () => setState(() {
+                  if (!_expanded.remove(track.fileId)) {
+                    _expanded.add(track.fileId);
+                  }
+                }),
           onPlay: () =>
               unawaited(scope.play(widget.work, startAt: track.fileId)),
           onToggle: () => unawaited(_toggleFinished(track)),
@@ -876,6 +890,9 @@ class _EpisodeRow extends StatelessWidget {
     required this.position,
     required this.gutter,
     required this.finished,
+    required this.detail,
+    required this.expanded,
+    required this.onExpand,
     required this.onPlay,
     required this.onToggle,
   });
@@ -884,6 +901,13 @@ class _EpisodeRow extends StatelessWidget {
   final int position;
   final double gutter;
   final bool finished;
+
+  /// What the show's feed says about this episode, where it said anything.
+  final FileDetail? detail;
+  final bool expanded;
+
+  /// Null where there is nothing to unfold.
+  final VoidCallback? onExpand;
   final VoidCallback onPlay;
   final VoidCallback onToggle;
 
@@ -926,9 +950,13 @@ class _EpisodeRow extends StatelessWidget {
                       color: finished ? tokens.textMuted : tokens.text,
                     ),
                   ),
-                  if (track.duration != null || finished)
+                  if (track.duration != null ||
+                      finished ||
+                      detail?.publishedAt != null)
                     Text(
                       [
+                        if (detail?.publishedAt case final date?)
+                          _formatDate(date),
                         if (track.duration case final length?)
                           _formatDuration(length),
                         if (finished) 'gesehen',
@@ -937,9 +965,33 @@ class _EpisodeRow extends StatelessWidget {
                         color: tokens.textFaint,
                       ),
                     ),
+                  // Der Text steht erst da, wenn jemand ihn sehen will:
+                  // dreißig Folgenbeschreibungen untereinander sind keine
+                  // Liste mehr.
+                  if (expanded)
+                    if (detail?.description case final text?) ...[
+                      const SizedBox(height: FundusSpace.x3),
+                      Text(
+                        text,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: tokens.textMuted,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
                 ],
               ),
             ),
+            if (onExpand case final expand?)
+              IconButton(
+                onPressed: expand,
+                tooltip: expanded ? 'Text einklappen' : 'Worum es geht',
+                icon: Icon(
+                  expanded ? FundusIcons.collapse : FundusIcons.expand,
+                  size: FundusIcons.sizeMd,
+                  color: tokens.textFaint,
+                ),
+              ),
             IconButton(
               onPressed: onToggle,
               tooltip: finished
@@ -957,6 +1009,10 @@ class _EpisodeRow extends StatelessWidget {
     );
   }
 }
+
+String _formatDate(DateTime value) =>
+    '${value.day.toString().padLeft(2, '0')}.'
+    '${value.month.toString().padLeft(2, '0')}.${value.year}';
 
 String _formatDuration(Duration value) {
   final hours = value.inHours;

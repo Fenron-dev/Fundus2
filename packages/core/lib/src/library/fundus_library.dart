@@ -1091,6 +1091,28 @@ final class FundusLibrary {
     );
   }
 
+  /// What is known about the single files of a work — a podcast episode's
+  /// own text and date, as the show's feed tells it.
+  Map<String, FileDetail> fileDetails(String workId) =>
+      _database.fileDetails(workId);
+
+  void setFileDetail({
+    required String workId,
+    required String fileId,
+    String? title,
+    String? description,
+    DateTime? publishedAt,
+  }) {
+    _ensureWritable();
+    _database.setFileDetail(
+      workId: workId,
+      fileId: fileId,
+      title: title,
+      description: description,
+      publishedAt: publishedAt,
+    );
+  }
+
   /// The files of a work somebody has ticked off.
   ///
   /// Separate from the position, because they answer different questions: the
@@ -1268,6 +1290,7 @@ final class FundusLibrary {
     String? contentSensitivity,
     List<String>? genres,
     String? contentStyle,
+    Map<String, String>? externalIds,
     WorkMetadataSource source = WorkMetadataSource.user,
   }) async {
     _ensureWritable();
@@ -1286,6 +1309,7 @@ final class FundusLibrary {
       contentSensitivity: contentSensitivity,
       genres: genres,
       contentStyle: contentStyle,
+      externalIds: externalIds,
       source: source,
     );
     await _writeMetadataSidecar(workId);

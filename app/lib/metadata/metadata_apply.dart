@@ -5,6 +5,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 
 import '../data/work_view.dart';
+import 'podcast_feed.dart';
 
 /// What changed on a work, for the one line that reports it.
 final class MetadataApplyResult {
@@ -15,6 +16,7 @@ final class MetadataApplyResult {
     this.coverFetched = false,
     this.coverFailed = false,
     this.backdropFetched = false,
+    this.episodesDescribed = 0,
   });
 
   final String workId;
@@ -25,6 +27,9 @@ final class MetadataApplyResult {
 
   /// Whether a wide picture came down with it.
   final bool backdropFetched;
+
+  /// How many episodes got their own text out of the show's feed.
+  final int episodesDescribed;
 }
 
 /// Writes a chosen match onto a work.
@@ -62,6 +67,10 @@ Future<MetadataApplyResult> applyMetadata({
     contentSensitivity: candidate.contentSensitivity,
     genres: candidate.genres.isEmpty ? null : candidate.genres,
     contentStyle: candidate.contentStyle,
+    // Woher der Treffer kam — bei einem Podcast steckt darin die Adresse des
+    // Feeds, und der Feed ist das Einzige, was etwas über die einzelnen
+    // Folgen weiß.
+    externalIds: candidate.externalIds.isEmpty ? null : candidate.externalIds,
     // Written as what it is: an answer from a service. The metadata layer
     // ranks a value someone typed above one a service gave, which is what
     // makes a correction survive the next match.
@@ -106,6 +115,19 @@ Future<MetadataApplyResult> applyMetadata({
     }
   }
 
+  // Ein Podcast bringt die Adresse seines Feeds mit, und nur dort steht,
+  // worum es in einer Folge geht. Ein Feed, der nicht antwortet, kostet die
+  // Texte — nie den Abgleich.
+  var described = 0;
+  if (candidate.externalIds['feed'] case final feed?) {
+    described = await describeEpisodes(
+      library: library,
+      workId: work.id,
+      feedUrl: feed,
+      client: client,
+    );
+  }
+
   return MetadataApplyResult(
     workId: work.id,
     title: candidate.title,
@@ -113,6 +135,7 @@ Future<MetadataApplyResult> applyMetadata({
     coverFetched: fetched,
     coverFailed: failed,
     backdropFetched: wide,
+    episodesDescribed: described,
   );
 }
 
@@ -135,5 +158,50 @@ Future<Uint8List?> fetchCoverBytes(String url, {http.Client? client}) async {
     return null;
   } finally {
     if (own) fetcher.close();
+  }
+}
+
+/// Writes what a show's feed says about each of its episodes.
+///
+/// Matched by the file name the feed's enclosure points at, and otherwise by
+/// the title with the punctuation taken out — a downloader renames both, but
+/// rarely the same way. What does not match is simply left alone: an episode
+/// without a text is a worse outcome than a wrong one only for a moment.
+///
+/// Returns how many episodes ended up with something to read.
+Future<int> describeEpisodes({
+  required FundusLibrary library,
+  required String workId,
+  required String feedUrl,
+  http.Client? client,
+}) async {
+  if (library.isReadOnly) return 0;
+  final feed = PodcastFeed(client: client);
+  try {
+    final episodes = await feed.read(feedUrl);
+    if (episodes.isEmpty) return 0;
+    final byName = <String, String>{
+      for (final track in library.playbackTracks(workId))
+        normaliseEpisodeName(track.title): track.fileId,
+    };
+    var described = 0;
+    for (final episode in episodes) {
+      final fileId = matchEpisode(episode, byName);
+      if (fileId == null) continue;
+      library.setFileDetail(
+        workId: workId,
+        fileId: fileId,
+        title: episode.title,
+        description: episode.description,
+        publishedAt: episode.publishedAt,
+      );
+      described++;
+    }
+    return described;
+  } on Object {
+    // A feed that will not answer costs the texts, never the match.
+    return 0;
+  } finally {
+    if (client == null) feed.close();
   }
 }

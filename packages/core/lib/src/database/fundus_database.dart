@@ -44,6 +44,7 @@ final class LibraryWorkSummary {
     this.explicit,
     this.contentSensitivity,
     this.contentStyle,
+    this.externalIds = const {},
     this.abridged,
     this.progressPosition,
     this.progressDuration,
@@ -104,6 +105,10 @@ final class LibraryWorkSummary {
 
   /// Provider-neutral style such as `anime`, persisted in metadata JSON.
   final String? contentStyle;
+
+  /// Where a match came from: `itunes`, `tmdb`, `feed`. Kept so a later run
+  /// can go back to the same place rather than searching again.
+  final Map<String, String> externalIds;
   final bool? abridged;
   final Duration? progressPosition;
   final Duration? progressDuration;
@@ -165,6 +170,7 @@ final class LibraryWorkSummary {
         explicit: explicit,
         contentSensitivity: contentSensitivity,
         contentStyle: contentStyle,
+        externalIds: externalIds,
         abridged: abridged,
         progressPosition: progressPosition,
         progressDuration: progressDuration,
@@ -183,6 +189,17 @@ final class LibraryWorkSummary {
       );
 }
 
+/// What a feed says about one file: a podcast episode's own text.
+final class FileDetail {
+  const FileDetail({this.title, this.description, this.publishedAt});
+
+  final String? title;
+  final String? description;
+  final DateTime? publishedAt;
+
+  bool get isEmpty => description == null && publishedAt == null;
+}
+
 final class WorkMetadataOrigin {
   const WorkMetadataOrigin({required this.source, required this.updatedAt});
 
@@ -193,7 +210,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 11;
+  static const schemaVersion = 12;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -520,6 +537,48 @@ final class FundusDatabase {
     );
   }
 
+  /// What is known about the single files of a work, by file id.
+  Map<String, FileDetail> fileDetails(String workId) {
+    if (!tableExists('file_details')) return const {};
+    final rows = _database.select(
+      'SELECT file_id, title, description, published_at '
+      'FROM file_details WHERE work_id = ?',
+      [workId],
+    );
+    return {
+      for (final row in rows)
+        row['file_id'] as String: FileDetail(
+          title: row['title'] as String?,
+          description: row['description'] as String?,
+          // Als UTC gelesen, wie es geschrieben wurde: sonst kommt derselbe
+          // Zeitpunkt in einer anderen Zeitzone zurück, als er hineinging.
+          publishedAt: row['published_at'] is int
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  row['published_at'] as int,
+                  isUtc: true,
+                )
+              : null,
+        ),
+    };
+  }
+
+  void setFileDetail({
+    required String workId,
+    required String fileId,
+    String? title,
+    String? description,
+    DateTime? publishedAt,
+  }) {
+    _database.execute(
+      'INSERT INTO file_details (work_id, file_id, title, description, '
+      'published_at) VALUES (?, ?, ?, ?, ?) '
+      'ON CONFLICT(work_id, file_id) DO UPDATE SET '
+      'title = excluded.title, description = excluded.description, '
+      'published_at = excluded.published_at',
+      [workId, fileId, title, description, publishedAt?.millisecondsSinceEpoch],
+    );
+  }
+
   /// The files of a work somebody has marked as done.
   Set<String> finishedFiles(String workId, {String userId = 'default'}) {
     if (!tableExists('watched_files')) return const {};
@@ -577,6 +636,7 @@ final class FundusDatabase {
     String? contentSensitivity,
     List<String>? genres,
     String? contentStyle,
+    Map<String, String>? externalIds,
     WorkMetadataSource source = WorkMetadataSource.user,
     DateTime? updatedAt,
     Map<String, WorkMetadataOrigin> fieldOrigins = const {},
@@ -648,6 +708,18 @@ final class FundusDatabase {
     );
     write('language', language);
     write('description', description);
+    // Where a match came from, so a later run can go back to the same place
+    // — an RSS feed for a podcast, an id at a service. Merged rather than
+    // replaced: two providers know different things about the same work.
+    if (externalIds != null && externalIds.isNotEmpty) {
+      final existing = metadata['external_ids'];
+      write('external_ids', {
+        if (existing is Map)
+          for (final entry in existing.entries)
+            '${entry.key}': '${entry.value}',
+        ...externalIds,
+      });
+    }
     write('publisher', publisher);
     write('published_year', publishedYear);
     // Older callers do not pass this optional field. Preserve an existing
@@ -872,6 +944,13 @@ final class FundusDatabase {
             contentStyle: metadata['content_style'] is String
                 ? metadata['content_style'] as String
                 : null,
+            externalIds: metadata['external_ids'] is Map
+                ? {
+                    for (final entry
+                        in (metadata['external_ids'] as Map).entries)
+                      '${entry.key}': '${entry.value}',
+                  }
+                : const {},
             abridged: metadata['abridged'] as bool?,
             progressPosition: row['progress_kind'] == 'time'
                 ? _seconds(row['progress_position'])
@@ -2741,6 +2820,7 @@ final class FundusDatabase {
     if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
     if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
     if (_database.userVersion == 10 && !readOnly) _migrateToVersion11();
+    if (_database.userVersion == 11 && !readOnly) _migrateToVersion12();
   }
 
   void _migrateToVersion1() {
@@ -2975,6 +3055,25 @@ final class FundusDatabase {
         _database.execute(statement);
       }
       _database.userVersion = 11;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  /// What one file of a work is about.
+  ///
+  /// A podcast episode has a text, a date and a proper title, and none of it
+  /// is in the file: it lives in the show's feed. Kept per file rather than
+  /// per work, because that is what it describes.
+  void _migrateToVersion12() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      for (final statement in _version12Statements) {
+        _database.execute(statement);
+      }
+      _database.userVersion = 12;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -3451,4 +3550,17 @@ const _version11Statements = <String>[
   ''',
   'CREATE INDEX IF NOT EXISTS watched_files_work_idx '
       'ON watched_files(work_id, user_id)',
+];
+
+const _version12Statements = <String>[
+  '''
+  CREATE TABLE IF NOT EXISTS file_details (
+    work_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    title TEXT,
+    description TEXT,
+    published_at INTEGER,
+    PRIMARY KEY (work_id, file_id)
+  )
+  ''',
 ];

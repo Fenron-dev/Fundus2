@@ -413,4 +413,100 @@ void main() {
       );
     });
   });
+
+  group('Ein Podcast bringt die Texte seiner Folgen mit', () {
+    late Directory root;
+    late FundusLibrary library;
+
+    setUp(() async {
+      root = await Directory.systemTemp.createTemp('fundus-feed-');
+      final show = Directory('${root.path}/Podcasts/Stay Forever')
+        ..createSync(recursive: true);
+      await File('${show.path}/sf100.mp3').writeAsBytes(List.filled(64, 1));
+      library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+    });
+
+    tearDown(() async {
+      library.close();
+      await root.delete(recursive: true);
+    });
+
+    test(
+      'der Feed füllt die Folge, der Abgleich merkt sich die Adresse',
+      () async {
+        const feed = '''
+<rss version="2.0"><channel>
+  <item>
+    <title>SF 100: Monkey Island</title>
+    <description>Ein Spiel und ein Affe.</description>
+    <pubDate>Tue, 02 Sep 2025 05:00:00 +0000</pubDate>
+    <enclosure url="https://stayforever.de/media/sf100.mp3"/>
+  </item>
+</channel></rss>''';
+        final client = FakeHttp(
+          (request) => request.url.host == 'stayforever.de'
+              ? http.Response(
+                  feed,
+                  200,
+                  headers: {
+                    'content-type': 'application/rss+xml; charset=utf-8',
+                  },
+                )
+              : http.Response.bytes(List.filled(32, 7), 200),
+        );
+
+        final result = await applyMetadata(
+          library: library,
+          work: WorkView.fromSummary(library.listWorks().single),
+          client: client,
+          candidate: const MetadataCandidate(
+            provider: 'apple_podcasts',
+            providerId: '1',
+            title: 'Stay Forever',
+            externalIds: {
+              'itunes': '1',
+              'feed': 'https://stayforever.de/feed.xml',
+            },
+          ),
+        );
+
+        expect(result.episodesDescribed, 1);
+        final fileId = library
+            .playbackTracks(library.listWorks().single.id)
+            .single
+            .fileId;
+        final detail = library.fileDetails(
+          library.listWorks().single.id,
+        )[fileId];
+        expect(detail?.description, 'Ein Spiel und ein Affe.');
+        expect(detail?.publishedAt, DateTime.utc(2025, 9, 2, 5));
+        // Und die Adresse bleibt am Werk, für den nächsten Lauf.
+        expect(
+          library.listWorks().single.externalIds['feed'],
+          'https://stayforever.de/feed.xml',
+        );
+      },
+    );
+
+    test('ein Feed, der nicht antwortet, kostet nur die Texte', () async {
+      final client = FakeHttp((_) => http.Response('kaputt', 500));
+
+      final result = await applyMetadata(
+        library: library,
+        work: WorkView.fromSummary(library.listWorks().single),
+        client: client,
+        candidate: const MetadataCandidate(
+          provider: 'apple_podcasts',
+          providerId: '1',
+          title: 'Stay Forever',
+          externalIds: {'feed': 'https://stayforever.de/feed.xml'},
+        ),
+      );
+
+      expect(result.episodesDescribed, 0);
+      // Der Titel ist trotzdem übernommen.
+      expect(library.listWorks().single.title, 'Stay Forever');
+    });
+  });
 }
