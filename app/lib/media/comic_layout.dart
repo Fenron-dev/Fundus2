@@ -187,3 +187,38 @@ ComicChapterSequence comicChapterSequence(List<String> titles) {
 String formatChapterNumber(num number) => number == number.roundToDouble()
     ? number.toInt().toString()
     : number.toString();
+
+/// The chapter number a title carries, if it carries one.
+double? comicChapterNumber(String title) => double.tryParse(
+  (_chapterNumberPattern.firstMatch(title)?.group(1) ?? '').replaceAll(
+    ',',
+    '.',
+  ),
+);
+
+/// What a layout is called where somebody has to choose one.
+String comicLayoutLabel(PublicationReaderLayout layout) => switch (layout) {
+  PublicationReaderLayout.singlePage => 'Einzelseite',
+  PublicationReaderLayout.doublePage => 'Doppelseite',
+  PublicationReaderLayout.continuousVertical => 'Fortlaufend',
+  PublicationReaderLayout.continuousHorizontal => 'Waagerecht',
+  PublicationReaderLayout.webtoon => 'Longstrip',
+};
+
+/// The next way of reading, in the order somebody would try them.
+///
+/// A button that cycles rather than a menu: there are five, they are all
+/// worth trying on an unfamiliar work, and the wrong one is one tap from the
+/// right one.
+PublicationReaderLayout nextComicLayout(PublicationReaderLayout layout) =>
+    switch (layout) {
+      PublicationReaderLayout.singlePage => PublicationReaderLayout.doublePage,
+      PublicationReaderLayout.doublePage =>
+        PublicationReaderLayout.continuousVertical,
+      PublicationReaderLayout.continuousVertical =>
+        PublicationReaderLayout.webtoon,
+      PublicationReaderLayout.webtoon =>
+        PublicationReaderLayout.continuousHorizontal,
+      PublicationReaderLayout.continuousHorizontal =>
+        PublicationReaderLayout.singlePage,
+    };

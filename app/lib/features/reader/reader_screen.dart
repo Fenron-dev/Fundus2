@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -35,6 +36,9 @@ class ReaderScreen extends StatelessWidget {
           children: [
             if (reader.showsChrome) const _ReaderBar(),
             const Expanded(child: _ReaderSurface()),
+            // Die Leiste unten ist der Daumenbereich: das Kapitel davor, die
+            // Leserichtung, das Kapitel danach — und wo man im Band steht.
+            if (reader.showsChrome) const _ChapterBar(),
           ],
         ),
       ),
@@ -458,25 +462,36 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
       });
     }
 
-    return ListView.builder(
-      controller: _scroll,
-      scrollDirection: horizontal ? Axis.horizontal : Axis.vertical,
-      reverse: horizontal && reader.isRightToLeft,
-      itemCount: reader.pageCount,
-      itemBuilder: (context, index) {
-        reader.requestPage(index);
-        final key = _keys.putIfAbsent(index, GlobalKey.new);
-        return Padding(
-          key: key,
-          padding: EdgeInsets.only(
-            bottom: horizontal ? 0 : reader.profile.pageGap,
-            right: horizontal ? reader.profile.pageGap : 0,
-          ),
-          // Eine Seite, die die Spalte nicht ausfüllt, gehört in die Mitte —
-          // links angeschlagen liest sich ein Band schief.
-          child: Center(child: _Page(index: index, continuous: true)),
-        );
-      },
+    // Hineinzoomen gehört zum Lesen: eine Fußnote in einem Scan, ein Schild
+    // im Hintergrund. Der Streifen bleibt dabei ein Streifen — gezoomt wird
+    // die Ansicht, nicht die Seite, und beim Loslassen bleibt es, wo es ist,
+    // bis jemand mit zwei Fingern zurückgeht.
+    return InteractiveViewer(
+      maxScale: 5,
+      // Ohne dies fängt jede Wischbewegung der Zoom-Ansicht an und das
+      // Blättern hört auf.
+      panEnabled: false,
+      scaleEnabled: true,
+      child: ListView.builder(
+        controller: _scroll,
+        scrollDirection: horizontal ? Axis.horizontal : Axis.vertical,
+        reverse: horizontal && reader.isRightToLeft,
+        itemCount: reader.pageCount,
+        itemBuilder: (context, index) {
+          reader.requestPage(index);
+          final key = _keys.putIfAbsent(index, GlobalKey.new);
+          return Padding(
+            key: key,
+            padding: EdgeInsets.only(
+              bottom: horizontal ? 0 : reader.profile.pageGap,
+              right: horizontal ? reader.profile.pageGap : 0,
+            ),
+            // Eine Seite, die die Spalte nicht ausfüllt, gehört in die Mitte —
+            // links angeschlagen liest sich ein Band schief.
+            child: Center(child: _Page(index: index, continuous: true)),
+          );
+        },
+      ),
     );
   }
 }
@@ -1186,4 +1201,111 @@ class _MeasuredPageState extends State<_MeasuredPage> {
     if (aspect == null) return image;
     return AspectRatio(aspectRatio: aspect, child: image);
   }
+}
+
+/// Chapter to chapter, and where in this one.
+///
+/// A long strip has no page turns to speak of, so the one thing a hand needs
+/// within reach at the bottom is: what comes before, what comes after, and
+/// how far along this chapter is. The middle button switches the way of
+/// reading, because that is a decision one makes about a work while looking
+/// at it, not in a settings page.
+class _ChapterBar extends StatelessWidget {
+  const _ChapterBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final reader = scope.reader;
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+    final volumes = reader.volumes;
+    final index = reader.volumeIndex;
+    final pages = reader.pageCount;
+
+    String name(int at) {
+      if (at < 0 || at >= volumes.length) return '';
+      final number = comicChapterNumber(volumes[at].title);
+      return number == null
+          ? volumes[at].title
+          : 'Kap. ${_formatChapter(number)}';
+    }
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          FundusSpace.x4,
+          FundusSpace.x2,
+          FundusSpace.x4,
+          FundusSpace.x2,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (pages > 1)
+              Row(
+                children: [
+                  Text(
+                    '${reader.pageIndex + 1}',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: tokens.textFaint,
+                    ),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      value: reader.pageIndex.clamp(0, pages - 1).toDouble(),
+                      max: (pages - 1).toDouble(),
+                      onChanged: (value) => reader.goToPage(value.round()),
+                    ),
+                  ),
+                  Text(
+                    '$pages',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: tokens.textFaint,
+                    ),
+                  ),
+                ],
+              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: index > 0
+                      ? () => unawaited(reader.openVolume(index - 1))
+                      : null,
+                  icon: Icon(FundusIcons.back, size: FundusIcons.sizeSm),
+                  label: Text(index > 0 ? name(index - 1) : 'Anfang'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => unawaited(
+                    reader.updateProfile(
+                      reader.profile.copyWith(
+                        layout: nextComicLayout(reader.profile.layout),
+                      ),
+                    ),
+                  ),
+                  icon: Icon(FundusIcons.sort, size: FundusIcons.sizeSm),
+                  label: Text(comicLayoutLabel(reader.profile.layout)),
+                ),
+                OutlinedButton.icon(
+                  onPressed: index + 1 < volumes.length
+                      ? () => unawaited(reader.openVolume(index + 1))
+                      : null,
+                  iconAlignment: IconAlignment.end,
+                  icon: Icon(FundusIcons.forward, size: FundusIcons.sizeSm),
+                  label: Text(
+                    index + 1 < volumes.length ? name(index + 1) : 'Ende',
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _formatChapter(double value) =>
+      value == value.roundToDouble() ? '${value.round()}' : '$value';
 }
