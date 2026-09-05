@@ -21,6 +21,7 @@ enum MetadataProviderKind {
   anilistManga('AniList (Manga & Manhwa)'),
   tmdb('TMDB (Filme & Serien)'),
   openLibrary('Open Library (Bücher)'),
+  audible('Audible (Hörbücher)'),
   applePodcasts('Apple Podcasts');
 
   const MetadataProviderKind(this.label);
@@ -50,6 +51,10 @@ enum MetadataProviderKind {
         ],
         'novel' => const [
           MetadataProviderKind.anilistManga,
+          MetadataProviderKind.openLibrary,
+        ],
+        'audiobook' => const [
+          MetadataProviderKind.audible,
           MetadataProviderKind.openLibrary,
         ],
         'podcast' => const [
@@ -92,6 +97,7 @@ MetadataProvider providerFor(
   ),
   MetadataProviderKind.tmdb => TmdbProvider(apiKey: apiKey, client: client),
   MetadataProviderKind.openLibrary => OpenLibraryProvider(client: client),
+  MetadataProviderKind.audible => AudibleProvider(client: client),
   MetadataProviderKind.applePodcasts => ApplePodcastProvider(client: client),
 };
 
@@ -407,11 +413,10 @@ final class TmdbProvider implements MetadataProvider {
 
 /// Open Library for books and e-books. No account and no key.
 ///
-/// This is where Audible and Goodreads would have gone. Audible has no public
-/// catalogue interface, and the Goodreads API was withdrawn in 2020 — neither
-/// can be offered honestly, and a button that fails every time is worse than
-/// no button. Open Library covers the same ground for print and e-books;
-/// audiobooks are usually the same edition under a different cover.
+/// This is where Goodreads would have gone; its interface was withdrawn in
+/// 2020 and a button that fails every time is worse than no button. Open
+/// Library covers print and e-books, and for spoken editions Audible sits
+/// beside it below.
 final class OpenLibraryProvider implements MetadataProvider {
   OpenLibraryProvider({http.Client? client, this.endpoint = _defaultEndpoint})
     : _client = client ?? http.Client();
@@ -490,6 +495,176 @@ final class OpenLibraryProvider implements MetadataProvider {
           : null,
       externalIds: {'openlibrary': key.replaceFirst('/works/', '')},
     );
+  }
+}
+
+/// Audible's own catalogue, through the interface its apps use.
+///
+/// Audiobookshelf asks the same address, and for the same reason: it is the
+/// only place that knows a spoken edition as such — who read it, how long it
+/// runs, which part of the series it is — where a print catalogue only knows
+/// the book. There is no account and no key; the shop is asked in the
+/// language the dialog is set to, because the German edition of a book has a
+/// German title, a German blurb and a different reader than the English one.
+final class AudibleProvider implements MetadataProvider {
+  AudibleProvider({http.Client? client, this.host})
+    : _client = client ?? http.Client();
+
+  final http.Client _client;
+
+  /// Overrides the shop derived from the language. Tests set it; nothing else
+  /// needs to.
+  final String? host;
+
+  @override
+  String get provider => 'audible';
+
+  /// Which Audible shop answers for a language.
+  ///
+  /// Every shop carries its own catalogue, so a German search that went to
+  /// the American shop would find the English edition and call it a match.
+  static String hostFor(String? language) {
+    final code = (language ?? '').toLowerCase().replaceAll('_', '-');
+    final base = code.split('-').first;
+    final region = code.contains('-') ? code.split('-').last : '';
+    return switch ((base, region)) {
+      ('de', _) => 'api.audible.de',
+      ('ja', _) => 'api.audible.co.jp',
+      ('fr', _) => 'api.audible.fr',
+      ('es', _) => 'api.audible.es',
+      ('it', _) => 'api.audible.it',
+      ('en', 'gb' || 'uk') => 'api.audible.co.uk',
+      ('en', 'au') => 'api.audible.com.au',
+      ('en', 'in') => 'api.audible.in',
+      ('en', 'ca') => 'api.audible.ca',
+      _ => 'api.audible.com',
+    };
+  }
+
+  @override
+  Future<List<MetadataCandidate>> search(
+    String query, {
+    int limit = 10,
+    String? language,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) return const [];
+    final response = await _request(
+      _client.get(
+        Uri.https(host ?? hostFor(language), '/1.0/catalog/products', {
+          'title': normalizedQuery,
+          'num_results': '${limit.clamp(1, 50)}',
+          'products_sort_by': 'Relevance',
+          'response_groups':
+              'contributors,product_desc,product_attrs,media,series',
+        }),
+        headers: const {'accept': 'application/json'},
+      ),
+    );
+    final data = _decodeObject(response, provider);
+    final products = data['products'];
+    if (products is! List) return const [];
+    return [
+      for (final value in products)
+        if (value is Map) ?_candidate(value, language: language),
+    ];
+  }
+
+  Future<http.Response> _request(Future<http.Response> request) async {
+    try {
+      return await request.timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      throw MetadataProviderException(provider, 'Zeitüberschreitung');
+    } on MetadataProviderException {
+      rethrow;
+    } on Object catch (error) {
+      throw MetadataProviderException(provider, 'Netzwerk: $error');
+    }
+  }
+
+  MetadataCandidate? _candidate(Map value, {String? language}) {
+    final asin = value['asin'];
+    final title = _firstString([value['title']]);
+    if (asin is! String || asin.trim().isEmpty || title == null) return null;
+    final subtitle = _firstString([value['subtitle']]);
+    final series = _firstSeries(value['series']);
+    return MetadataCandidate(
+      provider: provider,
+      providerId: asin.trim(),
+      title: title,
+      alternateTitles: subtitle == null ? const [] : ['$title: $subtitle'],
+      // Wer es geschrieben hat steht vorn, wer es gelesen hat dahinter — beide
+      // gehören zum Werk, aber die Reihenfolge ist die eines Hörbuchregals.
+      authors: [..._people(value['authors']), ..._people(value['narrators'])],
+      workKind: 'audiobook',
+      series: series?.$1,
+      seriesSequence: series?.$2,
+      releaseYear: _year(value['release_date'] ?? value['issue_date']),
+      description: _cleanDescription(
+        value['merchandising_summary'] ?? value['publisher_summary'],
+      ),
+      publisher: _firstString([value['publisher_name']]),
+      language: _firstString([value['language']]) ?? language,
+      isAdult: value['is_adult_product'] == true,
+      posterUrl: _largestImage(value['product_images']),
+      externalIds: {'audible': asin.trim(), 'asin': asin.trim()},
+    );
+  }
+
+  static List<String> _people(Object? value) {
+    if (value is! List) return const [];
+    final names = <String>[];
+    for (final entry in value.take(4)) {
+      if (entry is! Map) continue;
+      final name = _firstString([entry['name']]);
+      if (name != null) names.add(name);
+    }
+    return names;
+  }
+
+  /// The first series Audible names, with the number inside it.
+  ///
+  /// „Band 3" darf auch „3.5" sein — Zwischenbände gibt es, und ein `int`
+  /// würde sie auf den falschen Platz schieben.
+  static (String, double?)? _firstSeries(Object? value) {
+    if (value is! List) return null;
+    for (final entry in value) {
+      if (entry is! Map) continue;
+      final title = _firstString([entry['title']]);
+      if (title == null) continue;
+      final sequence = entry['sequence'];
+      return (
+        title,
+        sequence is num
+            ? sequence.toDouble()
+            : sequence is String
+            ? double.tryParse(sequence.trim().replaceAll(',', '.'))
+            : null,
+      );
+    }
+    return null;
+  }
+
+  /// Audible keys its pictures by edge length. The largest is the one worth
+  /// keeping — a cover that is shown full width on a desktop.
+  static String? _largestImage(Object? value) {
+    if (value is! Map) return null;
+    var best = -1;
+    String? url;
+    for (final entry in value.entries) {
+      final size = int.tryParse('${entry.key}') ?? 0;
+      final candidate = _firstString([entry.value]);
+      if (candidate != null && size > best) {
+        best = size;
+        url = candidate;
+      }
+    }
+    return url;
+  }
+
+  static int? _year(Object? value) {
+    if (value is! String || value.length < 4) return null;
+    return int.tryParse(value.substring(0, 4));
   }
 }
 

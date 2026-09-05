@@ -151,23 +151,28 @@ class _BulkMetadataState extends State<_BulkMetadata> {
   }
 
   Future<void> _pick(_Row row) async {
-    final candidate = await showMetadataDialog(
+    final choice = await showMetadataDialog(
       context,
       work: row.work,
       settings: widget.settings,
     );
-    if (candidate == null || !mounted) return;
+    if (choice == null || !mounted) return;
     await applyMetadata(
       library: widget.library,
       work: row.work,
-      candidate: candidate,
+      candidate: choice.candidate,
+      fields: choice.fields,
     );
     widget.onChanged();
     if (!mounted) return;
     setState(() {
       final index = _rows.indexOf(row);
       if (index >= 0) {
-        _rows[index] = _Row(row.work, _Outcome.applied, note: candidate.title);
+        _rows[index] = _Row(
+          row.work,
+          _Outcome.applied,
+          note: choice.candidate.title,
+        );
       }
     });
   }

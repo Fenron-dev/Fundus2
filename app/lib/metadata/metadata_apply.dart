@@ -7,6 +7,47 @@ import 'package:http/http.dart' as http;
 import '../data/work_view.dart';
 import 'podcast_feed.dart';
 
+/// Which part of a match may be written.
+///
+/// Screenshot-driven: a match is rarely right in every field at once. The
+/// English title may be the better one while the German blurb is not, and a
+/// cover somebody is happy with should survive a match that only fixes the
+/// year. So the choice is per field, and everything not chosen keeps what it
+/// has.
+enum MetadataField {
+  title('Titel'),
+  authors('Urheber'),
+  series('Reihe & Band'),
+  year('Jahr'),
+  publisher('Verlag'),
+  language('Sprache'),
+  genres('Genres'),
+  description('Beschreibung'),
+  cover('Titelbild'),
+  backdrop('Breitbild');
+
+  const MetadataField(this.label);
+
+  final String label;
+}
+
+/// A picked match together with what of it should be written.
+///
+/// An empty [fields] is „nur verknüpfen": the work remembers where it was
+/// found — the id at the service, a podcast's feed — and not one visible
+/// field changes. That is what makes a later, deliberate match possible
+/// without touching anything today.
+final class MetadataChoice {
+  const MetadataChoice({required this.candidate, this.fields});
+
+  final MetadataCandidate candidate;
+
+  /// `null` means everything the match knows.
+  final Set<MetadataField>? fields;
+
+  bool get linkOnly => fields != null && fields!.isEmpty;
+}
+
 /// What changed on a work, for the one line that reports it.
 final class MetadataApplyResult {
   const MetadataApplyResult({
@@ -54,24 +95,51 @@ Future<MetadataApplyResult> applyMetadata({
   required MetadataCandidate candidate,
   http.Client? client,
   bool fetchCover = true,
+  Set<MetadataField>? fields,
 }) async {
   final summary = work.summary;
-  final authors = candidate.authors.isNotEmpty
-      ? candidate.authors
+  // Was nicht gewählt wurde, bekommt seinen bisherigen Wert zurück — nicht
+  // `null`. Ein leeres Feld ist für die Metadatenschicht die Aussage „das
+  // Werk hat keinen Verlag", und die will hier niemand treffen.
+  bool wants(MetadataField field) => fields == null || fields.contains(field);
+  final existingAuthors = summary.authors.isNotEmpty
+      ? summary.authors
       : [if (summary.author.trim().isNotEmpty) summary.author.trim()];
+  final authors = wants(MetadataField.authors) && candidate.authors.isNotEmpty
+      ? candidate.authors
+      : existingAuthors;
+  final linkOnly = fields != null && fields.isEmpty;
   await library.updateWorkMetadata(
     workId: work.id,
-    title: candidate.title,
+    title: wants(MetadataField.title) ? candidate.title : summary.title,
     authors: authors.isEmpty ? const ['Unbekannt'] : authors,
-    series: candidate.series ?? summary.series,
-    seriesSequence: candidate.seriesSequence ?? summary.seriesSequence,
-    language: candidate.language,
-    description: candidate.description,
-    publisher: candidate.publisher,
-    publishedYear: candidate.releaseYear,
-    contentSensitivity: candidate.contentSensitivity,
-    genres: candidate.genres.isEmpty ? null : candidate.genres,
-    contentStyle: candidate.contentStyle,
+    subtitle: summary.subtitle,
+    series: wants(MetadataField.series)
+        ? candidate.series ?? summary.series
+        : summary.series,
+    seriesSequence: wants(MetadataField.series)
+        ? candidate.seriesSequence ?? summary.seriesSequence
+        : summary.seriesSequence,
+    language: wants(MetadataField.language)
+        ? candidate.language ?? summary.language
+        : summary.language,
+    description: wants(MetadataField.description)
+        ? candidate.description ?? summary.description
+        : summary.description,
+    publisher: wants(MetadataField.publisher)
+        ? candidate.publisher ?? summary.publisher
+        : summary.publisher,
+    publishedYear: wants(MetadataField.year)
+        ? candidate.releaseYear ?? summary.publishedYear
+        : summary.publishedYear,
+    // Einstufung und Stilrichtung sind keine Anzeigefelder, sondern das,
+    // wonach die Bibliothek filtert. Sie reisen mit jedem übernommenen
+    // Treffer mit — nur beim reinen Verknüpfen bleibt alles, wie es ist.
+    contentSensitivity: linkOnly ? null : candidate.contentSensitivity,
+    genres: wants(MetadataField.genres) && candidate.genres.isNotEmpty
+        ? candidate.genres
+        : null,
+    contentStyle: linkOnly ? null : candidate.contentStyle,
     // Woher der Treffer kam — bei einem Podcast steckt darin die Adresse des
     // Feeds, und der Feed ist das Einzige, was etwas über die einzelnen
     // Folgen weiß.
@@ -90,7 +158,10 @@ Future<MetadataApplyResult> applyMetadata({
   // time, and this match is a newer one. Testing only for "has a cover at
   // all" meant a work that once got a picture could never get a better one,
   // and one whose first attempt failed stayed blank for good.
-  if (fetchCover && poster != null && !summary.hasFolderCover) {
+  if (fetchCover &&
+      wants(MetadataField.cover) &&
+      poster != null &&
+      !summary.hasFolderCover) {
     final bytes = await fetchCoverBytes(poster, client: client);
     if (bytes == null) {
       failed = true;
@@ -108,7 +179,10 @@ Future<MetadataApplyResult> applyMetadata({
   // whenever the match offers it and the work has none.
   var wide = false;
   final backdrop = candidate.backdropUrl;
-  if (fetchCover && backdrop != null && summary.backdropPath == null) {
+  if (fetchCover &&
+      wants(MetadataField.backdrop) &&
+      backdrop != null &&
+      summary.backdropPath == null) {
     final bytes = await fetchCoverBytes(backdrop, client: client);
     if (bytes != null) {
       await library.cacheBackdrop(

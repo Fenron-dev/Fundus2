@@ -422,18 +422,19 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
   Future<void> _match(FundusScopeState scope) async {
     final vault = scope.library.library;
     if (vault == null) return;
-    final candidate = await showMetadataDialog(
+    final choice = await showMetadataDialog(
       context,
       work: widget.work,
       settings: scope.settings,
     );
-    if (candidate == null || !mounted) return;
+    if (choice == null || !mounted) return;
     setState(() => _busy = true);
     try {
       final result = await applyMetadata(
         library: vault,
         work: widget.work,
-        candidate: candidate,
+        candidate: choice.candidate,
+        fields: choice.fields,
       );
       scope.library.refreshWork(widget.work.id);
       if (!mounted) return;
@@ -441,7 +442,9 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
         SnackBar(
           content: Text(
             [
-              result.coverFailed
+              choice.linkOnly
+                  ? '„${result.title}" verknüpft — nichts überschrieben.'
+                  : result.coverFailed
                   ? '„${result.title}" übernommen — das Titelbild kam '
                         'nicht an.'
                   : result.coverFetched && result.backdropFetched

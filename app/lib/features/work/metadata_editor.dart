@@ -58,6 +58,18 @@ class _MetadataEditorState extends State<_MetadataEditor> {
       text: widget.work.summary.description ?? '',
     ),
   };
+
+  /// Die anderen Bände derselben Reihe, nach dem Namen gesucht, den die
+  /// Reihe beim Öffnen hatte — so lässt sich eine Reihe hier umbenennen und
+  /// alle Bände ziehen mit.
+  late final List<LibraryWorkSummary> _siblings = widget.library.isReadOnly
+      ? const []
+      : seriesSiblings(
+          widget.library.listWorks(),
+          workId: widget.work.id,
+          series: widget.work.summary.series,
+        );
+  bool _wholeSeries = false;
   bool _saving = false;
   String? _error;
 
@@ -104,6 +116,25 @@ class _MetadataEditorState extends State<_MetadataEditor> {
         publishedYear: int.tryParse(_text('year')),
         genres: _list('genres'),
       );
+      // „Für alle Bände" schreibt nur, was eine Reihe gemeinsam hat. Ein
+      // Band, der dabei nicht angenommen wird, hält den Rest nicht auf.
+      if (_wholeSeries) {
+        for (final sibling in _siblings) {
+          try {
+            await applySharedFields(
+              library: widget.library,
+              work: sibling,
+              authors: authors,
+              series: _text('series').isEmpty ? null : _text('series'),
+              publisher: _text('publisher').isEmpty ? null : _text('publisher'),
+              language: _text('language').isEmpty ? null : _text('language'),
+              genres: _list('genres'),
+            );
+          } on Object {
+            continue;
+          }
+        }
+      }
       if (mounted) Navigator.of(context).pop(true);
     } on Object catch (error) {
       if (!mounted) return;
@@ -128,6 +159,16 @@ class _MetadataEditorState extends State<_MetadataEditor> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: FundusSpace.x3),
+                child: Text(
+                  'Was hier steht, gilt als von Hand gesetzt: kein Scan und '
+                  'kein Abgleich überschreibt es später wieder.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: context.fundus.textFaint,
+                  ),
+                ),
+              ),
               _Field(label: 'Titel', controller: _fields['title']!),
               _Field(
                 label: 'Urheber',
@@ -187,6 +228,26 @@ class _MetadataEditorState extends State<_MetadataEditor> {
                 controller: _fields['description']!,
                 lines: 5,
               ),
+              if (_siblings.isNotEmpty)
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _wholeSeries,
+                  onChanged: _saving
+                      ? null
+                      : (on) => setState(() => _wholeSeries = on ?? false),
+                  title: Text(
+                    'Für alle ${_siblings.length + 1} Bände der Reihe',
+                  ),
+                  subtitle: Text(
+                    'Urheber, Reihe, Verlag, Sprache und Genres — Titel, '
+                    'Band und Beschreibung bleiben je Band.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: context.fundus.textFaint,
+                    ),
+                  ),
+                ),
               if (_error case final error?)
                 Padding(
                   padding: const EdgeInsets.only(top: FundusSpace.x2),
@@ -243,3 +304,54 @@ class _Field extends StatelessWidget {
     ),
   );
 }
+
+/// The other volumes of the same series.
+///
+/// „Alle Bände" means the works that share a series name — matched without
+/// case and without the spaces around it, because one volume was typed by
+/// hand and the next came from a folder name. The work being edited is never
+/// among them; it is saved on its own path.
+List<LibraryWorkSummary> seriesSiblings(
+  List<LibraryWorkSummary> works, {
+  required String workId,
+  required String? series,
+}) {
+  final name = series?.trim().toLowerCase();
+  if (name == null || name.isEmpty) return const [];
+  return [
+    for (final work in works)
+      if (work.id != workId && work.series?.trim().toLowerCase() == name) work,
+  ];
+}
+
+/// Writes the fields a whole series shares onto one of its volumes.
+///
+/// Title, band and blurb belong to the single volume and are left alone —
+/// what a series has in common is who wrote it, what it is called, who
+/// published it, in which language and under which genres. Everything else on
+/// the sibling keeps the value it already had, because a blank field here is
+/// not a statement that the field is empty.
+Future<void> applySharedFields({
+  required FundusLibrary library,
+  required LibraryWorkSummary work,
+  required List<String> authors,
+  required String? series,
+  required String? publisher,
+  required String? language,
+  required List<String> genres,
+}) => library.updateWorkMetadata(
+  workId: work.id,
+  title: work.title,
+  authors: authors.isEmpty
+      ? (work.authors.isEmpty ? [work.author] : work.authors)
+      : authors,
+  subtitle: work.subtitle,
+  series: series ?? work.series,
+  seriesSequence: work.seriesSequence,
+  narrators: work.narrators,
+  language: language ?? work.language,
+  description: work.description,
+  publisher: publisher ?? work.publisher,
+  publishedYear: work.publishedYear,
+  genres: genres.isEmpty ? null : genres,
+);

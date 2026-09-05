@@ -509,4 +509,197 @@ void main() {
       expect(library.listWorks().single.title, 'Stay Forever');
     });
   });
+
+  group('Audible kennt die gesprochene Ausgabe', () {
+    test('eine Antwort wird zu einem Vorschlag', () async {
+      final client = FakeHttp(
+        (_) => http.Response(
+          jsonEncode({
+            'products': [
+              {
+                'asin': 'B004V3W0KM',
+                'title': 'Der Name des Windes',
+                'subtitle': 'Die Königsmörder-Chronik 1',
+                'authors': [
+                  {'name': 'Patrick Rothfuss'},
+                ],
+                'narrators': [
+                  {'name': 'Stefan Kaminski'},
+                ],
+                'publisher_name': 'Random House Audio',
+                'release_date': '2008-10-20',
+                'merchandising_summary': '<p>Kvothe erzählt sein Leben.</p>',
+                'language': 'german',
+                'product_images': {
+                  '500': 'https://bild/500.jpg',
+                  '1024': 'https://bild/1024.jpg',
+                },
+                'series': [
+                  {'title': 'Die Königsmörder-Chronik', 'sequence': '1'},
+                ],
+              },
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+
+      final results = await AudibleProvider(
+        client: client,
+        host: 'api.audible.de',
+      ).search('Der Name des Windes', language: 'de-DE');
+
+      final candidate = results.single;
+      expect(candidate.title, 'Der Name des Windes');
+      // Wer schreibt steht vor wem liest — beide gehören zum Hörbuch.
+      expect(candidate.authors, ['Patrick Rothfuss', 'Stefan Kaminski']);
+      expect(candidate.series, 'Die Königsmörder-Chronik');
+      expect(candidate.seriesSequence, 1);
+      expect(candidate.releaseYear, 2008);
+      expect(candidate.publisher, 'Random House Audio');
+      expect(candidate.description, 'Kvothe erzählt sein Leben.');
+      // Das größte Bild ist das, das eine Detailseite füllt.
+      expect(candidate.posterUrl, 'https://bild/1024.jpg');
+      expect(candidate.externalIds['asin'], 'B004V3W0KM');
+      expect(candidate.workKind, 'audiobook');
+      expect(client.asked.single.host, 'api.audible.de');
+      expect(
+        client.asked.single.queryParameters['title'],
+        'Der Name des Windes',
+      );
+    });
+
+    test('die Sprache entscheidet, welcher Shop antwortet', () {
+      expect(AudibleProvider.hostFor('de-DE'), 'api.audible.de');
+      expect(AudibleProvider.hostFor('en-US'), 'api.audible.com');
+      expect(AudibleProvider.hostFor('en-GB'), 'api.audible.co.uk');
+      expect(AudibleProvider.hostFor('ja-JP'), 'api.audible.co.jp');
+      expect(AudibleProvider.hostFor('fr-FR'), 'api.audible.fr');
+      // Ohne Angabe bleibt der größte Katalog übrig.
+      expect(AudibleProvider.hostFor(null), 'api.audible.com');
+    });
+
+    test('ein Hörbuchregal bekommt Audible zuerst vorgeschlagen', () {
+      expect(
+        MetadataProviderKind.forMediaType('audiobook').first,
+        MetadataProviderKind.audible,
+      );
+      // Ein Manga hat auf Audible nichts verloren.
+      expect(
+        MetadataProviderKind.forMediaType('manga'),
+        isNot(contains(MetadataProviderKind.audible)),
+      );
+    });
+
+    test('ein Eintrag ohne ASIN wird übergangen', () async {
+      final client = FakeHttp(
+        (_) => http.Response(
+          jsonEncode({
+            'products': [
+              {'title': 'Ohne Kennung'},
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+
+      expect(
+        await AudibleProvider(
+          client: client,
+          host: 'api.audible.de',
+        ).search('egal'),
+        isEmpty,
+      );
+    });
+  });
+
+  group('Übernommen wird nur, was angehakt ist', () {
+    late Directory root;
+    late FundusLibrary library;
+    late WorkView work;
+
+    const candidate = MetadataCandidate(
+      provider: 'audible',
+      providerId: 'B1',
+      title: 'Der Name des Windes',
+      authors: ['Patrick Rothfuss'],
+      publisher: 'Random House Audio',
+      releaseYear: 2008,
+      description: 'Kvothe erzählt sein Leben.',
+      genres: ['Fantasy'],
+      externalIds: {'asin': 'B1'},
+    );
+
+    setUp(() async {
+      root = await Directory.systemTemp.createTemp('fundus-fields-');
+      final folder = Directory('${root.path}/Hörbücher/Wind')
+        ..createSync(recursive: true);
+      await File('${folder.path}/01.m4b').writeAsBytes(List.filled(64, 1));
+      library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+      work = WorkView.fromSummary(library.listWorks().single);
+    });
+
+    tearDown(() async {
+      library.close();
+      await root.delete(recursive: true);
+    });
+
+    test('ein abgewähltes Feld behält seinen Wert', () async {
+      await library.updateWorkMetadata(
+        workId: work.id,
+        title: 'Wind',
+        authors: ['Unbekannt'],
+        description: 'Selbst geschrieben.',
+      );
+      work = WorkView.fromSummary(library.listWorks().single);
+
+      await applyMetadata(
+        library: library,
+        work: work,
+        candidate: candidate,
+        fetchCover: false,
+        fields: const {MetadataField.year, MetadataField.publisher},
+      );
+
+      final updated = library.listWorks().single;
+      expect(updated.publishedYear, 2008);
+      expect(updated.publisher, 'Random House Audio');
+      // Titel und Beschreibung waren nicht angehakt — sie bleiben.
+      expect(updated.title, 'Wind');
+      expect(updated.description, 'Selbst geschrieben.');
+      expect(updated.genres, isEmpty);
+    });
+
+    test('nur verknüpfen ändert kein sichtbares Feld', () async {
+      await applyMetadata(
+        library: library,
+        work: work,
+        candidate: candidate,
+        fetchCover: false,
+        fields: const {},
+      );
+
+      final updated = library.listWorks().single;
+      expect(updated.title, work.summary.title);
+      expect(updated.publishedYear, isNull);
+      // Die Kennung ist trotzdem da — dafür macht man es.
+      expect(updated.externalIds['asin'], 'B1');
+    });
+
+    test('ohne Auswahl bleibt es beim ganzen Treffer', () async {
+      await applyMetadata(
+        library: library,
+        work: work,
+        candidate: candidate,
+        fetchCover: false,
+      );
+
+      final updated = library.listWorks().single;
+      expect(updated.title, 'Der Name des Windes');
+      expect(updated.genres, ['Fantasy']);
+    });
+  });
 }
