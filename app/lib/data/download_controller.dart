@@ -150,7 +150,7 @@ class DownloadController extends ChangeNotifier {
       vault.clearOfflineCopy(file.fileId);
     }
     _jobs.remove(workId);
-    library.refresh();
+    library.refreshWork(workId);
     notifyListeners();
   }
 
@@ -239,7 +239,7 @@ class DownloadController extends ChangeNotifier {
       state: DownloadState.done,
       done: done,
     );
-    library.refresh();
+    library.refreshWork(job.workId);
     notifyListeners();
   }
 

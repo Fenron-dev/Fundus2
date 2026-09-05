@@ -658,8 +658,24 @@ final class FundusDatabase {
     );
   }
 
-  List<LibraryWorkSummary> listWorks({bool includeMissing = false}) {
-    final rows = _database.select('''
+  /// One work, read the same way the list reads it.
+  ///
+  /// Opening a work used to refresh the whole catalogue to move one progress
+  /// bar. With twelve thousand works on a network share that is several
+  /// seconds of reading database pages, every single time — which is what
+  /// „es dauert ewig, bis es losgeht" actually was.
+  LibraryWorkSummary? workSummary(String workId) =>
+      _selectWorks(includeMissing: true, workId: workId).firstOrNull;
+
+  List<LibraryWorkSummary> listWorks({bool includeMissing = false}) =>
+      _selectWorks(includeMissing: includeMissing);
+
+  List<LibraryWorkSummary> _selectWorks({
+    required bool includeMissing,
+    String? workId,
+  }) {
+    final rows = _database.select(
+      '''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
              w.metadata_json, w.status, w.source_id, w.availability,
              COUNT(content.id) AS file_count,
@@ -694,10 +710,13 @@ final class FundusDatabase {
         AND progress_file.role = 'content'
       WHERE w.kind != 'book_series'
         ${includeMissing ? '' : "AND w.status = 'available'"}
+        ${workId == null ? '' : 'AND w.id = ?'}
       GROUP BY w.id
       ORDER BY COALESCE(w.series_name, w.title) COLLATE NOCASE,
                w.series_sequence, w.title COLLATE NOCASE
-    ''');
+    ''',
+      [?workId],
+    );
     return rows
         .map((row) {
           final metadata =

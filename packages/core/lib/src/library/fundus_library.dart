@@ -24,6 +24,7 @@ import '../playback/library_playback.dart';
 import 'remote_catalogue.dart';
 import '../publication/epub_package.dart';
 import '../publication/publication_engine.dart';
+import '../scan/background_scan.dart';
 import '../scan/library_scanner.dart';
 import '../search/library_work_query.dart';
 import 'work_annotations.dart';
@@ -945,6 +946,10 @@ final class FundusLibrary {
   LibraryPlaybackProgress? loadProgress(String workId) =>
       _database.loadProgress(workId);
 
+  /// One work as the list would show it — for refreshing a single row.
+  LibraryWorkSummary? workSummary(String workId) =>
+      _database.workSummary(workId);
+
   List<LibraryPlaybackRevision> listProgressRevisions(String workId) =>
       _database.listProgressRevisions(workId);
 
@@ -1316,34 +1321,64 @@ final class FundusLibrary {
         ? _database.indexedFileStamps()
         : const <String, ({int size, int modifiedAt})>{};
     final files = <ScannedFile>[];
-    await for (final event in (scanner ?? LibraryScanner()).scan(
-      root,
-      cancellationToken: cancellationToken,
-      subtree: scope,
-      isUnchanged: delta
-          ? (path, size, modifiedAt) {
-              final known = stamps[path];
-              return known != null &&
-                  known.size == size &&
-                  known.modifiedAt == modifiedAt.millisecondsSinceEpoch;
-            }
-          : null,
-    )) {
-      if (event.kind == ScanEventKind.file) files.add(event.file!);
-      if (event.kind == ScanEventKind.cancelled) {
-        yield LibraryIndexEvent(
-          phase: LibraryIndexPhase.cancelled,
-          fileCount: files.length,
-        );
-        return;
-      }
-      if (event.kind == ScanEventKind.file ||
-          event.kind == ScanEventKind.started) {
+    // The walk goes to a worker unless a test hands in a scanner of its own.
+    //
+    // Stating ten thousand files on a network share takes minutes, and on
+    // this isolate those are minutes in which nothing repaints and no button
+    // answers. Nothing about the walk needs to be here: it is file system
+    // work whose result is a plain list of records.
+    if (scanner == null) {
+      yield LibraryIndexEvent(phase: LibraryIndexPhase.scanning, fileCount: 0);
+      await for (final batch in scanInBackground(
+        root,
+        known: delta ? stamps : const {},
+        subtree: scope,
+        cancellationToken: cancellationToken,
+      )) {
+        files.addAll(batch.files);
+        if (cancellationToken?.isCancelled ?? false) {
+          yield LibraryIndexEvent(
+            phase: LibraryIndexPhase.cancelled,
+            fileCount: files.length,
+          );
+          return;
+        }
         yield LibraryIndexEvent(
           phase: LibraryIndexPhase.scanning,
           fileCount: files.length,
-          currentPath: event.file?.relativePath,
+          currentPath: batch.files.lastOrNull?.relativePath,
         );
+      }
+    } else {
+      await for (final event in scanner.scan(
+        root,
+        cancellationToken: cancellationToken,
+        subtree: scope,
+        isUnchanged: delta
+            ? (path, size, modifiedAt) {
+                final known = stamps[path];
+                return known != null &&
+                    known.size == size &&
+                    known.modifiedAt == modifiedAt.millisecondsSinceEpoch;
+              }
+            : null,
+      )) {
+        if (event.kind == ScanEventKind.file) files.add(event.file!);
+        if (event.kind == ScanEventKind.cancelled) {
+          yield LibraryIndexEvent(
+            phase: LibraryIndexPhase.cancelled,
+            fileCount: files.length,
+          );
+          return;
+        }
+        if (event.kind == ScanEventKind.file ||
+            event.kind == ScanEventKind.started) {
+          yield LibraryIndexEvent(
+            phase: LibraryIndexPhase.scanning,
+            fileCount: files.length,
+            currentPath: event.file?.relativePath,
+          );
+        }
       }
     }
 

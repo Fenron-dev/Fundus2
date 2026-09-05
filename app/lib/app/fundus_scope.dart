@@ -436,14 +436,14 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // seconds are different units, so they get different controllers.
       await player.close();
       await reader.open(vault, work);
-      if (reader.failure == null) library.refresh();
+      if (reader.failure == null) library.refreshWork(work.id);
       span.done({'via': 'reader'});
       return;
     }
     if (TextReaderController.handles(work)) {
       await player.close();
       await textReader.open(vault, work);
-      if (textReader.failure == null) library.refresh();
+      if (textReader.failure == null) library.refreshWork(work.id);
       span.done({'via': 'text'});
       return;
     }
@@ -455,7 +455,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       return;
     }
     await player.open(vault, work);
-    if (player.failure == null) library.refresh();
+    if (player.failure == null) library.refreshWork(work.id);
     span.done({'via': 'player'});
   }
 
@@ -490,7 +490,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     } else {
       vault.clearProgressChoice(work.id);
     }
-    library.refresh();
+    library.refreshWork(work.id);
   }
 
   /// Two positions that are the same place are not a question.

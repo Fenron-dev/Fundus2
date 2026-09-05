@@ -24,6 +24,7 @@ export 'src/publication/epub_package.dart';
 export 'src/publication/publication_source.dart';
 export 'src/publication/reflow_document.dart';
 export 'src/scan/audio_technical_metadata.dart';
+export 'src/scan/background_scan.dart';
 export 'src/scan/library_scanner.dart';
 export 'src/search/library_work_query.dart';
 export 'src/video/video_metadata.dart';

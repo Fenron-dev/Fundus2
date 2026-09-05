@@ -304,9 +304,49 @@ class LibraryController extends ChangeNotifier {
 
   void cancelScan() => _scanToken?.cancel();
 
+  /// Reads the whole catalogue again. For after a scan, and little else.
   void refresh() {
     if (_library == null) return;
     _reload();
+    notifyListeners();
+  }
+
+  /// Brings one work up to date, and leaves the rest of the catalogue alone.
+  ///
+  /// Playing or reading something changes exactly one row — its position, its
+  /// „zuletzt geöffnet". Refreshing the whole list for that meant re-reading
+  /// twelve thousand works, which on a vault over a network share is several
+  /// seconds of database pages between pressing play and anything happening.
+  void refreshWork(String workId) {
+    final library = _library;
+    if (library == null) return;
+    final index = _works.indexWhere((work) => work.id == workId);
+    final summary = library.workSummary(workId);
+    if (summary == null) {
+      if (index < 0) return;
+      final rest = [..._works]..removeAt(index);
+      _works = List.unmodifiable(rest);
+      _countWorks();
+      notifyListeners();
+      return;
+    }
+    final view = WorkView.fromSummary(summary);
+    if (hides?.call(view) ?? false) {
+      if (index < 0) return;
+      final rest = [..._works]..removeAt(index);
+      _works = List.unmodifiable(rest);
+      _countWorks();
+      notifyListeners();
+      return;
+    }
+    final next = [..._works];
+    if (index < 0) {
+      next.add(view);
+    } else {
+      next[index] = view;
+    }
+    _works = List.unmodifiable(next);
+    _countWorks();
     notifyListeners();
   }
 

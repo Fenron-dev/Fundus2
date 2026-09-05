@@ -201,7 +201,7 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
         work: widget.work,
         candidate: candidate,
       );
-      scope.library.refresh();
+      scope.library.refreshWork(widget.work.id);
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         SnackBar(
@@ -232,7 +232,7 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
       library: vault,
       work: widget.work,
     );
-    if (saved) scope.library.refresh();
+    if (saved) scope.library.refreshWork(widget.work.id);
   }
 
   @override
