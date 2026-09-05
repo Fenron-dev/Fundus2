@@ -387,8 +387,71 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
 
   /// Opens a saved view: the filter it stored, and the library showing it.
   void applySavedView(LibrarySavedView view) {
-    _bump(() => _filter = WorkFilterQuery.fromQuery(view.query));
+    _bump(() {
+      _activeViews = {view.id};
+      _filter = WorkFilterQuery.fromQuery(view.query);
+    });
     navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
+  }
+
+  /// The saved views this vault holds, for the chips over a shelf.
+  List<LibrarySavedView> get savedViews => _savedViews;
+  List<LibrarySavedView> _savedViews = const [];
+
+  /// Which of them are switched on right now.
+  Set<String> get activeViews => _activeViews;
+  Set<String> _activeViews = const {};
+
+  Future<void> reloadSavedViews() async {
+    final vault = library.library;
+    final views = await vault?.loadSavedViews() ?? const <LibrarySavedView>[];
+    if (!mounted) return;
+    _bump(() => _savedViews = views);
+  }
+
+  /// Switches one saved view on or off.
+  ///
+  /// Several at once read as „and also": what they ask for is merged, and the
+  /// shelf shows what satisfies all of it. Switching the last one off leaves
+  /// the shelf as it was — the media type stays, because that is where
+  /// somebody is, not something they filtered.
+  void toggleSavedView(LibrarySavedView view) {
+    final active = {..._activeViews};
+    if (!active.remove(view.id)) active.add(view.id);
+    final mediaTypeId = _filter.mediaTypeId;
+    var merged = const LibraryWorkQuery();
+    for (final saved in _savedViews) {
+      if (!active.contains(saved.id)) continue;
+      merged = merged.merge(saved.query);
+    }
+    _bump(() {
+      _activeViews = active;
+      _filter = active.isEmpty
+          ? WorkFilter(mediaTypeId: mediaTypeId, sort: _filter.sort)
+          : WorkFilterQuery.fromQuery(
+              merged,
+            ).copyWith(mediaTypeId: mediaTypeId, sort: _filter.sort);
+    });
+  }
+
+  /// Keeps what is on screen as a chip of its own.
+  Future<void> saveCurrentView(String name) async {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly || name.trim().isEmpty) return;
+    final views = await vault.saveView(name, _filter.toQuery());
+    if (!mounted) return;
+    _bump(() => _savedViews = views);
+  }
+
+  Future<void> deleteSavedView(String id) async {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return;
+    final views = await vault.deleteSavedView(id);
+    if (!mounted) return;
+    _bump(() {
+      _savedViews = views;
+      _activeViews = {..._activeViews}..remove(id);
+    });
   }
 
   /// Brings a paired machine's catalogue in and shows it.

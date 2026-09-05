@@ -50,6 +50,7 @@ class LibraryScreen extends StatelessWidget {
               ? null
               : () => unawaited(_matchAll(context, scope, works)),
         ),
+        const _SavedViewBar(),
         Expanded(
           child: works.isEmpty
               ? _empty(context, scope)
@@ -292,6 +293,90 @@ class _GroupRow extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// The saved views, as chips over the shelf.
+///
+/// „Shōnen", „offline", „laufend" — the handful of ways somebody actually
+/// looks at their own library, one tap away and combinable. Several at once
+/// read as „and also". They live in the vault, so the phone has the same
+/// ones.
+class _SavedViewBar extends StatelessWidget {
+  const _SavedViewBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final views = scope.savedViews;
+    final tokens = context.fundus;
+    final canSave = scope.library.library?.isReadOnly == false;
+    if (views.isEmpty && !scope.filter.hasActiveFilters) {
+      return const SizedBox.shrink();
+    }
+
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: FundusSpace.x6),
+        children: [
+          for (final view in views) ...[
+            FilterChip(
+              selected: scope.activeViews.contains(view.id),
+              onSelected: (_) => scope.toggleSavedView(view),
+              label: Text(view.name),
+              onDeleted: canSave
+                  ? () => unawaited(scope.deleteSavedView(view.id))
+                  : null,
+              deleteIcon: Icon(
+                FundusIcons.close,
+                size: FundusIcons.sizeSm,
+                color: tokens.textFaint,
+              ),
+            ),
+            const SizedBox(width: FundusSpace.x2),
+          ],
+          // Was gerade auf dem Schirm steht, lässt sich behalten — das ist
+          // der Weg, auf dem diese Reihe überhaupt entsteht.
+          if (canSave && scope.filter.hasActiveFilters)
+            ActionChip(
+              avatar: Icon(FundusIcons.add, size: FundusIcons.sizeSm),
+              label: const Text('Diese Ansicht merken'),
+              onPressed: () => unawaited(_save(context, scope)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _save(BuildContext context, FundusScopeState scope) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ansicht merken'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Merken'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.trim().isEmpty) return;
+    await scope.saveCurrentView(name);
   }
 }
 

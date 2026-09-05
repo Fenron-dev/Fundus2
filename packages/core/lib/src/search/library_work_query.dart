@@ -38,6 +38,28 @@ final class LibraryWorkQuery {
   final Set<String> series;
   final Set<String> tags;
 
+  /// Two saved views applied at once.
+  ///
+  /// Chips are read as „and also": each one narrows what is shown. Sets are
+  /// therefore joined — „Shōnen" plus „Webtoon" means both tags are wanted —
+  /// and a switch that is on in either view stays on. Where both name a
+  /// single value that cannot be held twice, the later one wins, because it
+  /// is the one just tapped.
+  LibraryWorkQuery merge(LibraryWorkQuery other) => LibraryWorkQuery(
+    text: other.text.isNotEmpty ? other.text : text,
+    kinds: {...kinds, ...other.kinds},
+    sort: other.sort != LibraryWorkSort.relevance ? other.sort : sort,
+    progress: other.progress != LibraryProgressFilter.any
+        ? other.progress
+        : progress,
+    offlineOnly: offlineOnly || other.offlineOnly,
+    languages: {...languages, ...other.languages},
+    authors: {...authors, ...other.authors},
+    narrators: {...narrators, ...other.narrators},
+    series: {...series, ...other.series},
+    tags: {...tags, ...other.tags},
+  );
+
   LibraryWorkQuery copyWith({
     String? text,
     Set<String>? kinds,

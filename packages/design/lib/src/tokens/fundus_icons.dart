@@ -17,6 +17,7 @@ abstract final class FundusIcons {
   static final favourite = PhosphorIcons.heart(PhosphorIconsStyle.fill);
   static final lists = PhosphorIcons.queue();
   static final newMediaType = PhosphorIcons.plusCircle();
+  static final add = PhosphorIcons.plus();
   static final downloads = PhosphorIcons.downloadSimple();
   static final settings = PhosphorIcons.gearSix();
   static final sync = PhosphorIcons.arrowsClockwise();

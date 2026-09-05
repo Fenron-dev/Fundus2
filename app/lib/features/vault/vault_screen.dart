@@ -213,6 +213,9 @@ class VaultScreen extends StatelessWidget {
     // The vault carries this device's own settings; after a reinstall this is
     // where they come back from.
     await scope.restoreShellProfile();
+    // Die gespeicherten Ansichten liegen in der Bibliothek, also kommen sie
+    // mit ihr — sie sind die Schnellfilter über jedem Regal.
+    await scope.reloadSavedViews();
     // Sharing was a decision about this device, not about this session: if it
     // was on when the app was last closed, it comes back on — but only now,
     // with a library open, because there is nothing to serve without one.

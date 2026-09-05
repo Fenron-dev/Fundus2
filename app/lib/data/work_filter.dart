@@ -28,6 +28,7 @@ final class WorkFilter {
     this.grouping = GroupingMode.tiles,
     this.unassignedOnly = false,
     this.favouritesOnly = false,
+    this.tags = const {},
     this.sourceId,
   });
 
@@ -47,6 +48,9 @@ final class WorkFilter {
   /// Only what somebody marked as a favourite.
   final bool favouritesOnly;
 
+  /// Every one of these has to be on the work. Chips read as „and also".
+  final Set<String> tags;
+
   /// One machine's shelf out of the several this device holds.
   ///
   /// The vault of a phone is a shell where several Fundus libraries come
@@ -60,13 +64,15 @@ final class WorkFilter {
       origins.isNotEmpty ||
       unassignedOnly ||
       favouritesOnly ||
+      tags.isNotEmpty ||
       sourceId != null;
 
   int get activeFilterCount =>
       (text.isEmpty ? 0 : 1) +
       origins.length +
       (unassignedOnly ? 1 : 0) +
-      (favouritesOnly ? 1 : 0);
+      (favouritesOnly ? 1 : 0) +
+      tags.length;
 
   WorkFilter copyWith({
     String? text,
@@ -77,6 +83,7 @@ final class WorkFilter {
     GroupingMode? grouping,
     bool? unassignedOnly,
     bool? favouritesOnly,
+    Set<String>? tags,
     String? sourceId,
     bool clearSource = false,
   }) => WorkFilter(
@@ -87,6 +94,7 @@ final class WorkFilter {
     grouping: grouping ?? this.grouping,
     unassignedOnly: unassignedOnly ?? this.unassignedOnly,
     favouritesOnly: favouritesOnly ?? this.favouritesOnly,
+    tags: tags ?? this.tags,
     sourceId: clearSource ? null : (sourceId ?? this.sourceId),
   );
 
@@ -96,6 +104,7 @@ final class WorkFilter {
     final reasons = <String>[];
     if (text.isNotEmpty) reasons.add('die Suche „$text"');
     if (favouritesOnly) reasons.add('die Beschränkung auf Favoriten');
+    if (tags.isNotEmpty) reasons.add('die Schlagworte ${tags.join(', ')}');
     if (sourceId != null) reasons.add('das gewählte Gerät');
     if (origins.isNotEmpty) {
       reasons.add(
@@ -120,6 +129,9 @@ final class WorkFilter {
     final matched = works.where((work) {
       if (unassignedOnly && work.mediaType != null) return false;
       if (favouritesOnly && !work.summary.favourite) return false;
+      if (tags.isNotEmpty && !tags.every(work.summary.tags.contains)) {
+        return false;
+      }
       if (type != null && work.mediaType?.id != type.id) return false;
       if (origins.isNotEmpty && !origins.contains(work.origin)) return false;
       if (sourceId != null && work.summary.sourceId != sourceId) return false;
@@ -283,6 +295,7 @@ extension WorkFilterQuery on WorkFilter {
       text: query.text,
       mediaTypeId: type?.id,
       origins: query.offlineOnly ? const {FundusOrigin.offline} : const {},
+      tags: query.tags,
       sort: switch (query.sort) {
         LibraryWorkSort.title => WorkSort.title,
         LibraryWorkSort.progress => WorkSort.progress,
