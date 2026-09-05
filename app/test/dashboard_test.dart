@@ -88,14 +88,31 @@ void main() {
     await pump(tester);
 
     expect(find.text('FORTSETZEN'), findsOneWidget);
-    expect(find.text('noch 1 Std 10 Min'), findsOneWidget);
+    // Wie weit noch — das ist, was diese Reihe beantwortet. Der Vorschlag
+    // oben kann dasselbe Werk zeigen und sagt es dann auch.
+    expect(find.text('noch 1 Std 10 Min'), findsWidgets);
 
-    // Zweimal auf dem Schirm: in der Fortsetzen-Karte und in der Reihe
-    // darunter. Gemeint ist die Karte.
-    await tester.tap(find.text('Dune').first);
+    // „Dune" steht mehrfach auf dem Schirm — im Vorschlag, in der Karte, in
+    // der Reihe darunter. Gemeint ist die Karte, und die hat einen Namen.
+    await tester.tap(find.byKey(ValueKey('fortsetzen-${work.id}')));
     await tester.pumpAndSettle();
 
     expect(player.work?.title, 'Dune', reason: 'Tippen setzt fort');
+  });
+
+  testWidgets('oben steht ein großer Vorschlag, auf dem Tablet zwei', (
+    tester,
+  ) async {
+    await pump(tester);
+
+    expect(find.text('VORSCHLAG FÜR HEUTE'), findsOneWidget);
+    expect(find.text('ODER DAS HIER'), findsNothing);
+
+    tester.view.physicalSize = const Size(1100, 1400);
+    await tester.pumpAndSettle();
+
+    expect(find.text('VORSCHLAG FÜR HEUTE'), findsOneWidget);
+    expect(find.text('ODER DAS HIER'), findsOneWidget);
   });
 
   testWidgets('die Regale stehen mit ihren Zahlen da', (tester) async {

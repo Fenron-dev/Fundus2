@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -8,10 +10,21 @@ import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import '../library/unassigned_folders_card.dart';
 import '../library/work_poster.dart';
+import '../library/work_spotlight.dart';
 
-/// The daily entry point: continue first, everything else after.
-class DashboardScreen extends StatelessWidget {
+/// The daily entry point: something to start, then what you were in the
+/// middle of, then everything else.
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  /// Drawn once and kept while the screen is open. A suggestion that changes
+  /// under your hand as you read it is not a suggestion.
+  int _seed = DateTime.now().millisecondsSinceEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +43,10 @@ class DashboardScreen extends StatelessWidget {
           );
     final recent = works.toList(growable: false)
       ..sort((a, b) => b.summary.addedAt.compareTo(a.summary.addedAt));
+    // Something to watch, drawn from the whole library rather than from one
+    // shelf: a start screen that only ever offers what is already half
+    // finished never shows anybody the rest of what they own.
+    final picks = _picks(works);
 
     return ListView(
       padding: EdgeInsets.only(top: stage.gutter, bottom: FundusSpace.x16),
@@ -45,6 +62,15 @@ class DashboardScreen extends StatelessWidget {
             ],
           ),
         ),
+        if (picks.isNotEmpty) ...[
+          const SizedBox(height: FundusSpace.x6),
+          _Spotlights(
+            picks: picks,
+            stage: stage,
+            onReroll: () =>
+                setState(() => _seed = DateTime.now().millisecondsSinceEpoch),
+          ),
+        ],
         if (continuing.isNotEmpty) ...[
           _Heading(
             'Fortsetzen',
@@ -59,6 +85,7 @@ class DashboardScreen extends StatelessWidget {
               itemCount: continuing.length.clamp(0, 12),
               separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
               itemBuilder: (context, index) => _ContinueCard(
+                key: ValueKey('fortsetzen-${continuing[index].id}'),
                 work: continuing[index],
                 width: stage == FundusStageSize.handset ? 268.0 : 320.0,
               ),
@@ -112,6 +139,74 @@ class DashboardScreen extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  /// One suggestion on a phone, two where there is room for two.
+  List<WorkView> _picks(List<WorkView> works) {
+    if (works.isEmpty) return const [];
+    final wanted = FundusStageSize.of(context) == FundusStageSize.handset
+        ? 1
+        : 2;
+    final pool = [...works]..shuffle(Random(_seed));
+    return pool.take(wanted.clamp(1, pool.length)).toList(growable: false);
+  }
+}
+
+/// The big picks at the top of the start screen.
+class _Spotlights extends StatelessWidget {
+  const _Spotlights({
+    required this.picks,
+    required this.stage,
+    required this.onReroll,
+  });
+
+  final List<WorkView> picks;
+  final FundusStageSize stage;
+  final VoidCallback onReroll;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final height = min(
+      width / stage.heroRatio,
+      stage.heroMaxHeight,
+    ).clamp(240.0, stage.heroMaxHeight);
+
+    Widget spotlight(WorkView work, {bool first = true}) => ClipRRect(
+      borderRadius: FundusArtwork.heroRadius,
+      child: WorkSpotlight(
+        work: work,
+        stage: stage,
+        height: height,
+        kicker: first ? 'Vorschlag für heute' : 'Oder das hier',
+        onOpen: () => scope.play(work),
+        onDetails: () => scope.navigation.go(WorkRoute(work.id)),
+        onReroll: first ? onReroll : null,
+      ),
+    );
+
+    if (picks.length == 1) {
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+        child: spotlight(picks.first),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+      // The height is given rather than stretched: inside a list there is no
+      // top to stretch against, and asking for one is an infinite constraint.
+      child: SizedBox(
+        height: height,
+        child: Row(
+          children: [
+            Expanded(child: spotlight(picks.first)),
+            SizedBox(width: stage.railGap),
+            Expanded(child: spotlight(picks[1], first: false)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -205,7 +300,7 @@ class _Greeting extends StatelessWidget {
 /// poster alone does not answer it. Tapping it carries on — that is what the
 /// row is called.
 class _ContinueCard extends StatelessWidget {
-  const _ContinueCard({required this.work, required this.width});
+  const _ContinueCard({super.key, required this.work, required this.width});
 
   final WorkView work;
   final double width;

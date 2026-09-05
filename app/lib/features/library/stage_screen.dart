@@ -8,6 +8,7 @@ import '../../app/fundus_scope.dart';
 import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import 'work_poster.dart';
+import 'work_spotlight.dart';
 
 /// The front of a shelf: one work made large, a few rows, then everything.
 ///
@@ -97,7 +98,7 @@ class _StageScreenState extends State<StageScreen> {
       slivers: [
         if (feature != null)
           SliverToBoxAdapter(
-            child: _Feature(
+            child: WorkSpotlight(
               work: feature,
               stage: stage,
               onOpen: () => widget.onOpen(feature),
@@ -165,182 +166,6 @@ class _StageScreenState extends State<StageScreen> {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// The one work the shelf leads with.
-class _Feature extends StatelessWidget {
-  const _Feature({
-    required this.work,
-    required this.stage,
-    required this.onOpen,
-    required this.onDetails,
-    required this.onReroll,
-  });
-
-  final WorkView work;
-  final FundusStageSize stage;
-  final VoidCallback onOpen;
-  final VoidCallback onDetails;
-  final VoidCallback onReroll;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final tokens = context.fundus;
-    final width = MediaQuery.sizeOf(context).width;
-    final height = min(width / stage.heroRatio, stage.heroMaxHeight);
-    final summary = work.summary;
-    final meta = [
-      if (summary.publishedYear != null) '${summary.publishedYear}',
-      ...summary.genres.take(2),
-      work.origin.label,
-    ].join(' · ');
-
-    return SizedBox(
-      height: height,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // The artwork is its own background: blown up, blurred, and dimmed
-          // into the page so the picture has no edge and the text has a
-          // ground dark enough to sit on.
-          WorkImage(work: work, blurred: true),
-          const DecoratedBox(
-            decoration: BoxDecoration(color: Color(0x55000000)),
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  tokens.background.withValues(alpha: .1),
-                  tokens.background.withValues(alpha: .75),
-                  tokens.background,
-                ],
-                stops: const [0, .62, 1],
-              ),
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              stage.gutter,
-              FundusSpace.x6,
-              stage.gutter,
-              FundusSpace.x6,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                // On a wide screen the poster stands beside the text, the way
-                // a shelf shows a spine. A phone has no room for both.
-                if (stage != FundusStageSize.handset) ...[
-                  SizedBox(
-                    width: stage.posterWidth,
-                    child: WorkArtwork(work: work, showOrigin: false),
-                  ),
-                  SizedBox(width: stage.gutter),
-                ],
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Vorschlag für heute'.toUpperCase(),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: tokens.accentRamp.s300,
-                        ),
-                      ),
-                      const SizedBox(height: FundusSpace.x2),
-                      Text(
-                        work.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.displayLarge?.copyWith(
-                          fontSize: stage.titleSize,
-                          height: 1.1,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      if (meta.isNotEmpty) ...[
-                        const SizedBox(height: FundusSpace.x2),
-                        Text(
-                          meta,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: tokens.textMuted,
-                          ),
-                        ),
-                      ],
-                      if (summary.description case final description?
-                          when stage != FundusStageSize.handset) ...[
-                        const SizedBox(height: FundusSpace.x3),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 620),
-                          child: Text(
-                            description,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: tokens.textMuted,
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: FundusSpace.x4),
-                      Wrap(
-                        spacing: FundusSpace.x3,
-                        runSpacing: FundusSpace.x2,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          FilledButton.icon(
-                            onPressed: work.origin == FundusOrigin.unreachable
-                                ? null
-                                : onOpen,
-                            icon: Icon(
-                              FundusIcons.play,
-                              size: FundusIcons.sizeSm,
-                            ),
-                            label: Text(
-                              work.hasProgress ? 'Fortsetzen' : 'Abspielen',
-                            ),
-                          ),
-                          OutlinedButton(
-                            onPressed: onDetails,
-                            child: const Text('Details'),
-                          ),
-                          IconButton(
-                            onPressed: onReroll,
-                            tooltip: 'Etwas anderes vorschlagen',
-                            icon: Icon(
-                              FundusIcons.shuffle,
-                              size: FundusIcons.sizeMd,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (work.progressLabel case final label?) ...[
-                        const SizedBox(height: FundusSpace.x2),
-                        Text(
-                          label,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: tokens.accentRamp.s300,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
