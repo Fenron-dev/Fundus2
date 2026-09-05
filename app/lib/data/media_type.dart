@@ -119,6 +119,13 @@ final class MediaTypeDefinition {
   final List<WorkTab> tabs;
   final List<GroupingMode> groupings;
 
+  /// Whether opening this kind of work shows a picture.
+  ///
+  /// It decides two things at once: that playing it should take the whole
+  /// screen, and that on a phone the screen should turn. A film held upright
+  /// is a stripe with two black bars.
+  bool get showsVideo => id == 'movie' || id == 'series' || id == 'anime';
+
   /// Types behind the protection mode never appear in search, "Fortsetzen",
   /// statistics or notifications while locked.
   final bool protected;

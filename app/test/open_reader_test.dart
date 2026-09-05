@@ -96,6 +96,10 @@ void main() {
     expect(reader.failure, isNull);
     expect(reader.isOpen, isTrue);
     expect(engine.opened, isEmpty, reason: 'Der Player wurde angeworfen');
+    // Geöffnet wird im Vollbild, also ohne Leiste — ein Tipp holt sie zurück.
+    expect(reader.showsChrome, isFalse);
+    reader.showChrome();
+    await tester.pump();
     expect(find.textContaining('Seite 1 von 12'), findsWidgets);
   });
 

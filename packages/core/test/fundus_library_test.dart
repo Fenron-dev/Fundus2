@@ -1061,17 +1061,14 @@ void main() {
     final work = library.listWorks().single;
     expect(work.kind, 'manga');
     expect(work.title, 'Rebirth');
-    expect(work.fileCount, 3);
+    // Zwei Kapitel — das Cover ist das Cover und kein drittes Kapitel.
+    expect(work.fileCount, 2);
     expect(work.coverPath, endsWith('cover.png'));
     expect(library.workDirectoryPath(work.id), manga.path);
-    expect(
-      library.playbackTracks(work.id).map((file) => file.title),
-      containsAll([
-        'cover.png',
-        'Rebirth - Kapitel 0280.cbz',
-        'Rebirth - Kapitel 0281.cbz',
-      ]),
-    );
+    expect(library.playbackTracks(work.id).map((file) => file.title), [
+      'Rebirth - Kapitel 0280.cbz',
+      'Rebirth - Kapitel 0281.cbz',
+    ]);
 
     final chapter = library
         .playbackTracks(work.id)
@@ -1203,10 +1200,8 @@ void main() {
       final files = library.playbackTracks(work.id);
       expect(work.kind, 'webnovel');
       expect(work.coverPath, endsWith('cover.webp'));
-      expect(
-        files.map((file) => file.title),
-        containsAll(['cover.webp', 'Die Testserie.epub']),
-      );
+      // Das Bild bleibt beim Werk, ohne als Band mitgezählt zu werden.
+      expect(files.map((file) => file.title), ['Die Testserie.epub']);
     },
   );
 

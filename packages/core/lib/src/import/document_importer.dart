@@ -26,6 +26,63 @@ final class DocumentImportCandidate {
   final Uint8List? embeddedCoverBytes;
   final String? embeddedCoverMimeType;
 
+  /// The files that *are* the work, as opposed to the ones that sit beside
+  /// it.
+  ///
+  /// A film folder holds the film, its poster, its fanart and whatever else
+  /// somebody keeps there. All of it was being written down as content, so a
+  /// film arrived at the player as five tracks — one of them the picture on
+  /// its own cover — and the player showed a list of episodes for a work that
+  /// has none. Where a kind has an unambiguous content type, that is what
+  /// counts; everything else keeps every file, because a TTRPG product really
+  /// is its maps and handouts.
+  List<ScannedFile> get contentFiles {
+    final wanted = _contentExtensions[kind];
+    if (wanted == null) return files;
+    final matching = files
+        .where((file) => wanted.contains(file.extension))
+        .toList(growable: false);
+    // A folder with nothing of the expected type is still a work; showing
+    // what is in it beats showing nothing.
+    return matching.isEmpty ? files : matching;
+  }
+
+  static const _contentExtensions = <String, Set<String>>{
+    'movie': _videoExtensions,
+    'tv': _videoExtensions,
+    'anime': _videoExtensions,
+    'ebook': _publicationExtensions,
+    'webnovel': _publicationExtensions,
+    'manga': _comicExtensions,
+  };
+
+  static const _videoExtensions = {
+    'mp4',
+    'm4v',
+    'mkv',
+    'webm',
+    'mov',
+    'avi',
+    'wmv',
+    'flv',
+    'ts',
+    'm2ts',
+  };
+
+  static const _publicationExtensions = {
+    'epub',
+    'pdf',
+    'mobi',
+    'azw',
+    'azw3',
+    'txt',
+    'md',
+    'html',
+    'htm',
+  };
+
+  static const _comicExtensions = {'cbz', 'zip', 'cbr', 'rar', 'pdf', '7z'};
+
   DocumentImportCandidate copyWith({
     String? title,
     Map<String, Object?>? metadata,

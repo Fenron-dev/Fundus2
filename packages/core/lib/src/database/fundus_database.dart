@@ -387,8 +387,9 @@ final class FundusDatabase {
       workId,
     ]);
     _database.execute('DELETE FROM work_files WHERE work_id = ?', [workId]);
-    for (var index = 0; index < candidate.files.length; index++) {
-      final fileId = fileIds[candidate.files[index].relativePath];
+    final content = candidate.contentFiles;
+    for (var index = 0; index < content.length; index++) {
+      final fileId = fileIds[content[index].relativePath];
       if (fileId == null) continue;
       _database.execute(
         'INSERT INTO work_files (work_id, file_id, position, role) VALUES (?, ?, ?, ?)',
@@ -1848,7 +1849,11 @@ final class FundusDatabase {
   ///
   /// [below] scopes the judgement: a check that only walked `Serien` has seen
   /// nothing about `Filme` and must not claim those files are gone.
-  void markUnseenFilesMissing(Set<String> seenPaths, {String? below}) {
+  void markUnseenFilesMissing(
+    Set<String> seenPaths, {
+    String? below,
+    List<String> spare = const [],
+  }) {
     // Only this vault's own rows are affected — a mirrored peer catalogue is
     // not evidence about the local disk.
     final scope = below == null || below.isEmpty
@@ -1868,12 +1873,23 @@ final class FundusDatabase {
     } finally {
       insert.close();
     }
+    // Files below a folder that would not open are left exactly as they are:
+    // not seeing something is not the same as it being gone.
+    final spared = [
+      for (final folder in spare)
+        if (folder.isNotEmpty) folder.endsWith('/') ? folder : '$folder/',
+    ];
     _database.execute(
       "UPDATE files SET status = 'missing', availability = 'unreachable' "
       'WHERE source_id = ? '
       '${scope == null ? '' : 'AND path LIKE ? '}'
+      '${spared.map((_) => 'AND path NOT LIKE ? ').join()}'
       'AND path NOT IN (SELECT path FROM seen_paths)',
-      [localSourceId, if (scope != null) '$scope%'],
+      [
+        localSourceId,
+        if (scope != null) '$scope%',
+        for (final folder in spared) '$folder%',
+      ],
     );
     _database.execute(
       "UPDATE files SET status = 'available', availability = 'available' "

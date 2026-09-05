@@ -110,6 +110,15 @@ void main() {
         const Duration(seconds: 5),
       );
 
+      // Geöffnet wird gleich im Vollbild; der Knopf sitzt in der Leiste,
+      // die dafür erst zurückgeholt werden muss.
+      reader.showChrome();
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 5),
+      );
+
       await tester.runAsync(() async {
         await tester.tap(find.byTooltip('Seite speichern'));
         await Future<void>.delayed(const Duration(milliseconds: 200));

@@ -67,7 +67,12 @@ final class ScanCancellationToken {
   void cancel() => _cancelled = true;
 }
 
-final class LibraryScanner {
+/// Walks a vault and reports what is in it.
+///
+/// `base` rather than `final`: the one failure mode worth modelling in a test
+/// is a folder that refuses to answer, and that cannot be arranged on a real
+/// file system without depending on who is running the test.
+base class LibraryScanner {
   LibraryScanner({
     this.ignoredDirectoryNames = const {
       '.library',

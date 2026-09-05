@@ -29,12 +29,21 @@ final class ScanBatch {
     required this.files,
     required this.visited,
     this.done = false,
+    this.unreadable = const [],
     this.error,
   });
 
   final List<ScannedFile> files;
   final int visited;
   final bool done;
+
+  /// Folders the walk could not list, relative to the vault root.
+  ///
+  /// Not seeing a file because its folder refused to open is not the same as
+  /// the file being gone, and a vault on a network share refuses now and
+  /// then. These come back so the missing sweep can leave them alone.
+  final List<String> unreadable;
+
   final Object? error;
 }
 
@@ -113,6 +122,7 @@ Future<void> _scanEntry(_ScanRequest request) async {
     ignoredFileNames: request.ignoredFileNames,
   );
   final batch = <ScannedFile>[];
+  final unreadable = <String>[];
   var visited = 0;
   Object? failure;
   try {
@@ -137,8 +147,10 @@ Future<void> _scanEntry(_ScanRequest request) async {
         }
       }
       if (event.kind == ScanEventKind.error && event.file == null) {
-        // A folder that cannot be read is reported once and walked past.
+        // A folder that cannot be read is reported once and walked past —
+        // and written down, so nothing below it is called missing.
         failure ??= event.error;
+        if (event.path case final path?) unreadable.add(path);
       }
     }
   } on Object catch (error) {
@@ -149,6 +161,7 @@ Future<void> _scanEntry(_ScanRequest request) async {
       files: List.of(batch),
       visited: visited,
       done: true,
+      unreadable: List.of(unreadable),
       error: failure,
     ),
   );

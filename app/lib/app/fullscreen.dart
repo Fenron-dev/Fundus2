@@ -4,13 +4,18 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import 'fundus_log.dart';
+
 /// Making the window itself go fullscreen.
 ///
 /// Behind an interface because it is the one thing in the reader and the
 /// player that talks to the operating system: a test must be able to watch it
 /// without a window manager underneath.
 abstract interface class FullscreenMode {
-  Future<void> enter();
+  /// [landscape] asks the device to turn, which is right for a film and
+  /// wrong for a manga page — so it is the caller's decision, not this
+  /// class's.
+  Future<void> enter({bool landscape = false});
   Future<void> exit();
 }
 
@@ -24,12 +29,18 @@ final class NativeFullscreenMode implements FullscreenMode {
   const NativeFullscreenMode();
 
   @override
-  Future<void> enter() async {
+  Future<void> enter({bool landscape = false}) async {
     if (_isMobile) {
       await SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.immersiveSticky,
         overlays: const [],
       );
+      if (landscape) {
+        await SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      }
       return;
     }
     await defaultEnterNativeFullscreen();
@@ -42,6 +53,8 @@ final class NativeFullscreenMode implements FullscreenMode {
         SystemUiMode.edgeToEdge,
         overlays: SystemUiOverlay.values,
       );
+      // Whatever it was turned to, the phone decides again afterwards.
+      await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
       return;
     }
     await defaultExitNativeFullscreen();
@@ -65,19 +78,31 @@ class FullscreenController extends ChangeNotifier {
 
   bool get isActive => _active;
 
-  Future<void> toggle() => _active ? leave() : enter();
+  Future<void> toggle({bool landscape = false}) =>
+      _active ? leave() : enter(landscape: landscape);
 
-  Future<void> enter() async {
+  Future<void> enter({bool landscape = false}) async {
     if (_active) return;
     _active = true;
     notifyListeners();
-    await _mode.enter();
+    // A window that refuses to grow is a blemish, never a reason for the
+    // work not to open: on a platform without the channel this throws, and
+    // the film behind it plays perfectly well either way.
+    try {
+      await _mode.enter(landscape: landscape);
+    } on Object catch (failure) {
+      FundusLog.instance.warn('fullscreen.enter', {'error': '$failure'});
+    }
   }
 
   Future<void> leave() async {
     if (!_active) return;
     _active = false;
     notifyListeners();
-    await _mode.exit();
+    try {
+      await _mode.exit();
+    } on Object catch (failure) {
+      FundusLog.instance.warn('fullscreen.exit', {'error': '$failure'});
+    }
   }
 }

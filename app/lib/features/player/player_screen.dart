@@ -305,24 +305,35 @@ class _Transport extends StatelessWidget {
         ),
       );
       if (bare) return picture;
+      final landscapeVideo =
+          compact && MediaQuery.orientationOf(context) == Orientation.landscape;
       final caption = Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: FundusSpace.x6,
           vertical: FundusSpace.x4,
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(
               player.currentSource?.title ?? work.title,
               maxLines: 1,
+              textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: FundusSpace.x3),
-            const _Controls(),
+            // Sideways over a running film the bar carries what a film needs
+            // and nothing else. Speed, sleep timer and shuffle belong to a
+            // long listen, not to the two taps somebody makes with a thumb
+            // over the picture.
+            _Controls(minimal: landscapeVideo),
             // Auf dem Telefon gibt es keine zweite Spalte, in der die Folgen
-            // stehen könnten — sie gehören dann unter die Bedienung.
-            if (compact) ...[
+            // stehen könnten — sie gehören dann unter die Bedienung. Über dem
+            // Bild aber nicht: dort verdeckt eine Liste genau das, weswegen
+            // man hinsieht.
+            if (compact && !landscapeVideo) ...[
               const SizedBox(height: FundusSpace.x6),
               const _ContextPanel(shrinkWrap: true),
             ],
@@ -335,9 +346,7 @@ class _Transport extends StatelessWidget {
         // screen and the controls lie over it, the way every video player on
         // a phone behaves. Upright it keeps a box of its own shape — the
         // file's, not a guessed 16:9 — with the controls below it.
-        final landscape =
-            MediaQuery.orientationOf(context) == Orientation.landscape;
-        if (landscape) {
+        if (landscapeVideo) {
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -418,7 +427,11 @@ class _Transport extends StatelessWidget {
 /// The seek bar and the buttons — the same set whether a cover or a picture
 /// sits above them.
 class _Controls extends StatelessWidget {
-  const _Controls();
+  const _Controls({this.minimal = false});
+
+  /// Only what a film needs: back, play, forward. Everything else is for a
+  /// long listen and gets in the way over a picture.
+  final bool minimal;
 
   @override
   Widget build(BuildContext context) {
@@ -489,11 +502,12 @@ class _Controls extends StatelessWidget {
               onPressed: player.skipForward,
               child: Text('+${player.habits.skipForward.inSeconds} s'),
             ),
-            OutlinedButton(
-              onPressed: player.cycleRate,
-              child: Text('${player.rate}×'),
-            ),
-            if (player.hasQueueControls) ...[
+            if (!minimal)
+              OutlinedButton(
+                onPressed: player.cycleRate,
+                child: Text('${player.rate}×'),
+              ),
+            if (!minimal && player.hasQueueControls) ...[
               IconButton(
                 onPressed: () => player.setShuffle(!player.isShuffling),
                 isSelected: player.isShuffling,
@@ -514,7 +528,7 @@ class _Controls extends StatelessWidget {
                 tooltip: player.repeatMode.label,
               ),
             ],
-            const _SleepButton(),
+            if (!minimal) const _SleepButton(),
           ],
         ),
       ],

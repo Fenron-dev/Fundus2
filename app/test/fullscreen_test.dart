@@ -21,8 +21,14 @@ final class FakeFullscreen implements FullscreenMode {
   int entered = 0;
   int exited = 0;
 
+  /// Whether the last entry asked the device to turn.
+  bool? turned;
+
   @override
-  Future<void> enter() async => entered++;
+  Future<void> enter({bool landscape = false}) async {
+    entered++;
+    turned = landscape;
+  }
 
   @override
   Future<void> exit() async => exited++;
@@ -108,16 +114,19 @@ void main() {
     await settle(tester);
 
     expect(reader.isOpen, isTrue);
-    await tester.tap(find.byTooltip('Vollbild'));
-    await settle(tester);
-
+    // Lesen heißt lesen: das Werk nimmt den Bildschirm, ohne dass jemand
+    // erst einen Knopf sucht. Die Leiste geht mit.
     expect(fullscreen.isActive, isTrue);
     expect(window.entered, 1);
-    // Vollbild heißt Vollbild: die Leiste geht mit.
     expect(reader.showsChrome, isFalse);
-    expect(find.byTooltip('Vollbild beenden'), findsNothing);
+    expect(
+      window.turned,
+      isFalse,
+      reason: 'eine Mangaseite steht hochkant, die soll sich nicht drehen',
+    );
 
-    // Ein Tipp in die Mitte holt sie zurück.
+    // Ein Tipp in die Mitte holt die Leiste zurück, und darüber geht es
+    // wieder hinaus.
     reader.showChrome();
     await settle(tester);
     await tester.tap(find.byTooltip('Vollbild beenden'));
@@ -126,6 +135,12 @@ void main() {
     expect(fullscreen.isActive, isFalse);
     expect(window.exited, 1);
     expect(reader.showsChrome, isTrue);
+
+    // Und wieder hinein, über denselben Knopf.
+    await tester.tap(find.byTooltip('Vollbild'));
+    await settle(tester);
+    expect(fullscreen.isActive, isTrue);
+    expect(window.entered, 2);
   });
 
   testWidgets('der Player kann ins Vollbild', (tester) async {
@@ -167,9 +182,9 @@ void main() {
     await tester.runAsync(() => scope.play(library.works.first));
     await settle(tester);
 
-    await tester.tap(find.byTooltip('Vollbild'));
-    await settle(tester);
-    // Die Leiste ist im Vollbild weg; sie muss erst zurückgeholt werden.
+    // Geöffnet wird gleich im Vollbild; die Leiste ist weg und muss erst
+    // zurückgeholt werden.
+    expect(fullscreen.isActive, isTrue);
     reader.showChrome();
     await settle(tester);
     await tester.tap(find.byTooltip('Schließen'));

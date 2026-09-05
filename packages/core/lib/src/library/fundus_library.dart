@@ -41,6 +41,7 @@ final class LibraryIndexEvent {
     this.currentPath,
     this.rootCounts = const {},
     this.extensionCounts = const {},
+    this.unreadableFolders = const [],
   });
 
   final LibraryIndexPhase phase;
@@ -57,6 +58,9 @@ final class LibraryIndexEvent {
   final String? currentPath;
   final Map<String, int> rootCounts;
   final Map<String, int> extensionCounts;
+
+  /// Folders the walk could not open. Nothing below them was judged.
+  final List<String> unreadableFolders;
 }
 
 final class _PortableWorkIdentity {
@@ -1321,6 +1325,8 @@ final class FundusLibrary {
         ? _database.indexedFileStamps()
         : const <String, ({int size, int modifiedAt})>{};
     final files = <ScannedFile>[];
+    // Folders that refused to open, as paths relative to the vault.
+    final unreadable = <String>[];
     // The walk goes to a worker unless a test hands in a scanner of its own.
     //
     // Stating ten thousand files on a network share takes minutes, and on
@@ -1336,6 +1342,11 @@ final class FundusLibrary {
         cancellationToken: cancellationToken,
       )) {
         files.addAll(batch.files);
+        for (final folder in batch.unreadable) {
+          final relative = p.relative(folder, from: root.absolute.path);
+          if (relative == '.' || relative.startsWith('..')) continue;
+          unreadable.add(p.posix.joinAll(p.split(relative)));
+        }
         if (cancellationToken?.isCancelled ?? false) {
           yield LibraryIndexEvent(
             phase: LibraryIndexPhase.cancelled,
@@ -1364,6 +1375,14 @@ final class FundusLibrary {
             : null,
       )) {
         if (event.kind == ScanEventKind.file) files.add(event.file!);
+        if (event.kind == ScanEventKind.error &&
+            event.file == null &&
+            event.path != null) {
+          final relative = p.relative(event.path!, from: root.absolute.path);
+          if (relative != '.' && !relative.startsWith('..')) {
+            unreadable.add(p.posix.joinAll(p.split(relative)));
+          }
+        }
         if (event.kind == ScanEventKind.cancelled) {
           yield LibraryIndexEvent(
             phase: LibraryIndexPhase.cancelled,
@@ -1387,9 +1406,18 @@ final class FundusLibrary {
       for (final file in files)
         if (!file.unchanged) file.relativePath,
     };
+    // A file below a folder that would not open has not been judged at all.
+    //
+    // The sweep marks everything it did not meet as missing, and over a
+    // network share a folder refuses to list now and then. One hiccup used to
+    // strip a work of its cover — the file was still there, the walk simply
+    // never got to look — and it stayed that way until the next full pass.
+    bool judged(String path) =>
+        !unreadable.any((folder) => path.startsWith('$folder/'));
     final vanished = [
       for (final path in stamps.keys)
         if (!seenPaths.contains(path) &&
+            judged(path) &&
             (scope == null || path == scope || path.startsWith('$scope/')))
           path,
     ];
@@ -1472,7 +1500,11 @@ final class FundusLibrary {
         if (delta && file.unchanged) continue;
         ids[file.relativePath] = _database.upsertFile(file);
       }
-      _database.markUnseenFilesMissing(seenPaths, below: scope);
+      _database.markUnseenFilesMissing(
+        seenPaths,
+        below: scope,
+        spare: unreadable,
+      );
       for (final candidate in candidates) {
         final portableId = portableIdentities[candidate.directory]?.workId;
         indexed.add((
@@ -1531,6 +1563,7 @@ final class FundusLibrary {
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
+      unreadableFolders: List.unmodifiable(unreadable),
       workCount: groupedCandidates.length + groupedDocumentCandidates.length,
       changedWorkCount: candidates.length + documentCandidates.length,
       changedFileCount: changedPaths.length + vanished.length,

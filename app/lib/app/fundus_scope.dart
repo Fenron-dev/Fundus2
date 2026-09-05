@@ -459,6 +459,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       await player.close();
       await reader.open(vault, work);
       if (reader.failure == null) library.refreshWork(work.id);
+      await _fillTheScreen(work, opened: reader.failure == null);
       span.done({'via': 'reader'});
       return;
     }
@@ -466,6 +467,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       await player.close();
       await textReader.open(vault, work);
       if (textReader.failure == null) library.refreshWork(work.id);
+      await _fillTheScreen(work, opened: textReader.failure == null);
       span.done({'via': 'text'});
       return;
     }
@@ -478,7 +480,26 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     }
     await player.open(vault, work);
     if (player.failure == null) library.refreshWork(work.id);
+    await _fillTheScreen(work, opened: player.failure == null);
     span.done({'via': 'player'});
+  }
+
+  /// Pressing play means watching, so the screen is given over to it.
+  ///
+  /// Anything with a picture — a film, a series, a comic, a page of text —
+  /// starts full screen with the chrome out of the way, and on a phone a film
+  /// turns the device: held upright it is a stripe between two black bars.
+  /// Audio is left alone; there is nothing to fill a screen with, and the
+  /// controls are the point.
+  Future<void> _fillTheScreen(WorkView work, {required bool opened}) async {
+    if (!opened) return;
+    final video = work.mediaType?.showsVideo ?? false;
+    final reading = reader.isOpen || textReader.isOpen;
+    if (!video && !reading) return;
+    await fullscreen.enter(landscape: video);
+    if (player.isExpanded && player.showsChrome) player.toggleChrome();
+    if (reader.isOpen && reader.showsChrome) reader.toggleChrome();
+    if (textReader.isOpen && textReader.showsChrome) textReader.toggleChrome();
   }
 
   /// Asks where to carry on, when two devices disagree.
