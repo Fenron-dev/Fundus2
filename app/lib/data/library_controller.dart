@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -100,17 +101,42 @@ class LibraryController extends ChangeNotifier {
   }
 
   /// Opens an existing vault, or creates one in an empty folder.
+  /// How long to wait for a folder to answer before giving up on it.
+  ///
+  /// A vault on a network share that is not mounted does not fail — it
+  /// blocks, in a native call, for as long as the operating system feels
+  /// like. Waiting forever looks exactly like working, which is the worst
+  /// thing an opening library can look like.
+  static const reachTimeout = Duration(seconds: 6);
+
   Future<void> open(Directory root, {bool createIfMissing = false}) async {
     _status = LibraryStatus.opening;
     _error = null;
     notifyListeners();
     try {
+      if (!await _answers(root) && !createIfMissing) {
+        _library = null;
+        _works = const [];
+        _sources = const [];
+        _error = _unreachableMessage(root);
+        _status = LibraryStatus.failed;
+        notifyListeners();
+        return;
+      }
       _library?.close();
-      _library = createIfMissing
-          ? await FundusLibrary.create(root)
-          : await FundusLibrary.open(root);
+      _library =
+          await (createIfMissing
+                  ? FundusLibrary.create(root)
+                  : FundusLibrary.open(root))
+              .timeout(reachTimeout);
       _reload();
       _status = LibraryStatus.ready;
+    } on TimeoutException {
+      _library = null;
+      _works = const [];
+      _sources = const [];
+      _error = _unreachableMessage(root);
+      _status = LibraryStatus.failed;
     } on Object catch (failure) {
       _library = null;
       _works = const [];
@@ -122,6 +148,24 @@ class LibraryController extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  /// Whether the folder answers at all, within a bounded wait.
+  ///
+  /// The wait is what matters: the call itself may still be sitting in the
+  /// kernel afterwards, but this side has stopped pretending to work.
+  Future<bool> _answers(Directory root) async {
+    try {
+      return await root.exists().timeout(reachTimeout);
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Says the one thing worth saying, and the likeliest reason.
+  static String _unreachableMessage(Directory root) =>
+      'Der Ordner „${root.path}" antwortet nicht. Liegt er auf einer '
+      'Netzfreigabe, muss die erst verbunden sein — im Finder einmal '
+      'öffnen genügt.';
 
   void close() {
     _scanToken?.cancel();

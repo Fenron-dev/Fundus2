@@ -133,8 +133,10 @@ class _SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.fundus;
+    final narrow =
+        MediaQuery.sizeOf(context).width < FundusShellMetrics.compactBreakpoint;
     return ListView(
-      padding: const EdgeInsets.all(FundusSpace.x10),
+      padding: EdgeInsets.all(narrow ? FundusSpace.x4 : FundusSpace.x10),
       children: [
         Text(title, style: Theme.of(context).textTheme.displayMedium),
         const SizedBox(height: FundusSpace.x2),
@@ -438,36 +440,45 @@ class _Diagnostics extends StatelessWidget {
   }
 }
 
+/// „Ordner: /Volumes/…" — a label and what it says.
+///
+/// Two columns where there is room for two, one above the other where there
+/// is not. A fixed label column on a phone leaves so little for the value
+/// that a single word breaks across three lines.
 class _Fact extends StatelessWidget {
   const _Fact(this.label, this.value);
 
   final String label;
   final String value;
 
+  /// Below this a row of two columns stops being readable.
+  static const _stackBelow = 420.0;
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.fundus;
+    final theme = Theme.of(context);
+    final name = Text(
+      label,
+      style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+    );
+    final body = SelectableText(value, style: theme.textTheme.bodyMedium);
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: FundusSpace.x2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 160,
-            child: Text(
-              label,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: tokens.textFaint),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-          ),
-        ],
+      padding: const EdgeInsets.only(bottom: FundusSpace.x3),
+      child: LayoutBuilder(
+        builder: (context, constraints) => constraints.maxWidth < _stackBelow
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [name, body],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: 160, child: name),
+                  Expanded(child: body),
+                ],
+              ),
       ),
     );
   }
@@ -565,6 +576,54 @@ class _Playback extends StatelessWidget {
                     ),
                 ],
               ),
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Nächste Folge', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Am Ende einer Folge zeigt der Player, was als Nächstes '
+                'kommt. Von allein weiterzuspielen ist das, wofür eine Serie '
+                'da ist — und einen Abend, an dem es das nicht ist, kostet es '
+                'einen Schalter.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: habits.autoplayNext,
+                onChanged: (value) => scope.setPlaybackHabits(
+                  habits.copyWith(autoplayNext: value),
+                ),
+                title: const Text('Automatisch weiterspielen'),
+              ),
+              if (habits.autoplayNext) ...[
+                const SizedBox(height: FundusSpace.x2),
+                Text('Wartezeit', style: theme.textTheme.labelLarge),
+                const SizedBox(height: FundusSpace.x2),
+                Wrap(
+                  spacing: FundusSpace.x2,
+                  runSpacing: FundusSpace.x2,
+                  children: [
+                    for (final seconds in PlaybackPreference.autoplayDelays)
+                      ChoiceChip(
+                        selected: habits.autoplayDelay.inSeconds == seconds,
+                        onSelected: (_) => scope.setPlaybackHabits(
+                          habits.copyWith(
+                            autoplayDelay: Duration(seconds: seconds),
+                          ),
+                        ),
+                        label: Text('$seconds s'),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -1649,7 +1708,7 @@ class _SyncState extends State<_Sync> {
                       // Werk, das dieses Gerät nicht kennt, hat kein Ziel.
                       onPressed: sync.isBusy || scope.peerLibraries.isBusy
                           ? null
-                          : () => sync.catchUp(scope.connectPairedMachines),
+                          : () => scope.connectPairedMachines(),
                       icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
                       label: const Text('Jetzt abgleichen'),
                     ),

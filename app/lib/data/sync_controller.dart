@@ -202,18 +202,6 @@ class SyncController extends ChangeNotifier {
     return last;
   }
 
-  /// What „Jetzt abgleichen" should do on a device that mirrors.
-  ///
-  /// Fetching the catalogues comes first: a reading position for a work this
-  /// device has never heard of has nowhere to go, and the very first sync
-  /// after pairing is exactly that case. It used to answer „die hier
-  /// geöffnete Bibliothek gibt es dort nicht", which on a phone is an
-  /// instruction that cannot be followed.
-  Future<SyncReport?> catchUp(Future<void> Function() fetchCatalogues) async {
-    await fetchCatalogues();
-    return syncAll();
-  }
-
   /// Which works this peer answers for.
   ///
   /// A shell vault holds several machines' catalogues at once. Asking one of

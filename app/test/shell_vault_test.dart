@@ -173,6 +173,32 @@ void main() {
     expect(report.skipped, 0);
   });
 
+  test('der Stand vom Server kommt beim Verbinden mit', () async {
+    final mac = await machine('mac', 'Der Schacht');
+    await settings.savePeer(mac);
+
+    // Auf dem Server steht das Werk schon bei Minute 30.
+    final vault = vaults['mac']!;
+    final workId = vault.listWorks().single.id;
+    vault.saveProgress(
+      workId: workId,
+      fileId: vault.playbackTracks(workId).single.fileId,
+      position: const Duration(minutes: 30),
+      deviceId: 'mac',
+    );
+
+    await peers.connectAll();
+    // Der Katalog allein reicht nicht: ohne die Stände behauptet jedes Werk,
+    // es sei nie geöffnet worden.
+    final sync = SyncController(settings: settings, library: library);
+    await sync.syncAll();
+
+    expect(
+      library.library!.loadProgress(workId)!.position.numericValue,
+      closeTo(30 * 60, 0.001),
+    );
+  });
+
   test('ein vergessenes Gerät nimmt seine Werke mit', () async {
     await settings.savePeer(await machine('mac', 'Der Schacht'));
     await settings.savePeer(await machine('nas', 'Der Ölprinz'));

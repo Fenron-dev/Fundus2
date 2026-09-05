@@ -51,6 +51,7 @@ class FundusScope extends StatefulWidget {
     this.downloads,
     this.photos,
     this.protection,
+    this.supportRoot,
     this.captureSink = const FileCaptureSink(),
     this.storage = const PlatformStorageAccess(),
     this.scanner = const CameraPairingScanner(),
@@ -88,6 +89,10 @@ class FundusScope extends StatefulWidget {
 
   /// And for the protected shelf.
   final ProtectionController? protection;
+
+  /// Where fetched copies are kept. Supplied by a test; the app asks the
+  /// platform.
+  final Directory? supportRoot;
 
   /// Where a saved page or frame goes. The default opens a system dialog.
   final CaptureSink captureSink;
@@ -171,6 +176,30 @@ class FundusScopeState extends State<FundusScope> {
     player.addListener(_syncWhenClosed);
     reader.addListener(_syncWhenClosed);
     textReader.addListener(_syncWhenClosed);
+    unawaited(_findSupportRoot());
+  }
+
+  /// Where this installation keeps its own things.
+  ///
+  /// Asked once at the start, because the places that need it — a reader
+  /// about to fetch a volume — cannot wait for an answer. Without it there is
+  /// nowhere to put a fetched file, and the readers say so; without *asking*
+  /// for it they say so wrongly, which is what happened.
+  Future<void> _findSupportRoot() async {
+    if (widget.supportRoot != null) {
+      _supportRoot = widget.supportRoot;
+      _wireSources();
+      return;
+    }
+    try {
+      _supportRoot = await getApplicationSupportDirectory();
+    } on Object {
+      // A platform that will not say where its storage is must not cost the
+      // ability to read: somewhere temporary is worse than the right place
+      // and far better than nowhere.
+      _supportRoot = Directory.systemTemp.createTempSync('fundus-');
+    }
+    _wireSources();
   }
 
   /// Where each player and reader gets its bytes.
@@ -307,11 +336,17 @@ class FundusScopeState extends State<FundusScope> {
   /// The catalogues of the machines that answer come in; the ones that do not
   /// are simply not there yet, and their works stay in the index from last
   /// time.
-  Future<void> connectPairedMachines() async {
+  ///
+  /// The reading positions come with them. A catalogue without them is a
+  /// list of works that all claim never to have been opened — and the first
+  /// thing anyone does after connecting is open the one they were in the
+  /// middle of.
+  Future<void> connectPairedMachines({bool withProgress = true}) async {
     if (settings.peers.isEmpty) return;
     await peerLibraries.connectAll();
     _wireSources();
     await _loadTrackPreference();
+    if (withProgress) await sync.syncAll();
   }
 
   /// Lets go of every paired machine, keeping their catalogues.

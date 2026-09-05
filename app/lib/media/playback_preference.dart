@@ -11,6 +11,8 @@ final class PlaybackPreference {
     this.skipForward = const Duration(seconds: 30),
     this.sleepTimer = const Duration(minutes: 30),
     this.sleepAtChapterEnd = true,
+    this.autoplayNext = true,
+    this.autoplayDelay = const Duration(seconds: 8),
   });
 
   factory PlaybackPreference.fromJson(Map<String, Object?> value) =>
@@ -20,6 +22,8 @@ final class PlaybackPreference {
         skipForward: _secondsOf(value['skip_forward'], 30),
         sleepTimer: _minutesOf(value['sleep_timer_minutes'], 30),
         sleepAtChapterEnd: value['sleep_at_chapter_end'] != false,
+        autoplayNext: value['autoplay_next'] != false,
+        autoplayDelay: _secondsOf(value['autoplay_delay'], 8),
       );
 
   /// Playback speed. Bounded on both sides: below a half nothing is
@@ -40,9 +44,20 @@ final class PlaybackPreference {
   /// at a chapter break costs nothing by comparison.
   final bool sleepAtChapterEnd;
 
+  /// Whether the next episode starts on its own when one ends.
+  ///
+  /// On for video, because that is what a series is for, and off is one
+  /// switch away for the evening where it is not.
+  final bool autoplayNext;
+
+  /// How long the „Nächste Folge" card stands before it does. Long enough to
+  /// stop it, short enough not to be a pause.
+  final Duration autoplayDelay;
+
   static const rates = <double>[0.75, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
   static const skips = <int>[5, 10, 15, 30, 45, 60, 90];
   static const sleepChoices = <int>[5, 10, 15, 30, 45, 60, 90];
+  static const autoplayDelays = <int>[3, 5, 8, 12, 20];
 
   Map<String, Object?> toJson() => {
     'rate': rate,
@@ -50,6 +65,8 @@ final class PlaybackPreference {
     'skip_forward': skipForward.inSeconds,
     'sleep_timer_minutes': sleepTimer.inMinutes,
     'sleep_at_chapter_end': sleepAtChapterEnd,
+    'autoplay_next': autoplayNext,
+    'autoplay_delay': autoplayDelay.inSeconds,
   };
 
   PlaybackPreference copyWith({
@@ -58,12 +75,16 @@ final class PlaybackPreference {
     Duration? skipForward,
     Duration? sleepTimer,
     bool? sleepAtChapterEnd,
+    bool? autoplayNext,
+    Duration? autoplayDelay,
   }) => PlaybackPreference(
     rate: rate ?? this.rate,
     skipBack: skipBack ?? this.skipBack,
     skipForward: skipForward ?? this.skipForward,
     sleepTimer: sleepTimer ?? this.sleepTimer,
     sleepAtChapterEnd: sleepAtChapterEnd ?? this.sleepAtChapterEnd,
+    autoplayNext: autoplayNext ?? this.autoplayNext,
+    autoplayDelay: autoplayDelay ?? this.autoplayDelay,
   );
 
   static double _rateOf(Object? value) {

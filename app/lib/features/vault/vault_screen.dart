@@ -72,7 +72,10 @@ class VaultScreen extends StatelessWidget {
               ),
               const SizedBox(height: FundusSpace.x10),
               if (scope.library.status == LibraryStatus.failed)
-                _FailureNotice(message: scope.library.error ?? ''),
+                _FailureNotice(
+                  message: scope.library.error ?? '',
+                  path: scope.settings.recentVaults.firstOrNull,
+                ),
               // Wrap statt Row: die beiden Beschriftungen sind auf einem
               // schmalen Fenster zusammen breiter als die Spalte.
               Wrap(
@@ -268,9 +271,12 @@ class _RecentVaultTile extends StatelessWidget {
 }
 
 class _FailureNotice extends StatelessWidget {
-  const _FailureNotice({required this.message});
+  const _FailureNotice({required this.message, this.path});
 
   final String message;
+
+  /// The folder the message is about, where there is one to offer.
+  final String? path;
 
   @override
   Widget build(BuildContext context) {
@@ -292,16 +298,46 @@ class _FailureNotice extends StatelessWidget {
           ),
           const SizedBox(width: FundusSpace.x3),
           Expanded(
-            child: Text(
-              message,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: tokens.danger),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: tokens.danger),
+                ),
+                // The share can be mounted from here rather than by leaving
+                // the app: this is exactly the trip to the Finder that makes
+                // the folder answer afterwards.
+                if (path != null && _canReveal) ...[
+                  const SizedBox(height: FundusSpace.x2),
+                  TextButton(
+                    onPressed: () => _reveal(path!),
+                    child: const Text('Im Finder verbinden'),
+                  ),
+                ],
+              ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  static bool get _canReveal => Platform.isMacOS || Platform.isWindows;
+
+  /// Asks the system to open the folder, which is what mounts a share.
+  ///
+  /// Failure is silent on purpose: this is an offer, and a person who
+  /// already has the message does not need a second one saying the offer did
+  /// not work either.
+  static Future<void> _reveal(String path) async {
+    try {
+      await Process.run(Platform.isWindows ? 'explorer' : 'open', [path]);
+    } on Object {
+      // Nothing to add.
+    }
   }
 }
 

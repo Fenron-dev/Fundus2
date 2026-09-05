@@ -287,7 +287,20 @@ class _Transport extends StatelessWidget {
         onDoubleTap: FundusScope.of(context).toggleFullscreen,
         child: ColoredBox(
           color: const Color(0xFF000000),
-          child: Center(child: video),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Center(child: video),
+              if (player.isBetweenEpisodes)
+                const Align(
+                  alignment: Alignment.bottomRight,
+                  child: Padding(
+                    padding: EdgeInsets.all(FundusSpace.x8),
+                    child: _NextEpisode(),
+                  ),
+                ),
+            ],
+          ),
         ),
       );
       if (bare) return picture;
@@ -506,6 +519,9 @@ class _ContextPanel extends StatelessWidget {
     final useChapters =
         chapters.length > 1 &&
         chapters.any((chapter) => chapter.position > Duration.zero);
+    // A film is one file with no marks in it: a list of one is furniture, and
+    // in a video player it is furniture in front of the picture.
+    if (!useChapters && tracks.length <= 1) return const SizedBox.shrink();
     final heading = useChapters
         ? 'KAPITEL'
         : player.showsVideo
@@ -658,5 +674,64 @@ class _SleepButton extends StatelessWidget {
   static String _short(Duration value) {
     if (value.inMinutes >= 1) return '${value.inMinutes} min';
     return '${value.inSeconds} s';
+  }
+}
+
+/// „Nächste Folge in 8" — the card at the end of an episode.
+///
+/// A series is watched one after another, so the next one starts by itself.
+/// What makes that bearable rather than pushy is that it says so first, and
+/// that stopping it is one tap on the same card.
+class _NextEpisode extends StatelessWidget {
+  const _NextEpisode();
+
+  @override
+  Widget build(BuildContext context) {
+    final player = FundusScope.of(context).player;
+    final theme = Theme.of(context);
+    final left = player.nextEpisodeIn;
+
+    return Container(
+      padding: const EdgeInsets.all(FundusSpace.x6),
+      constraints: const BoxConstraints(maxWidth: 360),
+      decoration: BoxDecoration(
+        color: const Color(0xEE101014),
+        borderRadius: FundusRadius.mdAll,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            left == null
+                ? 'Nächste Folge'
+                : 'Nächste Folge in ${left.inSeconds}',
+            style: theme.textTheme.labelMedium?.copyWith(color: Colors.white70),
+          ),
+          const SizedBox(height: FundusSpace.x1),
+          Text(
+            player.nextEpisodeTitle ?? '',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleMedium?.copyWith(color: Colors.white),
+          ),
+          const SizedBox(height: FundusSpace.x4),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: player.playNextNow,
+                icon: Icon(FundusIcons.play, size: FundusIcons.sizeSm),
+                label: const Text('Abspielen'),
+              ),
+              const SizedBox(width: FundusSpace.x3),
+              TextButton(
+                onPressed: player.stayHere,
+                child: const Text('Nicht jetzt'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }

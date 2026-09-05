@@ -219,8 +219,8 @@ class TextReaderController extends ChangeNotifier {
     final cache = cacheForSource?.call(volume.sourceId);
     if (cache == null) {
       throw StateError(
-        'Diese Datei liegt auf einem gekoppelten Gerät, zu dem gerade keine '
-        'Verbindung besteht.',
+        'Diese Datei liegt auf „${volume.sourceId.replaceFirst('peer-', '')}" '
+        '— zu diesem Gerät besteht gerade keine Verbindung.',
       );
     }
     _fetching = 0;

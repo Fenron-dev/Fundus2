@@ -286,6 +286,7 @@ class PlaybackController extends ChangeNotifier {
     // its tracks however it likes.
     _tracks = const MediaTracks();
     _appliedPreference = false;
+    _clearBetweenEpisodes();
     if (!await source.isReachable()) {
       // A file that is gone is a state, not a crash: the work keeps its
       // progress and the origin mark tells the story.
@@ -332,7 +333,7 @@ class PlaybackController extends ChangeNotifier {
           unawaited(_sleepNow());
           return;
         }
-        next();
+        _finished();
       }),
       _engine.tracksStream.listen((value) {
         _tracks = value;
@@ -420,6 +421,72 @@ class PlaybackController extends ChangeNotifier {
   Future<void> skipBackward() => seekRelative(-habits.skipBack);
 
   Future<void> skipForward() => seekRelative(habits.skipForward);
+
+  /// An episode has ended.
+  ///
+  /// A series goes on: the next one starts by itself after a moment, with the
+  /// moment being what makes it stoppable. Anything else — an audiobook's
+  /// next file, a single film — behaves as it always did, because there is
+  /// nothing to decide.
+  void _finished() {
+    final hasNext = _index + 1 < _sources.length;
+    if (!hasNext) {
+      saveProgress();
+      notifyListeners();
+      return;
+    }
+    if (!showsVideo) {
+      next();
+      return;
+    }
+    _nextIn = habits.autoplayNext ? habits.autoplayDelay : null;
+    _betweenEpisodes = true;
+    _chrome = true;
+    notifyListeners();
+    if (_nextIn == null) return;
+    _nextTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      final left = (_nextIn ?? Duration.zero) - const Duration(seconds: 1);
+      if (left <= Duration.zero) {
+        playNextNow();
+        return;
+      }
+      _nextIn = left;
+      notifyListeners();
+    });
+  }
+
+  Timer? _nextTick;
+  Duration? _nextIn;
+  bool _betweenEpisodes = false;
+
+  /// True while the „next episode" card is up.
+  bool get isBetweenEpisodes => _betweenEpisodes;
+
+  /// How long until the next one starts, or null when it will not.
+  Duration? get nextEpisodeIn => _nextIn;
+
+  /// The title of what comes next, for the card to name.
+  String? get nextEpisodeTitle =>
+      _index + 1 < _sources.length ? _sources[_index + 1].title : null;
+
+  void playNextNow() {
+    _clearBetweenEpisodes();
+    next();
+  }
+
+  /// Stays where it is. The episode stands finished and nothing starts.
+  void stayHere() {
+    _clearBetweenEpisodes();
+    saveProgress();
+    notifyListeners();
+  }
+
+  void _clearBetweenEpisodes() {
+    _nextTick?.cancel();
+    _nextTick = null;
+    _nextIn = null;
+    _betweenEpisodes = false;
+  }
 
   /// Stops playing after a while.
   ///
@@ -550,6 +617,7 @@ class PlaybackController extends ChangeNotifier {
     _saveTimer?.cancel();
     _sleepTimer?.cancel();
     _sleepTick?.cancel();
+    _nextTick?.cancel();
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
