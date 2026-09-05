@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -7,6 +9,7 @@ import '../../app/fundus_scope.dart';
 import '../../media/playback_preference.dart';
 import '../../media/playback_controller.dart';
 import '../../media/playback_engine.dart';
+import '../../data/work_view.dart';
 import '../library/work_poster.dart';
 
 /// The full player, laid over the shell.
@@ -396,7 +399,7 @@ class _Transport extends StatelessWidget {
         children: [
           SizedBox(
             width: compact ? 220 : 260,
-            child: WorkArtwork(work: work, showProgress: false),
+            child: _NowShowing(work: work, imagePath: player.chapterImagePath),
           ),
           const SizedBox(height: FundusSpace.x8),
           Text(
@@ -412,6 +415,16 @@ class _Transport extends StatelessWidget {
               color: tokens.textMuted,
             ),
           ),
+          if (player.chapterTitle case final chapter?) ...[
+            const SizedBox(height: FundusSpace.x2),
+            Text(
+              chapter,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: tokens.accent,
+              ),
+            ),
+          ],
           const SizedBox(height: FundusSpace.x8),
           const _Controls(),
           if (compact) ...[
@@ -809,6 +822,38 @@ class _NextEpisode extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The square above the transport: the work's cover, or the picture that
+/// belongs to the chapter running now.
+///
+/// Some podcasts put a picture on every chapter — the screen of the game
+/// being discussed, the sleeve of the record. Showing the show's logo instead
+/// throws that away, so the chapter's own picture wins while it lasts.
+class _NowShowing extends StatelessWidget {
+  const _NowShowing({required this.work, required this.imagePath});
+
+  final WorkView work;
+  final String? imagePath;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = imagePath;
+    if (path == null) return WorkArtwork(work: work, showProgress: false);
+    return ClipRRect(
+      borderRadius: FundusArtwork.cardRadius,
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Image.file(
+          File(path),
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (context, _, _) =>
+              WorkArtwork(work: work, showProgress: false),
+        ),
       ),
     );
   }

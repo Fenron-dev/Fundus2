@@ -869,6 +869,78 @@ final class FundusLibrary {
     ];
   }
 
+  /// The chapters inside one file of a work.
+  ///
+  /// A podcast is a folder of episodes, so the work's own chapter list is a
+  /// list of episodes and says nothing about what is inside one of them. This
+  /// looks into the file that is playing — which is where a podcast keeps its
+  /// chapters, and its chapter pictures.
+  Future<List<LibraryPlaybackChapter>> trackChapters(
+    String workId,
+    String fileId,
+  ) async {
+    final track = playbackTracks(
+      workId,
+    ).where((candidate) => candidate.fileId == fileId).firstOrNull;
+    if (track == null) return const [];
+    final embedded = await const EmbeddedCoverExtractor().extractChapters(
+      File(track.absolutePath),
+    );
+    if (embedded.length < 2) return const [];
+    final index = playbackTracks(
+      workId,
+    ).indexWhere((candidate) => candidate.fileId == fileId);
+    return [
+      for (var position = 0; position < embedded.length; position++)
+        LibraryPlaybackChapter(
+          title: embedded[position].title,
+          fileId: fileId,
+          trackIndex: index < 0 ? 0 : index,
+          position: embedded[position].position,
+          duration: position + 1 < embedded.length
+              ? embedded[position + 1].position - embedded[position].position
+              : track.duration == null
+              ? null
+              : track.duration! - embedded[position].position,
+          imagePath: await _keepChapterImage(
+            fileId: fileId,
+            index: position,
+            image: embedded[position].image,
+          ),
+        ),
+    ];
+  }
+
+  /// Unpacks a chapter picture once and hands back where it lies.
+  ///
+  /// Inside the file it is unreachable for anything that draws pictures, and
+  /// carrying a few megabytes of image bytes through the player for every
+  /// chapter is not a plan. Written next to the covers, named after the file
+  /// it came out of, and written only once.
+  Future<String?> _keepChapterImage({
+    required String fileId,
+    required int index,
+    required EmbeddedCover? image,
+  }) async {
+    if (image == null || isReadOnly) return null;
+    final directory = Directory(
+      p.join(root.path, metadataDirectoryName, 'chapters'),
+    );
+    final target = File(
+      p.join(directory.path, '$fileId-$index.${image.extension}'),
+    );
+    try {
+      if (await target.exists()) return target.path;
+      await directory.create(recursive: true);
+      await target.writeAsBytes(image.bytes, flush: true);
+      return target.path;
+    } on FileSystemException {
+      // A picture that will not come out of the file is a picture nobody
+      // sees, never a reason for the episode not to play.
+      return null;
+    }
+  }
+
   String? workDirectoryPath(String workId) {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return null;

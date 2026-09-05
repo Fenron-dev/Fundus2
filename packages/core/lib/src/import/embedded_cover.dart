@@ -15,10 +15,21 @@ final class EmbeddedCover {
 }
 
 final class EmbeddedAudioChapter {
-  const EmbeddedAudioChapter({required this.title, required this.position});
+  const EmbeddedAudioChapter({
+    required this.title,
+    required this.position,
+    this.image,
+  });
 
   final String title;
   final Duration position;
+
+  /// The picture that belongs to this chapter, where the file carries one.
+  ///
+  /// Some podcasts put a picture on every chapter — a screenshot of the game
+  /// being talked about, the cover of the record. It is part of the episode,
+  /// not decoration, and a player that drops it drops content.
+  final EmbeddedCover? image;
 }
 
 final class EmbeddedAudioMetadata {
@@ -296,6 +307,7 @@ final class EmbeddedCoverExtractor {
   /// Timestamps are stored in 100-nanosecond units.
   Future<List<EmbeddedAudioChapter>> extractChapters(File file) async {
     final extension = file.path.split('.').last.toLowerCase();
+    if (extension == 'mp3') return _extractMp3Chapters(file);
     if (extension != 'm4a' && extension != 'm4b' && extension != 'mp4') {
       return const [];
     }
@@ -305,6 +317,104 @@ final class EmbeddedCoverExtractor {
     } finally {
       await input.close();
     }
+  }
+
+  /// ID3 `CHAP` frames, as podcasts write them.
+  ///
+  /// One frame per chapter, each carrying its own little tag: a `TIT2` with
+  /// the name and, where the maker bothered, an `APIC` with a picture. The
+  /// frames come in file order and are sorted by time here, because nothing
+  /// guarantees the one follows the other.
+  Future<List<EmbeddedAudioChapter>> _extractMp3Chapters(File file) async {
+    final input = await file.open();
+    try {
+      final header = await input.read(10);
+      if (header.length != 10 || ascii.decode(header.sublist(0, 3)) != 'ID3') {
+        return const [];
+      }
+      final version = header[3];
+      if (version != 3 && version != 4) return const [];
+      var remaining = _synchsafe(header, 6);
+      final chapters = <EmbeddedAudioChapter>[];
+      while (remaining >= 10) {
+        final frameHeader = await input.read(10);
+        if (frameHeader.length != 10) break;
+        remaining -= 10;
+        if (frameHeader.every((value) => value == 0)) break;
+        final id = ascii.decode(frameHeader.sublist(0, 4), allowInvalid: true);
+        final size = version == 4
+            ? _synchsafe(frameHeader, 4)
+            : _uint32(frameHeader, 4);
+        if (size <= 0 || size > remaining) break;
+        if (id == 'CHAP' && size <= _maximumChapterBytes) {
+          final chapter = _chapterFromFrame(await input.read(size), version);
+          if (chapter != null) chapters.add(chapter);
+        } else {
+          await input.setPosition(await input.position() + size);
+        }
+        remaining -= size;
+      }
+      chapters.sort((left, right) => left.position.compareTo(right.position));
+      return chapters;
+    } on FileSystemException {
+      return const [];
+    } finally {
+      await input.close();
+    }
+  }
+
+  static const _maximumChapterBytes = 24 * 1024 * 1024;
+
+  /// One `CHAP` payload: an element id, four timestamps, then subframes.
+  static EmbeddedAudioChapter? _chapterFromFrame(
+    List<int> payload,
+    int version,
+  ) {
+    var offset = 0;
+    while (offset < payload.length && payload[offset] != 0) {
+      offset++;
+    }
+    if (offset >= payload.length) return null;
+    // The element id, the null after it, and four 32-bit times.
+    offset += 1;
+    if (offset + 16 > payload.length) return null;
+    final start = _uint32(payload, offset);
+    offset += 16;
+
+    String? title;
+    EmbeddedCover? image;
+    while (offset + 10 <= payload.length) {
+      final id = ascii.decode(
+        payload.sublist(offset, offset + 4),
+        allowInvalid: true,
+      );
+      if (payload.sublist(offset, offset + 4).every((value) => value == 0)) {
+        break;
+      }
+      // Taggers disagree about synchsafe sizes inside a CHAP frame, so the
+      // plain reading is used where the safe one does not fit.
+      var size = version == 4
+          ? _synchsafe(payload, offset + 4)
+          : _uint32(payload, offset + 4);
+      if (offset + 10 + size > payload.length) {
+        size = _uint32(payload, offset + 4);
+      }
+      if (size <= 0 || offset + 10 + size > payload.length) break;
+      final body = payload.sublist(offset + 10, offset + 10 + size);
+      if (id == 'TIT2') {
+        title ??= _decodeId3Text(body);
+      } else if (id == 'APIC') {
+        image ??= _identifyFromPayload(body);
+      }
+      offset += 10 + size;
+    }
+
+    if (title == null && image == null) return null;
+    return EmbeddedAudioChapter(
+      title: title ?? '',
+      position: Duration(milliseconds: start),
+      image: image,
+    );
   }
 
   Future<List<EmbeddedAudioChapter>> _walkMp4Chapters(

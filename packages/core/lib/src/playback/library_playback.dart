@@ -40,6 +40,7 @@ final class LibraryPlaybackChapter {
     required this.trackIndex,
     required this.position,
     this.duration,
+    this.imagePath,
   });
 
   final String title;
@@ -47,6 +48,12 @@ final class LibraryPlaybackChapter {
   final int trackIndex;
   final Duration position;
   final Duration? duration;
+
+  /// A picture belonging to this chapter, already unpacked into the vault.
+  ///
+  /// Some podcasts put one on every chapter, and it carries as much of the
+  /// episode as the words do.
+  final String? imagePath;
 }
 
 final class LibraryPlaybackProgress {

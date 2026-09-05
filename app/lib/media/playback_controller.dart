@@ -92,6 +92,35 @@ class PlaybackController extends ChangeNotifier {
   WorkView? get work => _work;
   List<MediaByteSource> get sources => _sources;
   List<LibraryPlaybackChapter> get chapters => _chapters;
+
+  /// The chapters inside the file that is playing.
+  ///
+  /// A podcast is a folder of episodes, so the work's chapter list is a list
+  /// of episodes; what is inside one of them is a separate question, and only
+  /// worth asking about the file actually running.
+  List<LibraryPlaybackChapter> get trackChapters => _trackChapters;
+  List<LibraryPlaybackChapter> _trackChapters = const [];
+
+  /// The picture belonging to where we are now, where the file carries one.
+  String? get chapterImagePath {
+    String? path;
+    for (final chapter in _trackChapters) {
+      if (chapter.position > _position) break;
+      if (chapter.imagePath != null) path = chapter.imagePath;
+    }
+    return path;
+  }
+
+  /// The name of the chapter running now, for the line under the title.
+  String? get chapterTitle {
+    String? title;
+    for (final chapter in _trackChapters) {
+      if (chapter.position > _position) break;
+      if (chapter.title.isNotEmpty) title = chapter.title;
+    }
+    return title;
+  }
+
   int get trackIndex => _index;
   MediaByteSource? get currentSource =>
       _index < _sources.length ? _sources[_index] : null;
@@ -238,6 +267,7 @@ class PlaybackController extends ChangeNotifier {
     _sources = const [];
     _order = const [];
     _chapters = const [];
+    _trackChapters = const [];
     _position = Duration.zero;
     _duration = null;
     _expanded = false;
@@ -313,6 +343,7 @@ class PlaybackController extends ChangeNotifier {
     // remembered language is applied again, because the next file numbers
     // its tracks however it likes.
     _tracks = const MediaTracks();
+    _trackChapters = const [];
     _appliedPreference = false;
     _clearBetweenEpisodes();
     final reach = Stopwatch()..start();
@@ -344,6 +375,25 @@ class PlaybackController extends ChangeNotifier {
     await _engine.open(uri, start: at);
     span.done();
     _startSaveTimer();
+    // After playback has started, never before it: reading the chapters means
+    // walking the file's tags, and nobody should wait for a picture.
+    unawaited(_loadTrackChapters(source.fileId));
+  }
+
+  /// Reads the chapters of the running file in the background.
+  Future<void> _loadTrackChapters(String fileId) async {
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null) return;
+    if (!(work.mediaType?.hasChapterImages ?? false)) return;
+    try {
+      final chapters = await library.trackChapters(work.id, fileId);
+      if (currentSource?.fileId != fileId) return;
+      _trackChapters = chapters;
+      notifyListeners();
+    } on Object catch (failure) {
+      FundusLog.instance.warn('player.chapters', {'error': '$failure'});
+    }
   }
 
   void _attachStreams() {
@@ -681,6 +731,7 @@ class PlaybackController extends ChangeNotifier {
     _sources = const [];
     _order = const [];
     _chapters = const [];
+    _trackChapters = const [];
     _position = Duration.zero;
     _duration = null;
     _expanded = false;

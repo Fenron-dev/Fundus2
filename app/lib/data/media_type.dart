@@ -119,6 +119,14 @@ final class MediaTypeDefinition {
   final List<WorkTab> tabs;
   final List<GroupingMode> groupings;
 
+  /// Whether a file of this kind is worth reading chapter by chapter.
+  ///
+  /// A podcast episode carries its own chapters, often with a picture on each
+  /// one; a film has one chapter and a folder of music has none. Reading the
+  /// tags costs a walk through the file, so it is asked only where the answer
+  /// can be something.
+  bool get hasChapterImages => id == 'podcast' || id == 'audiobook';
+
   /// Whether opening this kind of work shows a picture.
   ///
   /// It decides two things at once: that playing it should take the whole
