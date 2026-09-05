@@ -4,6 +4,7 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
+import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import '../library/unassigned_folders_card.dart';
 import '../library/work_poster.dart';
@@ -15,6 +16,7 @@ class DashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
+    final stage = FundusStageSize.of(context);
     final works = scope.library.works;
 
     final continuing =
@@ -30,35 +32,85 @@ class DashboardScreen extends StatelessWidget {
       ..sort((a, b) => b.summary.addedAt.compareTo(a.summary.addedAt));
 
     return ListView(
-      padding: const EdgeInsets.all(FundusSpace.x10),
+      padding: EdgeInsets.only(top: stage.gutter, bottom: FundusSpace.x16),
       children: [
-        _Greeting(workCount: works.length),
-        if (scope.library.isScanning || scope.library.scanProgress != null)
-          const _ScanBanner(),
-        const SizedBox(height: FundusSpace.x8),
-        const UnassignedFoldersCard(),
-        if (continuing.isNotEmpty) ...[
-          const _SectionHeading(
-            'Fortsetzen',
-            hint: 'geräteübergreifend synchronisiert',
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _Greeting(workCount: works.length),
+              if (scope.library.isScanning) const _ScanBanner(),
+              const UnassignedFoldersCard(),
+            ],
           ),
-          _WorkStrip(works: continuing.take(8).toList()),
-          const SizedBox(height: FundusSpace.x10),
+        ),
+        if (continuing.isNotEmpty) ...[
+          _Heading(
+            'Fortsetzen',
+            hint: scope.settings.peers.isEmpty ? null : 'synchronisiert',
+            gutter: stage.gutter,
+          ),
+          SizedBox(
+            height: 132,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+              itemCount: continuing.length.clamp(0, 12),
+              separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
+              itemBuilder: (context, index) => _ContinueCard(
+                work: continuing[index],
+                width: stage == FundusStageSize.handset ? 268.0 : 320.0,
+              ),
+            ),
+          ),
         ],
-        const _SectionHeading('Zuletzt hinzugefügt'),
         if (recent.isEmpty)
-          FundusEmptyState(
-            title: 'Diese Bibliothek ist noch leer',
-            reason:
-                'Es wurde noch nicht gescannt. Der Scan liest den Ordner ein '
-                'und läuft im Hintergrund weiter.',
-            action: FilledButton(
-              onPressed: scope.library.isScanning ? null : scope.library.scan,
-              child: const Text('Jetzt scannen'),
+          Padding(
+            padding: EdgeInsets.all(stage.gutter),
+            child: FundusEmptyState(
+              title: 'Diese Bibliothek ist noch leer',
+              reason:
+                  'Es wurde noch nicht gescannt. Der Scan liest den Ordner '
+                  'ein und läuft im Hintergrund weiter.',
+              action: FilledButton(
+                onPressed: scope.library.isScanning ? null : scope.library.scan,
+                child: const Text('Jetzt scannen'),
+              ),
             ),
           )
-        else
-          _WorkStrip(works: recent.take(12).toList()),
+        else ...[
+          _Heading(
+            'Zuletzt hinzugefügt',
+            gutter: stage.gutter,
+            action: TextButton(
+              onPressed: () => scope.openMediaType(null),
+              child: const Text('Alle'),
+            ),
+          ),
+          SizedBox(
+            height: workPosterExtent(
+              width: stage.posterWidth,
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+              itemCount: recent.length.clamp(0, 20),
+              separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
+              itemBuilder: (context, index) => WorkPoster(
+                work: recent[index],
+                width: stage.posterWidth,
+                onTap: () => scope.navigation.go(WorkRoute(recent[index].id)),
+              ),
+            ),
+          ),
+          _Heading('Medientypen', gutter: stage.gutter),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+            child: _MediaTypeGrid(stage: stage),
+          ),
+        ],
       ],
     );
   }
@@ -73,6 +125,8 @@ class _Greeting extends StatelessWidget {
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
     final tokens = context.fundus;
+    final theme = Theme.of(context);
+    final narrow = FundusStageSize.of(context) == FundusStageSize.handset;
     final hour = DateTime.now().hour;
     final greeting = hour < 11
         ? 'Guten Morgen'
@@ -81,34 +135,281 @@ class _Greeting extends StatelessWidget {
         : 'Guten Abend';
 
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(greeting, style: Theme.of(context).textTheme.displayMedium),
-              const SizedBox(height: FundusSpace.x2),
               Text(
-                '${scope.library.displayName} · $workCount Werke',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: tokens.textMuted),
+                greeting,
+                style: theme.textTheme.displayMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.4,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x1),
+              Text(
+                '${scope.library.displayName} · ${_count(workCount)} Werke',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: tokens.textMuted,
+                ),
               ),
             ],
           ),
         ),
-        OutlinedButton.icon(
-          onPressed: scope.library.isScanning
-              ? scope.library.cancelScan
-              : scope.library.scan,
-          icon: Icon(
-            scope.library.isScanning ? FundusIcons.close : FundusIcons.sync,
-            size: FundusIcons.sizeSm,
+        if (narrow)
+          IconButton(
+            onPressed: scope.library.isScanning
+                ? scope.library.cancelScan
+                : scope.library.scan,
+            tooltip: scope.library.isScanning
+                ? 'Abbrechen'
+                : 'Nach Neuem sehen',
+            icon: Icon(
+              scope.library.isScanning ? FundusIcons.close : FundusIcons.sync,
+              size: FundusIcons.sizeMd,
+            ),
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: scope.library.isScanning
+                ? scope.library.cancelScan
+                : scope.library.scan,
+            icon: Icon(
+              scope.library.isScanning ? FundusIcons.close : FundusIcons.sync,
+              size: FundusIcons.sizeSm,
+            ),
+            label: Text(scope.library.isScanning ? 'Abbrechen' : 'Prüfen'),
           ),
-          label: Text(scope.library.isScanning ? 'Scan abbrechen' : 'Scannen'),
-        ),
       ],
+    );
+  }
+
+  /// Twelve thousand works is „12 480", not „12480".
+  static String _count(int value) {
+    final digits = '$value';
+    final buffer = StringBuffer();
+    for (var index = 0; index < digits.length; index++) {
+      if (index > 0 && (digits.length - index) % 3 == 0) buffer.write(' ');
+      buffer.write(digits[index]);
+    }
+    return buffer.toString();
+  }
+}
+
+/// A card for something in the middle of being watched or read.
+///
+/// Wider than it is tall, with the artwork at its head and the remaining time
+/// where the eye lands: what this row answers is „wie weit war ich?", and a
+/// poster alone does not answer it. Tapping it carries on — that is what the
+/// row is called.
+class _ContinueCard extends StatelessWidget {
+  const _ContinueCard({required this.work, required this.width});
+
+  final WorkView work;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final type = work.mediaType;
+
+    return SizedBox(
+      width: width,
+      child: Material(
+        color: tokens.surface,
+        borderRadius: FundusArtwork.cardRadius,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => scope.play(work),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 88,
+                child: WorkArtwork(
+                  work: work,
+                  borderRadius: BorderRadius.zero,
+                  showOrigin: false,
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(FundusSpace.x4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        children: [
+                          if (type != null) ...[
+                            Icon(
+                              type.icon,
+                              size: FundusIcons.sizeSm,
+                              color: tokens.accentRamp.s300,
+                            ),
+                            const SizedBox(width: FundusSpace.x2),
+                          ],
+                          Expanded(
+                            child: Text(
+                              type?.label.toUpperCase() ?? '',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: tokens.accentRamp.s300,
+                              ),
+                            ),
+                          ),
+                          FundusOriginMark(work.origin),
+                        ],
+                      ),
+                      const SizedBox(height: FundusSpace.x2),
+                      Text(
+                        work.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      if (work.subtitle.isNotEmpty)
+                        Text(
+                          work.subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: tokens.textFaint,
+                          ),
+                        ),
+                      const SizedBox(height: FundusSpace.x2),
+                      Text(
+                        work.progressLabel ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: tokens.accentRamp.s200,
+                        ),
+                      ),
+                      const SizedBox(height: FundusSpace.x2),
+                      ClipRRect(
+                        borderRadius: FundusRadius.smAll,
+                        child: FundusProgressBar(
+                          fraction: work.progressFraction ?? 0,
+                          finished: work.finished,
+                          height: 3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The shelves, with how much is on each.
+class _MediaTypeGrid extends StatelessWidget {
+  const _MediaTypeGrid({required this.stage});
+
+  final FundusStageSize stage;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final counts = scope.library.worksPerMediaType;
+    final types = [
+      for (final type in MediaTypes.all)
+        if ((counts[type.id] ?? 0) > 0) type,
+    ];
+    if (types.isEmpty) return const SizedBox.shrink();
+    final columns = switch (stage) {
+      FundusStageSize.handset => 2,
+      FundusStageSize.tablet => 3,
+      FundusStageSize.desktop => 4,
+    };
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        mainAxisSpacing: stage.railGap,
+        crossAxisSpacing: stage.railGap,
+        mainAxisExtent: 74,
+      ),
+      itemCount: types.length,
+      itemBuilder: (context, index) {
+        final type = types[index];
+        return _MediaTypeCard(
+          type: type,
+          count: counts[type.id] ?? 0,
+          onTap: () => scope.openMediaType(type.id),
+        );
+      },
+    );
+  }
+}
+
+class _MediaTypeCard extends StatelessWidget {
+  const _MediaTypeCard({
+    required this.type,
+    required this.count,
+    required this.onTap,
+  });
+
+  final MediaTypeDefinition type;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    return Material(
+      color: tokens.surface,
+      borderRadius: FundusArtwork.cardRadius,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: FundusArtwork.cardRadius,
+        child: Padding(
+          padding: const EdgeInsets.all(FundusSpace.x4),
+          child: Row(
+            children: [
+              Icon(
+                type.icon,
+                size: FundusIcons.sizeLg,
+                color: tokens.textMuted,
+              ),
+              const SizedBox(width: FundusSpace.x3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      type.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall,
+                    ),
+                    Text(
+                      '$count',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -126,134 +427,77 @@ class _ScanBanner extends StatelessWidget {
     final phase = switch (progress.phase) {
       LibraryIndexPhase.scanning => 'Dateien werden gelesen',
       LibraryIndexPhase.importing => 'Werke werden zugeordnet',
-      LibraryIndexPhase.completed => 'Scan abgeschlossen',
-      LibraryIndexPhase.cancelled => 'Scan abgebrochen',
+      LibraryIndexPhase.completed => 'Fertig',
+      LibraryIndexPhase.cancelled => 'Abgebrochen',
     };
 
     return Container(
-      margin: const EdgeInsets.only(top: FundusSpace.x6),
+      margin: const EdgeInsets.only(top: FundusSpace.x4),
       padding: const EdgeInsets.all(FundusSpace.x4),
       decoration: BoxDecoration(
         color: tokens.surface,
-        borderRadius: FundusRadius.mdAll,
-        border: Border.fromBorderSide(BorderSide(color: tokens.divider)),
+        borderRadius: FundusArtwork.cardRadius,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '$phase · ${progress.fileCount} Dateien · '
-                  '${progress.workCount} Werke',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-              if (progress.currentPath != null)
-                Flexible(
-                  child: Text(
-                    progress.currentPath!,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.right,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
-                  ),
-                ),
-            ],
+          Text(
+            '$phase · ${progress.fileCount} Dateien',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: FundusSpace.x3),
           // Without a total the scan cannot honestly show a percentage.
-          const LinearProgressIndicator(),
+          ClipRRect(
+            borderRadius: FundusRadius.smAll,
+            child: const LinearProgressIndicator(minHeight: 3),
+          ),
         ],
       ),
     );
   }
 }
 
-class _SectionHeading extends StatelessWidget {
-  const _SectionHeading(this.title, {this.hint});
+class _Heading extends StatelessWidget {
+  const _Heading(this.title, {required this.gutter, this.hint, this.action});
 
   final String title;
+  final double gutter;
   final String? hint;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.fundus;
     return Padding(
-      padding: const EdgeInsets.only(bottom: FundusSpace.x4),
+      padding: EdgeInsets.fromLTRB(
+        gutter,
+        FundusSpace.x8,
+        gutter,
+        FundusSpace.x3,
+      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(
-            title.toUpperCase(),
-            style: Theme.of(context).textTheme.labelSmall,
+          Flexible(
+            child: Text(
+              title.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
           ),
-          if (hint != null) ...[
+          if (hint case final hint?) ...[
             const SizedBox(width: FundusSpace.x3),
             Text(
-              hint!,
+              hint,
               style: Theme.of(
                 context,
               ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
             ),
           ],
+          const Spacer(),
+          ?action,
         ],
-      ),
-    );
-  }
-}
-
-class _WorkStrip extends StatelessWidget {
-  const _WorkStrip({required this.works});
-
-  final List<WorkView> works;
-
-  @override
-  Widget build(BuildContext context) {
-    final scope = FundusScope.of(context);
-    final tokens = context.fundus;
-
-    return SizedBox(
-      height: 210,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: works.length,
-        separatorBuilder: (_, _) => SizedBox(width: tokens.density.gap),
-        itemBuilder: (context, index) {
-          final work = works[index];
-          return SizedBox(
-            width: 150,
-            child: InkWell(
-              onTap: () => scope.navigation.go(WorkRoute(work.id)),
-              borderRadius: FundusRadius.mdAll,
-              hoverColor: tokens.hover,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: WorkArtwork(work: work)),
-                  const SizedBox(height: FundusSpace.x2),
-                  Text(
-                    work.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  Text(
-                    work.progressLabel ?? work.subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
       ),
     );
   }
