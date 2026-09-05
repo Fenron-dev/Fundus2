@@ -1018,6 +1018,14 @@ final class FundusDatabase {
     );
   }
 
+  /// The kind of one work, without loading the rest of it.
+  String? workKind(String workId) {
+    final rows = _database.select('SELECT kind FROM works WHERE id = ?', [
+      workId,
+    ]);
+    return rows.isEmpty ? null : rows.first['kind'] as String?;
+  }
+
   List<LibraryPlaybackRevision> listProgressRevisions(String workId) {
     final rows = _database.select(
       '''

@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart' hide RepeatMode;
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 
+import '../app/fundus_log.dart';
 import '../data/work_view.dart';
 import 'media_byte_source.dart';
 import 'playback_engine.dart';
@@ -248,8 +249,13 @@ class PlaybackController extends ChangeNotifier {
     _expanded = autoplay;
     _chrome = true;
 
+    final span = FundusLog.instance.start('player.open', {
+      'work': work.title,
+      'kind': work.kind,
+    });
     try {
       final tracks = library.playbackTracks(work.id);
+      span.step('tracks', {'count': tracks.length});
       if (tracks.isEmpty) {
         _failure = 'Zu diesem Werk sind keine abspielbaren Dateien erfasst.';
         notifyListeners();
@@ -264,6 +270,7 @@ class PlaybackController extends ChangeNotifier {
           ),
       ];
       _chapters = await library.playbackChapters(work.id);
+      span.step('chapters', {'count': _chapters.length});
       _buildOrder();
       _attachStreams();
 
@@ -281,7 +288,9 @@ class PlaybackController extends ChangeNotifier {
               ),
       );
       if (autoplay) await _engine.play();
+      span.done();
     } on Object catch (error) {
+      span.failed(error);
       _failure = error.toString();
     }
     notifyListeners();
@@ -297,7 +306,14 @@ class PlaybackController extends ChangeNotifier {
     _tracks = const MediaTracks();
     _appliedPreference = false;
     _clearBetweenEpisodes();
-    if (!await source.isReachable()) {
+    final reach = Stopwatch()..start();
+    final reachable = await source.isReachable();
+    if (reach.elapsedMilliseconds > 200) {
+      FundusLog.instance.write(LogLevel.warn, 'player.reachable.slow', {
+        'file': source.title,
+      }, reach.elapsed);
+    }
+    if (!reachable) {
       // A file that is gone is a state, not a crash: the work keeps its
       // progress and the origin mark tells the story.
       _failure = 'Die Datei „${source.title}" ist nicht erreichbar.';
@@ -310,8 +326,14 @@ class PlaybackController extends ChangeNotifier {
     // deshalb „--:--" stehen.
     _duration = source.duration;
     _position = at;
+    final span = FundusLog.instance.start('player.file', {
+      'file': source.title,
+      'origin': source.origin.name,
+    });
     final uri = await source.resolve();
+    span.step('resolved');
     await _engine.open(uri, start: at);
+    span.done();
     _startSaveTimer();
   }
 

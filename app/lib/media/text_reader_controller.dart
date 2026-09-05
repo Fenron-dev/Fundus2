@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:path/path.dart' as p;
 
+import '../app/fundus_log.dart';
 import '../data/media_type.dart';
 import '../data/work_view.dart';
 import 'peer_file_cache.dart';
@@ -153,6 +154,13 @@ class TextReaderController extends ChangeNotifier {
   int _paragraphIndex = 0;
   double _innerOffset = 0;
 
+  /// Counts the deliberate moves — opening a book, a chapter, a bookmark.
+  ///
+  /// The view has to tell „somebody jumped, go there" from „somebody
+  /// scrolled, stay put", and the paragraph number alone cannot say which
+  /// happened. Every jump raises this; scrolling never does.
+  int _jump = 0;
+
   ReflowReaderProfile _profile = const ReflowReaderProfile();
   List<LibraryBookmark> _bookmarks = const [];
   List<LibraryHighlight> _highlights = const [];
@@ -178,6 +186,7 @@ class TextReaderController extends ChangeNotifier {
 
   int get paragraphIndex => _paragraphIndex;
   double get innerOffset => _innerOffset;
+  int get jumpRevision => _jump;
 
   ReflowReaderProfile get profile => _profile;
   List<LibraryBookmark> get bookmarks => _bookmarks;
@@ -322,10 +331,16 @@ class TextReaderController extends ChangeNotifier {
     _failure = null;
     _chapters = const [];
     notifyListeners();
+    final span = FundusLog.instance.start('text.volume', {
+      'volume': _volumes[index].title,
+    });
     try {
       final volume = _volumes[index];
-      final source = _openSource(await _pathFor(volume), volume.title);
+      final path = await _pathFor(volume);
+      span.step('fetched');
+      final source = _openSource(path, volume.title);
       _chapters = await source.chapters();
+      span.step('parsed', {'chapters': _chapters.length});
       _volumeIndex = index;
       if (_chapters.isEmpty) {
         _failure = 'In „${volume.title}“ ist kein lesbarer Text enthalten.';
@@ -342,7 +357,10 @@ class TextReaderController extends ChangeNotifier {
       );
       _paragraphIndex = resolved.paragraphIndex;
       _innerOffset = resolved.innerOffset;
+      _jump++;
+      span.done();
     } on Object catch (error) {
+      span.failed(error);
       _failure = error.toString();
       _chapters = const [];
     }
@@ -392,6 +410,7 @@ class TextReaderController extends ChangeNotifier {
     _chapterIndex = index;
     _paragraphIndex = 0;
     _innerOffset = 0;
+    _jump++;
     notifyListeners();
     saveProgress();
   }
@@ -498,6 +517,7 @@ class TextReaderController extends ChangeNotifier {
         : _chapters[_chapterIndex].document.resolve(bookmark.mediaPosition);
     _paragraphIndex = resolved.paragraphIndex;
     _innerOffset = resolved.innerOffset;
+    _jump++;
     notifyListeners();
     saveProgress();
   }

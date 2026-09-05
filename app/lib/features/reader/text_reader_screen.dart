@@ -202,9 +202,20 @@ class _TextSurface extends StatefulWidget {
 class _TextSurfaceState extends State<_TextSurface> {
   final _scroll = ScrollController();
   final _keys = <int, GlobalKey>{};
-  int _restoredTo = -1;
-  String? _restoredChapter;
+  int _lastJump = -1;
   TextReaderController? _reader;
+
+  /// The paragraph the view is still travelling to, or null when it is where
+  /// it belongs.
+  ///
+  /// A list builds what is near the screen and nothing else, so the paragraph
+  /// somebody stopped at on page two hundred has no widget to jump to when
+  /// the chapter opens. The jump used to look it up once, find nothing and
+  /// give up in silence — and then the first scroll report overwrote the
+  /// stored position with „paragraph 0". The book was never lost; the view
+  /// simply never went there, and then said so.
+  int? _travellingTo;
+  int _steps = 0;
 
   @override
   void initState() {
@@ -236,6 +247,10 @@ class _TextSurfaceState extends State<_TextSurface> {
     if (!mounted) return;
     final reader = _reader;
     if (reader == null) return;
+    // While the view is still travelling to the saved place, what is on
+    // screen is not where anybody is reading, and must not be written down as
+    // if it were.
+    if (_travellingTo != null || reader.isBusy) return;
     final viewport = context.findRenderObject();
     if (viewport is! RenderBox) return;
 
@@ -260,6 +275,70 @@ class _TextSurfaceState extends State<_TextSurface> {
       best,
       height <= 0 ? 0 : (-bestTop / height).clamp(0, 1),
     );
+  }
+
+  /// Walks the view down to [target], building what it needs on the way.
+  ///
+  /// The first step is a guess from the paragraph's share of the chapter,
+  /// which lands close in one jump for evenly-sized prose. After that it
+  /// checks whether the paragraph exists yet and, if not, scrolls a screen
+  /// further and looks again — each step builds more of the list, so it
+  /// converges. The step count is bounded: a chapter that will not cooperate
+  /// costs a wrong position, never a locked-up reader.
+  void _travelTo(int target, int paragraphCount) {
+    if (target <= 0 || paragraphCount <= 1) {
+      _travellingTo = null;
+      return;
+    }
+    _travellingTo = target;
+    _steps = 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) {
+        _travellingTo = null;
+        return;
+      }
+      final extent = _scroll.position.maxScrollExtent;
+      if (extent > 0) {
+        _scroll.jumpTo((extent * (target / paragraphCount)).clamp(0.0, extent));
+      }
+      _stepTowards(target);
+    });
+  }
+
+  void _stepTowards(int target) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _travellingTo != target) return;
+      if (!_scroll.hasClients) {
+        _travellingTo = null;
+        return;
+      }
+      final anchor = _keys[target]?.currentContext;
+      if (anchor != null) {
+        Scrollable.ensureVisible(anchor, alignment: 0);
+        // One more frame before reporting resumes, so the position that is
+        // written down is the one the jump arrived at.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_travellingTo == target) _travellingTo = null;
+        });
+        return;
+      }
+      if (_steps++ > 120) {
+        _travellingTo = null;
+        return;
+      }
+      final position = _scroll.position;
+      if (position.pixels >= position.maxScrollExtent) {
+        _travellingTo = null;
+        return;
+      }
+      _scroll.jumpTo(
+        (position.pixels + position.viewportDimension * .8).clamp(
+          0.0,
+          position.maxScrollExtent,
+        ),
+      );
+      _stepTowards(target);
+    });
   }
 
   @override
@@ -287,24 +366,16 @@ class _TextSurfaceState extends State<_TextSurface> {
     final profile = reader.profile;
     final ink = _foreground(context, profile.theme);
 
-    // A chapter change or a jump has to move the view; a scroll of the
-    // reader's own must not be answered with one.
-    final chapterId = reader.currentChapter?.id;
-    if (_restoredChapter != chapterId ||
-        (_restoredTo != reader.paragraphIndex && _restoredTo < 0)) {
+    // A jump has to move the view; a scroll of the reader's own must not be
+    // answered with one. The counter is what tells them apart — a paragraph
+    // number cannot.
+    if (_lastJump != reader.jumpRevision) {
+      _lastJump = reader.jumpRevision;
       // Each chapter measures its own paragraphs. Keeping the keys of the
       // last one means measuring detached boxes on every scrolled frame, and
       // the map grows for as long as the book is open.
-      if (_restoredChapter != chapterId) _keys.clear();
-      _restoredChapter = chapterId;
-      final target = reader.paragraphIndex;
-      _restoredTo = target;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final anchor = _keys[target]?.currentContext;
-        if (anchor == null) return;
-        Scrollable.ensureVisible(anchor, alignment: 0);
-      });
+      _keys.clear();
+      _travelTo(reader.paragraphIndex, paragraphs.length);
     }
 
     return Focus(

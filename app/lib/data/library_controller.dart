@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 
+import '../app/fundus_log.dart';
 import 'work_view.dart';
 
 enum LibraryStatus { idle, opening, ready, scanning, failed }
@@ -29,6 +30,9 @@ class LibraryController extends ChangeNotifier {
   DateTime? _lastCheckedAt;
   bool _lastScanWasFull = false;
   Map<String, int> _lastRootCounts = const {};
+  Map<String, int> _worksPerMediaType = const {};
+  Map<String, int> _worksPerSource = const {};
+  int _unassignedWorks = 0;
 
   /// Works this must not hand out at all.
   ///
@@ -41,6 +45,17 @@ class LibraryController extends ChangeNotifier {
   LibraryStatus get status => _status;
   String? get error => _error;
   List<WorkView> get works => _works;
+
+  /// How many works each media type holds, and how many belong to no type.
+  ///
+  /// Worked out when the list changes rather than when something asks. The
+  /// navigation column asks on every build, and every build used to walk the
+  /// whole catalogue twice — with the interface rebuilding on any change at
+  /// all, that is two passes over every work for a moved slider.
+  Map<String, int> get worksPerMediaType => _worksPerMediaType;
+
+  Map<String, int> get worksPerSource => _worksPerSource;
+  int get unassignedWorkCount => _unassignedWorks;
   List<LibrarySource> get sources => _sources;
   LibraryIndexEvent? get scanProgress => _scanProgress;
 
@@ -199,7 +214,15 @@ class LibraryController extends ChangeNotifier {
     _scanProgress = null;
     _lastScanWasFull = full;
     notifyListeners();
+    final span = FundusLog.instance.start('library.scan', {
+      'full': full,
+      'folder': ?subtree,
+    });
     try {
+      // A file counter that moves faster than an eye can read it is not
+      // worth a rebuild of the whole interface. Every file still counts; the
+      // screens hear about it four times a second, and always at the end.
+      var told = DateTime.now();
       await for (final event in library.index(
         cancellationToken: token,
         full: full,
@@ -207,18 +230,32 @@ class LibraryController extends ChangeNotifier {
       )) {
         _scanProgress = event;
         if (event.rootCounts.isNotEmpty) _lastRootCounts = event.rootCounts;
-        if (event.phase == LibraryIndexPhase.completed ||
-            event.phase == LibraryIndexPhase.cancelled) {
+        final settled =
+            event.phase == LibraryIndexPhase.completed ||
+            event.phase == LibraryIndexPhase.cancelled;
+        if (settled) {
           _lastResult = event.phase == LibraryIndexPhase.completed
               ? event
               : null;
           _reload();
         }
+        final now = DateTime.now();
+        if (!settled &&
+            now.difference(told) < const Duration(milliseconds: 250)) {
+          continue;
+        }
+        told = now;
         notifyListeners();
       }
       _status = LibraryStatus.ready;
       _lastCheckedAt = DateTime.now();
+      span.done({
+        'files': _lastResult?.fileCount ?? 0,
+        'changed_files': _lastResult?.changedFileCount ?? 0,
+        'changed_works': _lastResult?.changedWorkCount ?? 0,
+      });
     } on Object catch (failure) {
+      span.failed(failure);
       _error = failure.toString();
       _status = LibraryStatus.failed;
     } finally {
@@ -227,22 +264,43 @@ class LibraryController extends ChangeNotifier {
     }
   }
 
+  /// Whether now is a bad moment to walk the whole folder.
+  ///
+  /// Set by the scope from what is open. A check is cheap next to a full
+  /// re-read and still not free — over a network share it is thousands of
+  /// round trips — and doing it under a playing film is the one place where
+  /// the cost lands on something somebody is watching.
+  bool Function()? busyElsewhere;
+
   /// Looks for changes without being asked.
   ///
   /// A library nobody touched costs one walk of the tree; there is no reason
   /// to make someone press a button to find out that a series they copied in
   /// half an hour ago exists. It stays quiet when a scan is already running,
-  /// when the vault is a mirrored shell, or when the last check is recent.
+  /// when something is being played or read, and when the last check is
+  /// recent.
+  ///
+  /// „Recent" is deliberately long. On a desktop, every return of window
+  /// focus counts as coming back to the app — clicking away to the Finder and
+  /// back would otherwise start a walk of the whole vault, which is exactly
+  /// the interruption this was supposed to save people.
   Future<void> checkForChanges({bool force = false}) async {
     if (_library == null || _status == LibraryStatus.scanning) return;
-    if (!force && _lastCheckedAt != null) {
-      if (DateTime.now().difference(_lastCheckedAt!) < recheckAfter) return;
+    if (!force) {
+      if (busyElsewhere?.call() ?? false) {
+        FundusLog.instance.write(LogLevel.debug, 'library.check.deferred');
+        return;
+      }
+      if (_lastCheckedAt != null &&
+          DateTime.now().difference(_lastCheckedAt!) < recheckAfter) {
+        return;
+      }
     }
     await scan();
   }
 
   /// How long a check stays good enough that another one is not worth it.
-  static const recheckAfter = Duration(minutes: 5);
+  static const recheckAfter = Duration(minutes: 30);
 
   void cancelScan() => _scanToken?.cancel();
 
@@ -273,6 +331,26 @@ class LibraryController extends ChangeNotifier {
         .toList(growable: false);
     _sources = library.listSources();
     _scanProgress = null;
+    _countWorks();
+  }
+
+  void _countWorks() {
+    final byType = <String, int>{};
+    final bySource = <String, int>{};
+    var unassigned = 0;
+    for (final work in _works) {
+      final type = work.mediaType;
+      if (type == null) {
+        unassigned++;
+      } else {
+        byType[type.id] = (byType[type.id] ?? 0) + 1;
+      }
+      final source = work.summary.sourceId;
+      bySource[source] = (bySource[source] ?? 0) + 1;
+    }
+    _worksPerMediaType = Map.unmodifiable(byType);
+    _worksPerSource = Map.unmodifiable(bySource);
+    _unassignedWorks = unassigned;
   }
 
   @override

@@ -29,6 +29,7 @@ import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
 import '../features/work/progress_choice_dialog.dart';
 import 'app_navigation.dart';
+import 'fundus_log.dart';
 import 'fullscreen.dart';
 import 'pairing_scanner.dart';
 import 'storage_access.dart';
@@ -178,6 +179,17 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     reader.addListener(_syncWhenClosed);
     textReader.addListener(_syncWhenClosed);
     unawaited(_findSupportRoot());
+    library.busyElsewhere = () =>
+        player.isPlaying ||
+        player.isExpanded ||
+        reader.isOpen ||
+        textReader.isOpen ||
+        photos.isOpen ||
+        downloads.jobs.any(
+          (job) =>
+              job.state == DownloadState.running ||
+              job.state == DownloadState.queued,
+        );
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -209,6 +221,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     }
     try {
       _supportRoot = await getApplicationSupportDirectory();
+      await FundusLog.instance.attach(_supportRoot!);
     } on Object {
       // A platform that will not say where its storage is must not cost the
       // ability to read: somewhere temporary is worse than the right place
@@ -411,29 +424,39 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   Future<void> play(WorkView work) async {
     final vault = library.library;
     if (vault == null) return;
+    final span = FundusLog.instance.start('open', {
+      'work': work.title,
+      'kind': work.kind,
+      'origin': work.origin.name,
+    });
     await settlePosition(vault, work);
+    span.step('position');
     if (ReaderController.handles(work)) {
       // A comic in the audio player is silence with a progress bar: pages and
       // seconds are different units, so they get different controllers.
       await player.close();
       await reader.open(vault, work);
       if (reader.failure == null) library.refresh();
+      span.done({'via': 'reader'});
       return;
     }
     if (TextReaderController.handles(work)) {
       await player.close();
       await textReader.open(vault, work);
       if (textReader.failure == null) library.refresh();
+      span.done({'via': 'text'});
       return;
     }
     if (PhotoController.handles(work)) {
       // A gallery is not a player: an album handed to libmpv would be a
       // slideshow nobody asked for.
       await photos.open(vault, work);
+      span.done({'via': 'photos'});
       return;
     }
     await player.open(vault, work);
     if (player.failure == null) library.refresh();
+    span.done({'via': 'player'});
   }
 
   /// Asks where to carry on, when two devices disagree.

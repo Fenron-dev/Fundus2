@@ -12,6 +12,7 @@ import 'package:fundus_design/fundus_design.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/app_navigation.dart';
+import '../../app/fundus_log.dart';
 import '../../app/fundus_scope.dart';
 import '../../app/pairing_scanner.dart';
 import '../../data/library_controller.dart';
@@ -550,7 +551,169 @@ class _Diagnostics extends StatelessWidget {
             ],
           ),
         ),
+        const _LogCard(),
       ],
+    );
+  }
+}
+
+/// What the app did, and how long it took.
+///
+/// „Es ist langsam" is a symptom; „das Öffnen hat 9 s gebraucht, davon 8,6 in
+/// player.file" is something to work from. The log keeps the last few hundred
+/// entries with a duration on the ones worth timing, and it can be handed
+/// over whole — file names only, never a path out of anybody's disk.
+class _LogCard extends StatefulWidget {
+  const _LogCard();
+
+  @override
+  State<_LogCard> createState() => _LogCardState();
+}
+
+class _LogCardState extends State<_LogCard> {
+  final _log = FundusLog.instance;
+  String? _saved;
+
+  @override
+  void initState() {
+    super.initState();
+    _log.addListener(_changed);
+  }
+
+  @override
+  void dispose() {
+    _log.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: _log.render()));
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(const SnackBar(content: Text('Protokoll kopiert.')));
+  }
+
+  Future<void> _save() async {
+    try {
+      final room = await getApplicationSupportDirectory();
+      final stamp = DateTime.now()
+          .toIso8601String()
+          .substring(0, 19)
+          .replaceAll(':', '-');
+      final target = File(p.join(room.path, 'fundus-$stamp.log'));
+      await target.writeAsString(_log.render(), flush: true);
+      if (!mounted) return;
+      setState(() => _saved = target.path);
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _saved = 'Nicht gespeichert: $error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final entries = _log.entries.reversed.toList(growable: false);
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('Protokoll', style: theme.textTheme.titleMedium),
+              ),
+              Switch(
+                value: _log.isEnabled,
+                onChanged: (value) => _log.setEnabled(value),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Die letzten ${FundusLog.capacity} Schritte mit ihrer Dauer. '
+            'Enthält Dateinamen, aber keine vollständigen Pfade, und bleibt '
+            'auf diesem Gerät, bis du es weitergibst.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x3),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: entries.isEmpty ? null : () => unawaited(_copy()),
+                icon: Icon(FundusIcons.copy, size: FundusIcons.sizeSm),
+                label: const Text('Kopieren'),
+              ),
+              OutlinedButton(
+                onPressed: entries.isEmpty ? null : () => unawaited(_save()),
+                child: const Text('Als Datei sichern'),
+              ),
+              OutlinedButton(
+                onPressed: entries.isEmpty ? null : _log.clear,
+                child: const Text('Leeren'),
+              ),
+            ],
+          ),
+          if (_saved case final saved?) ...[
+            const SizedBox(height: FundusSpace.x2),
+            SelectableText(
+              saved,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: tokens.textMuted,
+              ),
+            ),
+          ],
+          const SizedBox(height: FundusSpace.x3),
+          if (entries.isEmpty)
+            Text(
+              'Noch nichts aufgezeichnet.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: tokens.textFaint,
+              ),
+            )
+          else
+            Container(
+              constraints: const BoxConstraints(maxHeight: 320),
+              decoration: BoxDecoration(
+                color: tokens.surfaceRaised,
+                borderRadius: FundusRadius.mdAll,
+              ),
+              padding: const EdgeInsets.all(FundusSpace.x3),
+              child: ListView.builder(
+                itemCount: entries.length,
+                itemBuilder: (context, index) {
+                  final entry = entries[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: SelectableText(
+                      entry.line,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: switch (entry.level) {
+                          LogLevel.error => theme.colorScheme.error,
+                          LogLevel.warn => tokens.text,
+                          LogLevel.info => tokens.textMuted,
+                          LogLevel.debug => tokens.textFaint,
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

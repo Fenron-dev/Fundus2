@@ -790,6 +790,14 @@ final class FundusLibrary {
         .toList(growable: false);
   }
 
+  /// Whether this work is the kind whose one file names its own chapters.
+  static const _chapteredKinds = {'audiobook', 'podcast', 'podcast_episode'};
+
+  bool _carriesChapters(String workId) {
+    final kind = _database.workKind(workId);
+    return kind != null && _chapteredKinds.contains(kind);
+  }
+
   Future<List<LibraryPlaybackChapter>> playbackChapters(String workId) async {
     final tracks = playbackTracks(workId);
     if (tracks.isEmpty) return const [];
@@ -807,6 +815,25 @@ final class FundusLibrary {
     }
 
     final track = tracks.single;
+    // Only where chapters are a thing the file actually carries.
+    //
+    // Looking for them means walking the container's atom tree, header by
+    // header, seeking as it goes — over a network share that is hundreds of
+    // round trips before the first frame. It is how an audiobook in one file
+    // names its chapters, and it is not how a film does anything: a film has
+    // one entry either way, so the walk buys nothing and costs the wait
+    // before playback starts.
+    if (!_carriesChapters(workId)) {
+      return [
+        LibraryPlaybackChapter(
+          title: p.basenameWithoutExtension(track.title),
+          fileId: track.fileId,
+          trackIndex: 0,
+          position: Duration.zero,
+          duration: track.duration,
+        ),
+      ];
+    }
     final embedded = await const EmbeddedCoverExtractor().extractChapters(
       File(track.absolutePath),
     );

@@ -1,3 +1,4 @@
+import '../app/fundus_log.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -302,6 +303,9 @@ class ReaderController extends ChangeNotifier {
     _failure = null;
     _pages = const [];
     notifyListeners();
+    final span = FundusLog.instance.start('reader.volume', {
+      'volume': index < _volumes.length ? _volumes[index].title : '?',
+    });
     try {
       await _source?.dispose();
       _files.clear();
@@ -309,6 +313,7 @@ class ReaderController extends ChangeNotifier {
       final volume = _volumes[index];
       _source = await _openVolumeSource(volume);
       _pages = await _source!.pages();
+      span.done({'pages': _pages.length});
       _volumeIndex = index;
       if (_pages.isEmpty) {
         _failure = 'In „${volume.title}“ sind keine Seiten enthalten.';

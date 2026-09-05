@@ -26,6 +26,7 @@ abstract final class FundusIcons {
   static final forward = PhosphorIcons.caretRight();
   static final search = PhosphorIcons.magnifyingGlass();
   static final edit = PhosphorIcons.pencilSimple();
+  static final copy = PhosphorIcons.copySimple();
   static final filter = PhosphorIcons.funnelSimple();
   static final sort = PhosphorIcons.sortAscending();
   static final devices = PhosphorIcons.devices();

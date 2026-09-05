@@ -99,16 +99,8 @@ class NavigationPane extends StatelessWidget {
   List<Widget> _mediaEntries(BuildContext context, FundusScopeState scope) {
     final route = scope.navigation.current;
     final activeType = route is LibraryRoute ? route.mediaTypeId : null;
-    final counts = <String, int>{};
-    var unassigned = 0;
-    for (final work in scope.library.works) {
-      final type = work.mediaType;
-      if (type == null) {
-        unassigned++;
-      } else {
-        counts[type.id] = (counts[type.id] ?? 0) + 1;
-      }
-    }
+    final counts = scope.library.worksPerMediaType;
+    final unassigned = scope.library.unassignedWorkCount;
 
     final entries = <NavigationEntry>[
       NavigationEntry(
@@ -200,10 +192,7 @@ class NavigationPane extends StatelessWidget {
         .toList();
     if (mirrored.isEmpty) return const [];
 
-    final counts = <String, int>{};
-    for (final work in scope.library.works) {
-      counts[work.summary.sourceId] = (counts[work.summary.sourceId] ?? 0) + 1;
-    }
+    final counts = scope.library.worksPerSource;
     final route = scope.navigation.current;
     final active = route is LibraryRoute ? scope.filter.sourceId : null;
 

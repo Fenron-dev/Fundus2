@@ -46,9 +46,30 @@ class FundusShell extends StatelessWidget {
       drawer: isCompact ? const _NavigationDrawer() : null,
       drawerEnableOpenDragGesture: isCompact && !overlaid,
       body: Stack(
+        // The stack takes its size from the window, not from its children: the
+        // shell below is the only child with a size of its own, and an
+        // offstage child has none, which would leave the reader above it
+        // filling nothing.
+        fit: StackFit.expand,
         children: [
-          SafeArea(
-            child: isCompact ? const _CompactShell() : const _WideShell(),
+          // Taken out of the picture while something covers it, and kept
+          // alive underneath.
+          //
+          // A stack paints every layer: the library grid, its covers and the
+          // navigation column were being laid out and drawn behind each frame
+          // of a playing film, for a window nobody could see. That is most of
+          // what „laggy" was. Offstage skips layout and paint — and with it
+          // the building of every lazy list's children — while the elements
+          // stay, so scroll positions and open panels are where they were on
+          // the way back.
+          Offstage(
+            offstage: overlaid,
+            child: TickerMode(
+              enabled: !overlaid,
+              child: SafeArea(
+                child: isCompact ? const _CompactShell() : const _WideShell(),
+              ),
+            ),
           ),
           // The full player covers the shell instead of pushing it aside; it
           // is one screen more, not a second navigation.
