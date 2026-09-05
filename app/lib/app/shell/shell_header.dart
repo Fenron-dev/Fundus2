@@ -120,6 +120,16 @@ class ShellHeader extends StatelessWidget {
         steps.add(const PathStep('Downloads'));
       case SearchRoute():
         steps.add(const PathStep('Suche'));
+      case ListsRoute():
+        steps.add(const PathStep('Listen'));
+      case ListRoute(:final playlistId):
+        steps.add(
+          PathStep('Listen', () => scope.navigation.go(const ListsRoute())),
+        );
+        final list = scope.playlists
+            .where((entry) => entry.id == playlistId)
+            .firstOrNull;
+        if (list != null) steps.add(PathStep(list.name));
       case DashboardRoute():
       case VaultRoute():
         break;

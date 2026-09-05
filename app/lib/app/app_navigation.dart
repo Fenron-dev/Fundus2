@@ -62,6 +62,18 @@ final class DownloadsRoute extends FundusRoute {
   const DownloadsRoute();
 }
 
+/// Alle Listen — Playlisten wie Leselisten.
+final class ListsRoute extends FundusRoute {
+  const ListsRoute();
+}
+
+/// Eine einzelne Liste, mit dem, was in ihr steht.
+final class ListRoute extends FundusRoute {
+  const ListRoute(this.playlistId);
+
+  final String playlistId;
+}
+
 /// The navigation history, with the back and forward arrows the header shows.
 class AppNavigation extends ChangeNotifier {
   AppNavigation({FundusRoute initial = const VaultRoute()})

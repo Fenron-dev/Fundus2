@@ -27,6 +27,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _seed = DateTime.now().millisecondsSinceEpoch;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => FundusScope.of(context).reloadPlaylists(),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
     final stage = FundusStageSize.of(context);
@@ -140,6 +148,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 onTap: () =>
                     scope.navigation.go(WorkRoute(favourites[index].id)),
               ),
+            ),
+          ),
+        ],
+        if (scope.playlists.isNotEmpty) ...[
+          _Heading(
+            'Listen',
+            gutter: stage.gutter,
+            action: TextButton(
+              onPressed: () => scope.navigation.go(const ListsRoute()),
+              child: const Text('Alle'),
+            ),
+          ),
+          SizedBox(
+            height: 88,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+              itemCount: scope.playlists.length.clamp(0, 12),
+              separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
+              itemBuilder: (context, index) =>
+                  _ListCard(list: scope.playlists[index]),
             ),
           ),
         ],
@@ -479,6 +508,63 @@ class _ContinueCard extends StatelessWidget {
 }
 
 /// The shelves, with how much is on each.
+/// Eine Liste als Karte — Name und wie viel drinsteht.
+class _ListCard extends StatelessWidget {
+  const _ListCard({required this.list});
+
+  final LibraryPlaylist list;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    return SizedBox(
+      width: 220,
+      child: Material(
+        color: tokens.surface,
+        borderRadius: FundusRadius.mdAll,
+        child: InkWell(
+          borderRadius: FundusRadius.mdAll,
+          onTap: () => scope.navigation.go(ListRoute(list.id)),
+          child: Padding(
+            padding: const EdgeInsets.all(FundusSpace.x3),
+            child: Row(
+              children: [
+                Icon(FundusIcons.lists, color: tokens.accent),
+                const SizedBox(width: FundusSpace.x3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        list.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      Text(
+                        list.entries.isEmpty
+                            ? 'Noch leer'
+                            : '${list.entries.length} Einträge',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: tokens.textFaint,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MediaTypeGrid extends StatelessWidget {
   const _MediaTypeGrid({required this.stage});
 

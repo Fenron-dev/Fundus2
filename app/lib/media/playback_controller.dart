@@ -69,6 +69,17 @@ class PlaybackController extends ChangeNotifier {
   FundusLibrary? _library;
   WorkView? _work;
   List<MediaByteSource> _sources = const [];
+
+  /// Wem die laufende Datei gehört.
+  ///
+  /// Bei einem Werk ist das für jede Datei dasselbe. Bei einer Liste wechselt
+  /// es mitten im Abspielen — und mit ihm das, wohin der Stand geschrieben
+  /// wird, welche Kapitel gelten und was in der Leiste steht.
+  List<WorkView> _owners = const [];
+
+  /// Der Name der Liste, die läuft, oder null bei einem einzelnen Werk.
+  String? _queueName;
+  List<bool> _resume = const [];
   List<LibraryPlaybackChapter> _chapters = const [];
   int _index = 0;
 
@@ -90,6 +101,15 @@ class PlaybackController extends ChangeNotifier {
   String? _failure;
 
   WorkView? get work => _work;
+
+  /// Der Name der laufenden Liste, wo eine läuft.
+  String? get queueName => _queueName;
+
+  /// Das Werk, zu dem die Datei an [index] gehört — für eine Liste, in der
+  /// jede Zeile von woanders kommt.
+  WorkView? ownerAt(int index) =>
+      index >= 0 && index < _owners.length ? _owners[index] : _work;
+
   List<MediaByteSource> get sources => _sources;
   List<LibraryPlaybackChapter> get chapters => _chapters;
 
@@ -265,6 +285,8 @@ class PlaybackController extends ChangeNotifier {
   void reject(WorkView work, String message) {
     _work = work;
     _sources = const [];
+    _owners = const [];
+    _queueName = null;
     _order = const [];
     _chapters = const [];
     _trackChapters = const [];
@@ -309,6 +331,9 @@ class PlaybackController extends ChangeNotifier {
             proxy: proxyForSource?.call(track.sourceId),
           ),
       ];
+      _owners = [for (final _ in tracks) work];
+      _resume = const [];
+      _queueName = null;
       _chapters = await library.playbackChapters(work.id);
       span.step('chapters', {'count': _chapters.length});
       _buildOrder();
@@ -343,9 +368,94 @@ class PlaybackController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Spielt eine Liste, deren Zeilen aus verschiedenen Werken kommen.
+  ///
+  /// Der Unterschied zu [open] ist genau einer: welches Werk gerade läuft,
+  /// steht nicht mehr fest. Der Stand wird deshalb dem Werk der laufenden
+  /// Zeile gutgeschrieben, und beim Übergang von einer Zeile zur nächsten
+  /// wird der alte Stand vorher weggeschrieben — sonst verlöre eine Liste
+  /// unterwegs genau das, wofür man sie hört.
+  Future<void> openQueue(
+    FundusLibrary library,
+    List<QueueEntry> entries, {
+    String? name,
+    int startIndex = 0,
+    bool autoplay = true,
+  }) async {
+    _failure = null;
+    _library = library;
+    _queueName = name;
+    _expanded = autoplay;
+    _chrome = true;
+    if (entries.isEmpty) {
+      _failure = 'In dieser Liste steht nichts, was sich abspielen lässt.';
+      _work = null;
+      _sources = const [];
+      _owners = const [];
+      notifyListeners();
+      return;
+    }
+    final span = FundusLog.instance.start('player.queue', {
+      'name': name ?? '',
+      'count': entries.length,
+    });
+    try {
+      _sources = [
+        for (final entry in entries)
+          sourceForTrack(
+            entry.track,
+            origin: entry.work.origin,
+            proxy: proxyForSource?.call(entry.track.sourceId),
+          ),
+      ];
+      _owners = [for (final entry in entries) entry.work];
+      _resume = [for (final entry in entries) entry.resume];
+      _index = startIndex.clamp(0, _sources.length - 1);
+      _work = _owners[_index];
+      _chapters = await library.playbackChapters(_work!.id);
+      _buildOrder();
+      _attachStreams();
+      await _openCurrent(at: _startOf(_index));
+      if (autoplay) await _engine.play();
+      span.done();
+    } on Object catch (error) {
+      span.failed(error);
+      _failure = error.toString();
+    }
+    notifyListeners();
+  }
+
+  /// Wo eine Zeile anfängt.
+  ///
+  /// Ein einzelner Titel fängt vorn an — wer ihn in eine Liste gelegt hat,
+  /// meint den Titel, nicht die Stelle. Ein ganzes Werk in einer Liste ist
+  /// dagegen ein Hörbuch oder eine Folge, und die macht dort weiter, wo sie
+  /// stand.
+  Duration _startOf(int index) {
+    final library = _library;
+    final owner = ownerAt(index);
+    if (library == null || owner == null) return Duration.zero;
+    if (index >= _resume.length || !_resume[index]) return Duration.zero;
+    final saved = library.loadProgress(owner.id);
+    if (saved == null || saved.fileId != _sources[index].fileId) {
+      return Duration.zero;
+    }
+    return Duration(
+      milliseconds: ((saved.position.numericValue ?? 0) * 1000).round(),
+    );
+  }
+
   Future<void> _openCurrent({Duration at = Duration.zero}) async {
     final source = currentSource;
     if (source == null) return;
+    // Wechselt die Zeile das Werk, gehört der bisherige Stand noch dem alten
+    // — geschrieben wird er, bevor das neue übernimmt.
+    final owner = ownerAt(_index);
+    if (owner != null && owner.id != _work?.id) {
+      saveProgress();
+      _work = owner;
+      _chapters = await _library?.playbackChapters(owner.id) ?? const [];
+    }
     // The tracks belong to the file, not to the work: a new file starts
     // without a menu until the engine has said what it holds — and the
     // remembered language is applied again, because the next file numbers
@@ -737,6 +847,9 @@ class PlaybackController extends ChangeNotifier {
     _saveTimer?.cancel();
     _work = null;
     _sources = const [];
+    _owners = const [];
+    _resume = const [];
+    _queueName = null;
     _order = const [];
     _chapters = const [];
     _trackChapters = const [];
@@ -799,6 +912,25 @@ class PlaybackController extends ChangeNotifier {
     _engineOrNull?.dispose();
     super.dispose();
   }
+}
+
+/// Eine Zeile einer laufenden Liste.
+///
+/// Werk und Datei zusammen: die Datei sagt, was klingt, das Werk, wem der
+/// Stand gehört und was in der Leiste steht.
+final class QueueEntry {
+  const QueueEntry({
+    required this.work,
+    required this.track,
+    this.resume = false,
+  });
+
+  final WorkView work;
+  final LibraryPlaybackTrack track;
+
+  /// Ob diese Zeile dort weitermacht, wo das Werk stand — wahr für ein
+  /// ganzes Werk, falsch für einen einzelnen Titel.
+  final bool resume;
 }
 
 /// Formats a duration the way the player shows it.

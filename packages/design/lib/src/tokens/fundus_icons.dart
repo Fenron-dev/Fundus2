@@ -33,6 +33,7 @@ abstract final class FundusIcons {
   static final sort = PhosphorIcons.sortAscending();
   static final devices = PhosphorIcons.devices();
   static final activity = PhosphorIcons.bellSimple();
+  static final more = PhosphorIcons.dotsThreeOutline();
 
   // Media types.
   static final audiobook = PhosphorIcons.headphones();

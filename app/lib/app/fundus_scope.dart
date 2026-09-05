@@ -454,6 +454,119 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     });
   }
 
+  /// Die Listen dieses Tresors — Playlisten wie Leselisten.
+  ///
+  /// Eine Liste ist eine Ansicht auf Werke, keine Ablage: was in ihr steht,
+  /// liegt weiter dort, wo es liegt, und dieselbe Folge darf in drei Listen
+  /// stehen, ohne dreimal da zu sein.
+  List<LibraryPlaylist> get playlists => _playlists;
+  List<LibraryPlaylist> _playlists = const [];
+
+  void reloadPlaylists() {
+    final vault = library.library;
+    final lists = vault?.listPlaylists() ?? const <LibraryPlaylist>[];
+    if (!mounted) return;
+    _bump(() => _playlists = lists);
+  }
+
+  /// Legt eine Liste an und gibt sie zurück, damit der Aufrufer gleich
+  /// hineinlegen kann, was den Anlass gab.
+  LibraryPlaylist? createPlaylist(String name, {String? mediaType}) {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly || name.trim().isEmpty) return null;
+    final list = vault.savePlaylist(name: name.trim(), mediaType: mediaType);
+    reloadPlaylists();
+    return list;
+  }
+
+  void addToPlaylist(String playlistId, PlaylistEntry entry) {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return;
+    vault.addToPlaylist(playlistId: playlistId, entry: entry);
+    reloadPlaylists();
+  }
+
+  void removeFromPlaylist(String playlistId, int index) {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return;
+    vault.removeFromPlaylist(playlistId: playlistId, index: index);
+    reloadPlaylists();
+  }
+
+  void reorderPlaylist(String playlistId, int from, int to) {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return;
+    vault.reorderPlaylist(playlistId: playlistId, from: from, to: to);
+    reloadPlaylists();
+  }
+
+  void renamePlaylist(String playlistId, String name) {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly || name.trim().isEmpty) return;
+    vault.renamePlaylist(playlistId: playlistId, name: name.trim());
+    reloadPlaylists();
+  }
+
+  void deletePlaylist(String playlistId) {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return;
+    vault.deletePlaylist(playlistId);
+    reloadPlaylists();
+  }
+
+  /// Übersetzt die Zeilen einer Liste in das, was der Player abspielt.
+  ///
+  /// Eine Zeile ohne Datei ist ein ganzes Werk und bringt alle seine Dateien
+  /// mit; eine Zeile mit Datei genau diese eine. Was nicht mehr da ist, fällt
+  /// still heraus — eine Liste ist kein Bestandsnachweis.
+  List<QueueEntry> queueFor(LibraryPlaylist list) {
+    final vault = library.library;
+    if (vault == null) return const [];
+    final queue = <QueueEntry>[];
+    for (final entry in list.entries) {
+      final work = library.workById(entry.workId);
+      if (work == null) continue;
+      final tracks = vault.playbackTracks(entry.workId);
+      if (entry.fileId == null) {
+        for (final track in tracks) {
+          queue.add(
+            QueueEntry(
+              work: work,
+              track: track,
+              // Ein ganzes Werk in einer Liste ist ein Hörbuch oder eine
+              // Folge — und die macht dort weiter, wo sie stand.
+              resume: track == tracks.first,
+            ),
+          );
+        }
+        continue;
+      }
+      for (final track in tracks) {
+        if (track.fileId != entry.fileId) continue;
+        queue.add(QueueEntry(work: work, track: track));
+      }
+    }
+    return queue;
+  }
+
+  /// Spielt eine Liste ab [startIndex] — der Zeile, die jemand angetippt hat.
+  Future<void> playPlaylist(LibraryPlaylist list, {int startIndex = 0}) async {
+    final vault = library.library;
+    if (vault == null) return;
+    final queue = queueFor(list);
+    if (queue.isEmpty) return;
+    reader.close();
+    textReader.close();
+    await player.openQueue(
+      vault,
+      queue,
+      name: list.name,
+      startIndex: startIndex.clamp(0, queue.length - 1),
+    );
+    final work = player.work;
+    if (player.failure == null && work != null) library.refreshWork(work.id);
+  }
+
   /// Brings a paired machine's catalogue in and shows it.
   ///
   /// The index is written here, the files stay there. Afterwards nothing in

@@ -253,6 +253,14 @@ class NavigationPane extends StatelessWidget {
     FundusScopeState scope,
   ) => [
     NavigationEntry(
+      label: 'Listen',
+      icon: FundusIcons.lists,
+      active:
+          scope.navigation.current is ListsRoute ||
+          scope.navigation.current is ListRoute,
+      onTap: () => scope.navigation.go(const ListsRoute()),
+    ),
+    NavigationEntry(
       label: 'Downloads',
       icon: FundusIcons.downloads,
       active: scope.navigation.current is DownloadsRoute,

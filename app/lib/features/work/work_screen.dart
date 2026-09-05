@@ -11,6 +11,7 @@ import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import '../../metadata/metadata_apply.dart';
 import '../library/work_poster.dart';
+import '../lists/add_to_list.dart';
 import 'download_choice_sheet.dart';
 import 'metadata_dialog.dart';
 import 'metadata_editor.dart';
@@ -344,6 +345,7 @@ class _Actions extends StatelessWidget {
         children: [
           primary,
           _FavouriteButton(work: work),
+          _ListButton(work: work),
           _OfflineButton(work: work),
           _MetadataButtons(work: work),
         ],
@@ -360,6 +362,7 @@ class _Actions extends StatelessWidget {
           alignment: WrapAlignment.center,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
+            _ListButton(work: work),
             _OfflineButton(work: work),
             _MetadataButtons(work: work),
           ],
@@ -840,6 +843,14 @@ class _FilesState extends State<_Files> {
           onPlay: () =>
               unawaited(scope.play(widget.work, startAt: track.fileId)),
           onToggle: () => unawaited(_toggleFinished(track)),
+          onAddToList: () => unawaited(
+            showAddToList(
+              context,
+              workId: widget.work.id,
+              fileId: track.fileId,
+              label: track.title,
+            ),
+          ),
         );
       },
     );
@@ -909,6 +920,7 @@ class _EpisodeRow extends StatelessWidget {
     required this.onExpand,
     required this.onPlay,
     required this.onToggle,
+    required this.onAddToList,
   });
 
   final LibraryPlaybackTrack track;
@@ -924,6 +936,10 @@ class _EpisodeRow extends StatelessWidget {
   final VoidCallback? onExpand;
   final VoidCallback onPlay;
   final VoidCallback onToggle;
+
+  /// Eine einzelne Folge in eine Liste legen — ein Album ist ein Werk mit
+  /// einem Dutzend Titeln, und gemeint ist der Titel.
+  final VoidCallback onAddToList;
 
   @override
   Widget build(BuildContext context) {
@@ -1006,6 +1022,15 @@ class _EpisodeRow extends StatelessWidget {
                   color: tokens.textFaint,
                 ),
               ),
+            IconButton(
+              onPressed: onAddToList,
+              tooltip: 'Zur Liste hinzufügen',
+              icon: Icon(
+                FundusIcons.lists,
+                size: FundusIcons.sizeMd,
+                color: tokens.textFaint,
+              ),
+            ),
             IconButton(
               onPressed: onToggle,
               tooltip: finished
@@ -1222,6 +1247,21 @@ class _DevicesState extends State<_Devices> {
 ///
 /// In the vault rather than on this device, because it is a statement about
 /// the work and should be true on the phone as well.
+/// „Zur Liste" — dasselbe Blatt für ein Werk wie für eine Folge.
+class _ListButton extends StatelessWidget {
+  const _ListButton({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+    onPressed: () =>
+        unawaited(showAddToList(context, workId: work.id, label: work.title)),
+    icon: Icon(FundusIcons.lists, size: FundusIcons.sizeSm),
+    label: const Text('Zur Liste'),
+  );
+}
+
 class _FavouriteButton extends StatelessWidget {
   const _FavouriteButton({required this.work});
 

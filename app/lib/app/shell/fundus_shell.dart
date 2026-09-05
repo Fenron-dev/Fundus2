@@ -5,6 +5,8 @@ import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/downloads/downloads_screen.dart';
 import '../../features/library/library_screen.dart';
 import '../../features/library/search_screen.dart';
+import '../../features/lists/list_screen.dart';
+import '../../features/lists/lists_screen.dart';
 import '../../features/player/player_bar.dart';
 import '../../features/player/player_screen.dart';
 import '../../features/reader/reader_screen.dart';
@@ -272,6 +274,8 @@ class ShellContent extends StatelessWidget {
       WorkRoute(:final workId) => WorkScreen(workId: workId),
       SettingsRoute(:final category) => SettingsScreen(category: category),
       DownloadsRoute() => const DownloadsScreen(),
+      ListsRoute() => const ListsScreen(),
+      ListRoute(:final playlistId) => ListScreen(playlistId: playlistId),
       SearchRoute() => const SearchScreen(),
     };
   }
