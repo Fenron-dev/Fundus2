@@ -102,6 +102,18 @@ class AppSettings extends ChangeNotifier {
   /// the kind of chore a library should not have.
   bool get watchesLibrary => _values['watches_library'] != false;
 
+  /// The TMDB key, if this device has one.
+  ///
+  /// Here rather than in the vault, for the same reason the pairing tokens
+  /// are: a vault folder is shared by definition, and a key is a credential
+  /// belonging to the person, not to the library. AniList and Open Library
+  /// need none, so this stays empty for most people.
+  String get tmdbKey => _values['tmdb_key'] as String? ?? '';
+
+  /// Which language metadata is asked for.
+  String get metadataLanguage =>
+      _values['metadata_language'] as String? ?? 'de-DE';
+
   /// The Fundus installations this device has been paired with.
   ///
   /// Here rather than in the vault: each entry carries a bearer token, and a
@@ -179,6 +191,11 @@ class AppSettings extends ChangeNotifier {
       _set('player_panel_visible', value);
 
   Future<void> setWatchesLibrary(bool value) => _set('watches_library', value);
+
+  Future<void> setTmdbKey(String value) => _set('tmdb_key', value.trim());
+
+  Future<void> setMetadataLanguage(String value) =>
+      _set('metadata_language', value);
 
   Future<void> rememberVault(String path) async {
     final vaults = [path, ...recentVaults.where((entry) => entry != path)];

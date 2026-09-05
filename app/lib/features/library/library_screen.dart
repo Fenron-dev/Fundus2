@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fundus_design/fundus_design.dart';
 
@@ -6,6 +8,7 @@ import '../../app/fundus_scope.dart';
 import '../../data/media_type.dart';
 import '../../data/work_filter.dart';
 import '../../data/work_view.dart';
+import '../work/bulk_metadata.dart';
 import 'work_tile.dart';
 
 /// The one library view.
@@ -41,6 +44,9 @@ class LibraryScreen extends StatelessWidget {
           groupings: groupings,
           selected: grouping,
           onSelect: (mode) => scope.setFilter(filter.copyWith(grouping: mode)),
+          onMatchAll: works.isEmpty
+              ? null
+              : () => unawaited(_matchAll(context, scope, works)),
         ),
         Expanded(
           child: works.isEmpty
@@ -48,6 +54,27 @@ class LibraryScreen extends StatelessWidget {
               : _body(context, scope, works, grouping),
         ),
       ],
+    );
+  }
+
+  /// Fetching details for everything in view.
+  ///
+  /// Here rather than in a settings page: a shelf where the covers are
+  /// missing is looked at, and this is where somebody looking at it is.
+  Future<void> _matchAll(
+    BuildContext context,
+    FundusScopeState scope,
+    List<WorkView> works,
+  ) async {
+    final vault = scope.library.library;
+    if (vault == null || vault.isReadOnly) return;
+    await showBulkMetadata(
+      context,
+      works: works,
+      library: vault,
+      settings: scope.settings,
+      onChanged: scope.library.refresh,
+      mediaTypeId: route.mediaTypeId,
     );
   }
 
@@ -304,6 +331,7 @@ class _GroupingBar extends StatelessWidget {
     required this.groupings,
     required this.selected,
     required this.onSelect,
+    this.onMatchAll,
   });
 
   final String title;
@@ -311,6 +339,9 @@ class _GroupingBar extends StatelessWidget {
   final List<GroupingMode> groupings;
   final GroupingMode selected;
   final void Function(GroupingMode) onSelect;
+
+  /// Null where there is nothing to match — an empty view, a mirrored vault.
+  final VoidCallback? onMatchAll;
 
   /// Below this the heading and the sorting control no longer fit on one
   /// line — a phone, or a narrow window on a desktop.
@@ -337,6 +368,14 @@ class _GroupingBar extends StatelessWidget {
     ];
 
     final sorting = [
+      if (onMatchAll != null) ...[
+        IconButton(
+          onPressed: onMatchAll,
+          icon: Icon(FundusIcons.search, size: FundusIcons.sizeMd),
+          tooltip: 'Details für diese Ansicht holen',
+        ),
+        const SizedBox(width: FundusSpace.x2),
+      ],
       Text(
         'Ordnen nach',
         style: theme.textTheme.labelMedium?.copyWith(color: tokens.textFaint),

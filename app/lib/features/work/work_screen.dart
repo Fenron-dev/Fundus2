@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -7,7 +9,10 @@ import '../../data/download_controller.dart';
 import '../../media/reader_controller.dart';
 import '../../data/media_type.dart';
 import '../../data/work_view.dart';
+import '../../metadata/metadata_apply.dart';
 import '../library/work_cover.dart';
+import 'metadata_dialog.dart';
+import 'metadata_editor.dart';
 
 /// One work detail screen for every media type.
 ///
@@ -116,7 +121,10 @@ class _Hero extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: FundusSpace.x6),
-                Row(
+                Wrap(
+                  spacing: FundusSpace.x3,
+                  runSpacing: FundusSpace.x3,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     FilledButton.icon(
                       // Only what can be reached offers to play; everything
@@ -138,9 +146,8 @@ class _Hero extends StatelessWidget {
                             : (work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
                       ),
                     ),
-                    const SizedBox(width: FundusSpace.x3),
                     _OfflineButton(work: work),
-                    const SizedBox(width: FundusSpace.x3),
+                    _MetadataButtons(work: work),
                     if (work.summary.tags.isNotEmpty)
                       Wrap(
                         spacing: FundusSpace.x2,
@@ -156,6 +163,103 @@ class _Hero extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Fetching a work's details, and correcting them by hand.
+///
+/// Both sit here rather than in a menu somewhere: a work with the wrong title
+/// or no picture is looked at on its own page, and that is where somebody
+/// wants to do something about it. A mirrored work belongs to the machine
+/// that holds it and is not editable from here.
+class _MetadataButtons extends StatefulWidget {
+  const _MetadataButtons({required this.work});
+
+  final WorkView work;
+
+  @override
+  State<_MetadataButtons> createState() => _MetadataButtonsState();
+}
+
+class _MetadataButtonsState extends State<_MetadataButtons> {
+  bool _busy = false;
+
+  Future<void> _match(FundusScopeState scope) async {
+    final vault = scope.library.library;
+    if (vault == null) return;
+    final candidate = await showMetadataDialog(
+      context,
+      work: widget.work,
+      settings: scope.settings,
+    );
+    if (candidate == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final result = await applyMetadata(
+        library: vault,
+        work: widget.work,
+        candidate: candidate,
+      );
+      scope.library.refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            result.coverFailed
+                ? '„${result.title}" übernommen — das Titelbild kam nicht an.'
+                : result.coverFetched
+                ? '„${result.title}" übernommen, mit Titelbild.'
+                : '„${result.title}" übernommen.',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text('Nicht übernommen: $error')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _edit(FundusScopeState scope) async {
+    final vault = scope.library.library;
+    if (vault == null) return;
+    final saved = await showMetadataEditor(
+      context,
+      library: vault,
+      work: widget.work,
+    );
+    if (saved) scope.library.refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final vault = scope.library.library;
+    // A mirrored work is an index of something on another machine; its
+    // details are that machine's to change.
+    if (vault == null ||
+        vault.isReadOnly ||
+        widget.work.summary.sourceId != 'local') {
+      return const SizedBox.shrink();
+    }
+    return Wrap(
+      spacing: FundusSpace.x3,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => unawaited(_match(scope)),
+          icon: Icon(FundusIcons.search, size: FundusIcons.sizeSm),
+          label: Text(_busy ? 'Wird übernommen …' : 'Details abgleichen'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => unawaited(_edit(scope)),
+          icon: Icon(FundusIcons.edit, size: FundusIcons.sizeSm),
+          label: const Text('Bearbeiten'),
+        ),
+      ],
     );
   }
 }

@@ -1100,6 +1100,7 @@ final class FundusLibrary {
     String? contentSensitivity,
     List<String>? genres,
     String? contentStyle,
+    WorkMetadataSource source = WorkMetadataSource.user,
   }) async {
     _ensureWritable();
     _database.updateWorkMetadata(
@@ -1117,6 +1118,7 @@ final class FundusLibrary {
       contentSensitivity: contentSensitivity,
       genres: genres,
       contentStyle: contentStyle,
+      source: source,
     );
     await _writeMetadataSidecar(workId);
     return listWorks(

@@ -508,10 +508,15 @@ final class FundusDatabase {
     void write(String key, Object? value) {
       if (!accepts(key)) return;
       if (value == null || value is String && value.trim().isEmpty) {
+        // An empty field is not a claim on it. Someone who corrects a title
+        // and leaves the publisher blank has not decided that this work has
+        // no publisher — recording them as its author would lock the field
+        // for good and make every later match unable to fill it in.
         metadata.remove(key);
-      } else {
-        metadata[key] = value is String ? value.trim() : value;
+        origins.remove(key);
+        return;
       }
+      metadata[key] = value is String ? value.trim() : value;
       origins[key] =
           fieldOrigins[key] ??
           WorkMetadataOrigin(source: source, updatedAt: changedAt);

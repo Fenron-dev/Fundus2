@@ -68,14 +68,14 @@ void main() {
   });
 
   test('ranks provider candidates using alternate titles', () {
-    final matches = rankVideoProviderMatches('Star Wars', [
-      const VideoProviderCandidate(
+    final matches = rankMetadataCandidates('Star Wars', [
+      const MetadataCandidate(
         provider: 'tmdb',
         providerId: '11',
         title: 'Krieg der Sterne',
         alternateTitles: ['Star Wars'],
       ),
-      const VideoProviderCandidate(
+      const MetadataCandidate(
         provider: 'tmdb',
         providerId: '12',
         title: 'Star Trek',
@@ -88,7 +88,7 @@ void main() {
   });
 
   test('provider candidate JSON is portable and ignores malformed values', () {
-    const candidate = VideoProviderCandidate(
+    const candidate = MetadataCandidate(
       provider: 'anilist',
       providerId: '42',
       title: 'Cowboy Bebop',
@@ -97,12 +97,12 @@ void main() {
       genres: ['Action', 'Science Fiction'],
       externalIds: {'mal': '1'},
     );
-    final restored = VideoProviderCandidate.fromJson(candidate.toJson());
+    final restored = MetadataCandidate.fromJson(candidate.toJson());
 
     expect(restored?.provider, 'anilist');
     expect(restored?.releaseYear, 1998);
     expect(restored?.genres, ['Action', 'Science Fiction']);
     expect(restored?.externalIds['mal'], '1');
-    expect(VideoProviderCandidate.fromJson({'title': 'unvollständig'}), isNull);
+    expect(MetadataCandidate.fromJson({'title': 'unvollständig'}), isNull);
   });
 }
