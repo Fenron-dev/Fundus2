@@ -56,6 +56,82 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+/// The order the shelves stand in.
+///
+/// It used to be the order they were written down in, with a rule drawn
+/// between two of them for no reason anybody could name. Which shelf somebody
+/// reaches for first is their business.
+class _ShelfOrderCard extends StatelessWidget {
+  const _ShelfOrderCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final types = MediaTypes.ordered(scope.settings.mediaTypeOrder);
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Reihenfolge der Regale', style: theme.textTheme.titleSmall),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Gilt für die Seitenleiste, den Start und die Suche. Ziehen zum '
+            'Umsortieren.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x3),
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: types.length,
+            onReorder: (from, to) {
+              final moved = [...types];
+              final type = moved.removeAt(from);
+              moved.insert(to > from ? to - 1 : to, type);
+              unawaited(
+                scope.settings.setMediaTypeOrder([
+                  for (final entry in moved) entry.id,
+                ]),
+              );
+            },
+            itemBuilder: (context, index) {
+              final type = types[index];
+              return ListTile(
+                key: ValueKey(type.id),
+                dense: true,
+                leading: Icon(type.icon, size: FundusIcons.sizeMd),
+                title: Text(type.label),
+                trailing: ReorderableDragStartListener(
+                  index: index,
+                  child: Icon(
+                    FundusIcons.sort,
+                    size: FundusIcons.sizeMd,
+                    color: tokens.textFaint,
+                  ),
+                ),
+              );
+            },
+          ),
+          if (scope.settings.mediaTypeOrder.isNotEmpty) ...[
+            const SizedBox(height: FundusSpace.x2),
+            TextButton(
+              onPressed: () =>
+                  unawaited(scope.settings.setMediaTypeOrder(const [])),
+              child: const Text('Zurück zur Standardreihenfolge'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Every area, one tap away.
 ///
 /// The navigation column carries this list on a desktop. A phone has no
@@ -210,6 +286,7 @@ class _Appearance extends StatelessWidget {
             ],
           ),
         ),
+        const _ShelfOrderCard(),
         _Card(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

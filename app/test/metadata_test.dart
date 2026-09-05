@@ -322,6 +322,35 @@ void main() {
       expect(result.coverFetched, isFalse);
       expect(client.asked, isEmpty);
     });
+
+    test('ein geholtes Bild darf ein besseres bekommen', () async {
+      final client = FakeHttp(
+        (_) => http.Response.bytes(List.filled(32, 7), 200),
+      );
+      const candidate = MetadataCandidate(
+        provider: 'anilist',
+        providerId: '1',
+        title: 'Berserk',
+        posterUrl: 'https://bild/gross.jpg',
+      );
+
+      await applyMetadata(
+        library: library,
+        work: work,
+        client: client,
+        candidate: candidate,
+      );
+      // Beim zweiten Abgleich lag schon ein Bild da — geholt, nicht im
+      // Ordner. Wer erneut abgleicht, will das neuere Ergebnis.
+      final again = await applyMetadata(
+        library: library,
+        work: WorkView.fromSummary(library.listWorks().single),
+        client: client,
+        candidate: candidate,
+      );
+
+      expect(again.coverFetched, isTrue);
+    });
   });
 
   group('Podcasts kommen aus dem Apple-Verzeichnis', () {

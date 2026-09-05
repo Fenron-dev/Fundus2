@@ -148,6 +148,18 @@ class AppSettings extends ChangeNotifier {
     ]);
   }
 
+  /// The order the shelves stand in, as media type ids.
+  ///
+  /// Empty means the built-in order. A shelf missing from the list keeps its
+  /// place at the end, so this never has to be complete.
+  List<String> get mediaTypeOrder {
+    final value = _values['media_type_order'];
+    return value is List ? value.whereType<String>().toList() : const [];
+  }
+
+  Future<void> setMediaTypeOrder(List<String> value) =>
+      _set('media_type_order', value);
+
   /// Up to ten vault paths, most recent first.
   List<String> get recentVaults {
     final value = _values['recent_vaults'];

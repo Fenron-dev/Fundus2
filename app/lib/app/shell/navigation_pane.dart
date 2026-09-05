@@ -117,14 +117,15 @@ class NavigationPane extends StatelessWidget {
         ruleAfter: true,
         onTap: () => scope.openMediaType(null),
       ),
-      for (final type in MediaTypes.all)
+      // In der Reihenfolge, die der Nutzer gesetzt hat, und ohne Trennlinie
+      // mitten in der Liste: was oben und was unten steht, entscheidet er.
+      for (final type in MediaTypes.ordered(scope.settings.mediaTypeOrder))
         if ((counts[type.id] ?? 0) > 0 || !type.protected)
           NavigationEntry(
             label: type.label,
             icon: type.icon,
             count: _formatCount(counts[type.id] ?? 0),
             active: activeType == type.id,
-            ruleAfter: type.id == MediaTypes.photos.id,
             onTap: () => scope.openMediaType(type.id),
           ),
       if (unassigned > 0)

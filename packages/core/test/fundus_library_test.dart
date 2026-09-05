@@ -1234,6 +1234,41 @@ void main() {
     expect(() => FundusLibrary.open(root), throwsA(isA<FileSystemException>()));
   });
 
+  test('a save without a length keeps the length already known', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-total-');
+    addTearDown(() => root.delete(recursive: true));
+    final folder = Directory('${root.path}/Filme/About Time')
+      ..createSync(recursive: true);
+    File('${folder.path}/About Time.mkv').writeAsBytesSync(List.filled(64, 1));
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+    final work = library.listWorks().single;
+    final fileId = library.playbackTracks(work.id).single.fileId;
+
+    library.saveProgress(
+      workId: work.id,
+      fileId: fileId,
+      position: const Duration(minutes: 2),
+      duration: const Duration(minutes: 123),
+      deviceId: 'mac',
+    );
+    // The player writes again on pause, and by then it may not have been
+    // told the length — that used to wipe it, leaving a film with a position
+    // and no way to say how far along it was.
+    library.saveProgress(
+      workId: work.id,
+      fileId: fileId,
+      position: const Duration(minutes: 3),
+      deviceId: 'mac',
+    );
+
+    final after = library.listWorks().single;
+    expect(after.progressPosition, const Duration(minutes: 3));
+    expect(after.progressDuration, const Duration(minutes: 123));
+  });
+
   test('a single work carries the same cover path as the whole list', () async {
     final root = await Directory.systemTemp.createTemp('fundus-one-work-');
     addTearDown(() => root.delete(recursive: true));

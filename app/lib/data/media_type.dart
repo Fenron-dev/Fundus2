@@ -356,7 +356,10 @@ abstract final class MediaTypes {
     label: 'Musik',
     icon: FundusIcons.music,
     workKinds: const {'album', 'track', 'music'},
-    progressKind: ProgressKind.playCount,
+    // Ein angefangenes Album ist angefangen. Nur zu zählen, wie oft etwas
+    // lief, beantwortet die Frage „wo war ich" nicht — und ließ Musik aus
+    // „Fortsetzen" verschwinden.
+    progressKind: ProgressKind.seconds,
     tabs: const [WorkTab.files, WorkTab.properties],
   );
 
@@ -386,6 +389,23 @@ abstract final class MediaTypes {
     music,
     protectedType,
   ];
+
+  /// The shelves in the order somebody put them in.
+  ///
+  /// [order] names as many ids as it likes; what it does not name keeps its
+  /// place at the end, in the built-in order. So a list from an older version
+  /// of the app is never wrong, only incomplete — a new media type appears at
+  /// the bottom instead of disappearing.
+  static List<MediaTypeDefinition> ordered(List<String> order) {
+    final rest = [...all];
+    final sorted = <MediaTypeDefinition>[];
+    for (final id in order) {
+      final index = rest.indexWhere((type) => type.id == id);
+      if (index < 0) continue;
+      sorted.add(rest.removeAt(index));
+    }
+    return [...sorted, ...rest];
+  }
 
   static MediaTypeDefinition? byId(String id) {
     for (final type in all) {

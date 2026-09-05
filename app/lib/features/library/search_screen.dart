@@ -146,7 +146,7 @@ class _Shelves extends StatelessWidget {
     final scope = FundusScope.of(context);
     final counts = scope.library.worksPerMediaType;
     final types = [
-      for (final type in MediaTypes.all)
+      for (final type in MediaTypes.ordered(scope.settings.mediaTypeOrder))
         if ((counts[type.id] ?? 0) > 0) type,
     ];
 

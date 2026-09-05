@@ -29,6 +29,7 @@ final class LibraryWorkSummary {
     this.series,
     this.seriesSequence,
     this.coverPath,
+    this.hasFolderCover = false,
     this.backdropPath,
     this.language,
     this.subtitle,
@@ -69,6 +70,13 @@ final class LibraryWorkSummary {
   final String? series;
   final double? seriesSequence;
   final String? coverPath;
+
+  /// Whether the picture is a file lying next to the work rather than one
+  /// Fundus fetched.
+  ///
+  /// A `cover.jpg` in the folder is somebody's decision and stays; a fetched
+  /// one is only the best answer so far, and the next match may know better.
+  final bool hasFolderCover;
 
   /// A wide picture for the places a poster does not fill: the stage, the
   /// head of a detail page. Relative to the vault, like a cover.
@@ -135,6 +143,7 @@ final class LibraryWorkSummary {
         series: series,
         seriesSequence: seriesSequence,
         coverPath: coverPath,
+        hasFolderCover: hasFolderCover,
         backdropPath: backdropPath,
         language: language,
         subtitle: subtitle,
@@ -741,6 +750,7 @@ final class FundusDatabase {
              w.metadata_json, w.status, w.source_id, w.availability,
              COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
+             cover.path AS folder_cover_path,
              w.backdrop_path AS backdrop_path,
              progress.numeric_value AS progress_position,
              progress.position_kind AS progress_kind,
@@ -799,6 +809,7 @@ final class FundusDatabase {
               row['added_at'] as int,
             ),
             coverPath: row['cover_path'] as String?,
+            hasFolderCover: row['folder_cover_path'] != null,
             backdropPath: row['backdrop_path'] as String?,
             language: metadata['language'] as String?,
             subtitle: metadata['subtitle'] as String?,
@@ -1203,14 +1214,24 @@ final class FundusDatabase {
               'Verarbeitete Fortschrittsoperation ohne Zustand.',
             ));
       }
-      final revision = (loadProgress(workId)?.revision ?? 0) + 1;
+      final stored = loadProgress(workId);
+      final revision = (stored?.revision ?? 0) + 1;
       final now = DateTime.now().millisecondsSinceEpoch;
+      // How long the whole thing is does not change between two saves, and a
+      // player that has not been told yet must not be able to unsay it: a
+      // save without a total used to wipe the stored one, which left the work
+      // with a position, no length, and therefore no way to say how far along
+      // it is. It then vanished from "Fortsetzen" while still counting as
+      // recently played.
+      final total =
+          position.total ??
+          (stored?.position.fileId == fileId ? stored?.position.total : null);
       final mediaPosition = MediaPosition(
         kind: position.kind,
         schemaVersion: position.schemaVersion,
         numericValue: position.numericValue,
         key: position.key,
-        total: position.total,
+        total: total,
         fileId: fileId,
         chapterId: position.chapterId,
         elementId: position.elementId,

@@ -71,7 +71,12 @@ Future<MetadataApplyResult> applyMetadata({
   var fetched = false;
   var failed = false;
   final poster = candidate.posterUrl;
-  if (fetchCover && poster != null && summary.coverPath == null) {
+  // A `cover.jpg` in the folder is somebody's decision and is left alone. A
+  // picture Fundus fetched earlier is not — it was the best answer at the
+  // time, and this match is a newer one. Testing only for "has a cover at
+  // all" meant a work that once got a picture could never get a better one,
+  // and one whose first attempt failed stayed blank for good.
+  if (fetchCover && poster != null && !summary.hasFolderCover) {
     final bytes = await fetchCoverBytes(poster, client: client);
     if (bytes == null) {
       failed = true;

@@ -80,3 +80,34 @@ dart format --output=none --set-exit-if-changed app packages
 `Build macOS Preview` und `Build Android Preview` erzeugen die Artefakte und
 lassen sich auch von Hand starten (`workflow_dispatch`); lokal laufen nur
 Analyse, Format und Tests.
+
+### Android-Vorschau: der Signaturschlüssel
+
+Ohne hinterlegten Schlüssel signiert Gradle jede Vorschau mit einem
+Debug-Schlüssel, den der Runner neu erzeugt. Android lässt eine so signierte
+App nicht über die vorige installieren — man muss deinstallieren, und damit
+sind Einstellungen, gekoppelte Geräte und der Gerätename weg. Genau das ist
+der Grund, warum das Handy nach jedem Build neu verbunden werden muss.
+
+Abhilfe ist ein eigener Schlüssel, einmal erzeugt und als Repository-Secret
+hinterlegt. Der Schlüssel selbst gehört **nicht** ins Repository:
+
+```sh
+keytool -genkeypair -v -storetype PKCS12 \
+  -keystore fundus-preview.p12 -alias fundus \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 -i fundus-preview.p12 | pbcopy   # macOS
+```
+
+Unter *Settings → Secrets and variables → Actions* anlegen:
+
+| Secret | Inhalt |
+| --- | --- |
+| `FUNDUS_ANDROID_KEYSTORE_BASE64` | die kopierte Base64-Zeile |
+| `FUNDUS_ANDROID_STORE_PASSWORD` | das Keystore-Passwort |
+| `FUNDUS_ANDROID_KEY_ALIAS` | `fundus` |
+| `FUNDUS_ANDROID_KEY_PASSWORD` | das Schlüssel-Passwort |
+
+Die erste APK mit dem neuen Schlüssel muss noch einmal von Hand installiert
+werden (die alte deinstallieren); ab dann geht jedes Update in place, und die
+Kopplung bleibt.
