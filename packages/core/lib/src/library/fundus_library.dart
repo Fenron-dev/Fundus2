@@ -1269,7 +1269,8 @@ final class FundusLibrary {
   LibraryPlaylist savePlaylist({
     String? playlistId,
     required String name,
-    required List<String> workIds,
+    List<String> workIds = const [],
+    List<PlaylistEntry>? entries,
     String? mediaType,
   }) {
     _ensureWritable();
@@ -1277,7 +1278,86 @@ final class FundusLibrary {
       playlistId: playlistId,
       name: name,
       workIds: workIds,
+      entries: entries,
       mediaType: mediaType,
+    );
+  }
+
+  /// Puts one work — or one file of it — at the end of a list.
+  ///
+  /// Adding the same thing twice is not an error and not a duplicate: a list
+  /// somebody built by hand should not silently grow a second copy of a
+  /// track, so an entry that is already in the list stays where it is.
+  LibraryPlaylist addToPlaylist({
+    required String playlistId,
+    required PlaylistEntry entry,
+  }) {
+    _ensureWritable();
+    final playlist = _database.loadPlaylist(playlistId);
+    if (playlist == null) throw StateError('Liste wurde nicht gefunden.');
+    if (playlist.entries.contains(entry)) return playlist;
+    return _database.savePlaylist(
+      playlistId: playlistId,
+      name: playlist.name,
+      entries: [...playlist.entries, entry],
+      mediaType: playlist.mediaType,
+    );
+  }
+
+  /// Takes the line at [index] out. Positions decide, not identity: the same
+  /// track may legitimately be in a list twice.
+  LibraryPlaylist removeFromPlaylist({
+    required String playlistId,
+    required int index,
+  }) {
+    _ensureWritable();
+    final playlist = _database.loadPlaylist(playlistId);
+    if (playlist == null) throw StateError('Liste wurde nicht gefunden.');
+    if (index < 0 || index >= playlist.entries.length) return playlist;
+    final entries = [...playlist.entries]..removeAt(index);
+    return _database.savePlaylist(
+      playlistId: playlistId,
+      name: playlist.name,
+      entries: entries,
+      mediaType: playlist.mediaType,
+    );
+  }
+
+  /// Moves a line, the way a finger drags it: taken out at [from] and put
+  /// back at [to] in the list that no longer contains it.
+  LibraryPlaylist reorderPlaylist({
+    required String playlistId,
+    required int from,
+    required int to,
+  }) {
+    _ensureWritable();
+    final playlist = _database.loadPlaylist(playlistId);
+    if (playlist == null) throw StateError('Liste wurde nicht gefunden.');
+    final entries = [...playlist.entries];
+    if (from < 0 || from >= entries.length) return playlist;
+    final entry = entries.removeAt(from);
+    entries.insert(to.clamp(0, entries.length), entry);
+    return _database.savePlaylist(
+      playlistId: playlistId,
+      name: playlist.name,
+      entries: entries,
+      mediaType: playlist.mediaType,
+    );
+  }
+
+  /// Renames a list without touching what is in it.
+  LibraryPlaylist renamePlaylist({
+    required String playlistId,
+    required String name,
+  }) {
+    _ensureWritable();
+    final playlist = _database.loadPlaylist(playlistId);
+    if (playlist == null) throw StateError('Liste wurde nicht gefunden.');
+    return _database.savePlaylist(
+      playlistId: playlistId,
+      name: name,
+      entries: playlist.entries,
+      mediaType: playlist.mediaType,
     );
   }
 

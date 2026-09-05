@@ -653,7 +653,7 @@ final class FundusServerHandler {
     final playlist = entry.library.savePlaylist(
       name: values.name,
       mediaType: values.mediaType,
-      workIds: values.workIds,
+      entries: values.entries,
     );
     return _json(_playlistJson(playlist), statusCode: HttpStatus.created);
   }
@@ -699,7 +699,7 @@ final class FundusServerHandler {
       playlistId: playlistId,
       name: values.name,
       mediaType: values.mediaType,
-      workIds: values.workIds,
+      entries: values.entries,
     );
     return _json(_playlistJson(playlist));
   }
@@ -878,22 +878,52 @@ final class FundusServerHandler {
     }
   }
 
-  static ({String name, String? mediaType, List<String> workIds})?
+  /// Reads what a peer sent for a list.
+  ///
+  /// Two shapes are accepted: `work_ids`, which is what a peer that only
+  /// knows whole works sends, and `items`, which may name a single file
+  /// inside a work — an album is one work with a dozen tracks, and a
+  /// playlist of albums is not a playlist. `items` wins where both are
+  /// there, because it is the more exact statement of the same list.
+  static ({
+    String name,
+    String? mediaType,
+    List<String> workIds,
+    List<PlaylistEntry> entries,
+  })?
   _playlistValues(FundusLibrary library, Map<String, dynamic> decoded) {
     final name = decoded['name'];
     final mediaType = decoded['media_type'];
     final workIds = decoded['work_ids'];
+    final items = decoded['items'];
     if (name is! String ||
         name.trim().isEmpty ||
         name.trim().length > 200 ||
-        (mediaType != null && mediaType is! String) ||
-        workIds is! List ||
-        workIds.any((value) => value is! String)) {
+        (mediaType != null && mediaType is! String)) {
       return null;
     }
-    final normalizedIds = workIds.cast<String>();
-    if (normalizedIds.toSet().length != normalizedIds.length ||
-        normalizedIds.any((id) => _findWork(library, id) == null)) {
+    final List<PlaylistEntry> entries;
+    if (items is List) {
+      final parsed = <PlaylistEntry>[];
+      for (final item in items) {
+        if (item is! Map) return null;
+        final workId = item['work_id'];
+        final fileId = item['file_id'];
+        if (workId is! String || (fileId != null && fileId is! String)) {
+          return null;
+        }
+        parsed.add(PlaylistEntry(workId, fileId: fileId as String?));
+      }
+      entries = parsed;
+    } else if (workIds is List && workIds.every((value) => value is String)) {
+      entries = [for (final id in workIds.cast<String>()) PlaylistEntry(id)];
+    } else {
+      return null;
+    }
+    // Dieselbe Zeile zweimal ist ein Versehen; derselbe Titel einmal als
+    // Werk und einmal als Datei ist keins.
+    if (entries.toSet().length != entries.length ||
+        entries.any((entry) => _findWork(library, entry.workId) == null)) {
       return null;
     }
     final normalizedMediaType =
@@ -901,15 +931,17 @@ final class FundusServerHandler {
         ? mediaType.trim()
         : null;
     if (normalizedMediaType != null &&
-        normalizedIds.any(
-          (id) => _findWork(library, id)?.kind != normalizedMediaType,
+        entries.any(
+          (entry) =>
+              _findWork(library, entry.workId)?.kind != normalizedMediaType,
         )) {
       return null;
     }
     return (
       name: name.trim(),
       mediaType: normalizedMediaType,
-      workIds: normalizedIds,
+      workIds: [for (final entry in entries) entry.workId],
+      entries: entries,
     );
   }
 
@@ -1599,6 +1631,12 @@ final class FundusServerHandler {
     'kind': playlist.kind.name,
     'media_type': playlist.mediaType,
     'work_ids': playlist.workIds,
+    // Genauer als `work_ids`: eine Zeile darf eine einzelne Datei meinen.
+    // Ältere Gegenstellen lesen weiter nur die Werke.
+    'items': [
+      for (final entry in playlist.entries)
+        {'work_id': entry.workId, 'file_id': entry.fileId},
+    ],
     'revision': playlist.revision,
     'created_at': playlist.createdAt.toUtc().toIso8601String(),
     'updated_at': playlist.updatedAt.toUtc().toIso8601String(),

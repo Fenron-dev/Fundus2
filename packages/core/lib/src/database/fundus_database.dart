@@ -215,7 +215,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 13;
+  static const schemaVersion = 14;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -1618,10 +1618,13 @@ final class FundusDatabase {
   LibraryPlaylist savePlaylist({
     String? playlistId,
     required String name,
-    required List<String> workIds,
+    List<String> workIds = const [],
+    List<PlaylistEntry>? entries,
     LibraryPlaylistKind kind = LibraryPlaylistKind.manual,
     String? mediaType,
   }) {
+    final lines =
+        entries ?? [for (final workId in workIds) PlaylistEntry(workId)];
     final normalizedName = name.trim();
     if (normalizedName.isEmpty) {
       throw ArgumentError.value(name, 'name', 'Playlistname ist leer.');
@@ -1667,13 +1670,19 @@ final class FundusDatabase {
       _database.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
         id,
       ]);
-      for (var position = 0; position < workIds.length; position++) {
+      for (var position = 0; position < lines.length; position++) {
         _database.execute(
           '''
-          INSERT INTO playlist_items (id, playlist_id, work_id, position)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO playlist_items (id, playlist_id, work_id, file_id, position)
+          VALUES (?, ?, ?, ?, ?)
           ''',
-          [FundusId.generate(), id, workIds[position], position],
+          [
+            FundusId.generate(),
+            id,
+            lines[position].workId,
+            lines[position].fileId,
+            position,
+          ],
         );
       }
       return loadPlaylist(id)!;
@@ -1688,7 +1697,7 @@ final class FundusDatabase {
     final id = row['id'] as String;
     final items = _database.select(
       '''
-      SELECT work_id FROM playlist_items
+      SELECT work_id, file_id FROM playlist_items
       WHERE playlist_id = ?
       ORDER BY position
       ''',
@@ -1703,7 +1712,13 @@ final class FundusDatabase {
         orElse: () => LibraryPlaylistKind.manual,
       ),
       mediaType: row['media_type'] as String?,
-      workIds: items.map((item) => item['work_id'] as String).toList(),
+      entries: [
+        for (final item in items)
+          PlaylistEntry(
+            item['work_id'] as String,
+            fileId: item['file_id'] as String?,
+          ),
+      ],
       revision: row['revision'] as int,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
@@ -2860,6 +2875,7 @@ final class FundusDatabase {
     if (_database.userVersion == 10 && !readOnly) _migrateToVersion11();
     if (_database.userVersion == 11 && !readOnly) _migrateToVersion12();
     if (_database.userVersion == 12 && !readOnly) _migrateToVersion13();
+    if (_database.userVersion == 13 && !readOnly) _migrateToVersion14();
   }
 
   void _migrateToVersion1() {
@@ -3132,6 +3148,26 @@ final class FundusDatabase {
         _database.execute(statement);
       }
       _database.userVersion = 13;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  /// A line in a list may name one file.
+  ///
+  /// An album is one work with a dozen tracks; a playlist of albums is not
+  /// what anybody means by a playlist. The column stays empty for a whole
+  /// work, which is what a reading list is made of.
+  void _migrateToVersion14() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('playlist_items') &&
+          !columnExists('playlist_items', 'file_id')) {
+        _database.execute('ALTER TABLE playlist_items ADD COLUMN file_id TEXT');
+      }
+      _database.userVersion = 14;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -3427,6 +3463,7 @@ const _version1Statements = <String>[
     id TEXT PRIMARY KEY,
     playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
     work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    file_id TEXT,
     position INTEGER NOT NULL,
     UNIQUE (playlist_id, position)
   )
