@@ -24,6 +24,7 @@ import '../../data/work_filter.dart';
 import '../../data/server_host.dart';
 import '../library/unassigned_folders_card.dart';
 import '../../media/playback_preference.dart';
+import '../../media/track_preference.dart';
 import 'settings_catalog.dart';
 
 /// Settings, with the scope of each one visible.
@@ -591,11 +592,13 @@ class _LogCardState extends State<_LogCard> {
   }
 
   Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: _log.render()));
+    final text = _log.render();
+    await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.maybeOf(
-      context,
-    )?.showSnackBar(const SnackBar(content: Text('Protokoll kopiert.')));
+    final lines = '\n'.allMatches(text).length + 1;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text('Protokoll kopiert — $lines Zeilen.')),
+    );
   }
 
   Future<void> _save() async {
@@ -630,6 +633,15 @@ class _LogCardState extends State<_LogCard> {
               Expanded(
                 child: Text('Protokoll', style: theme.textTheme.titleMedium),
               ),
+              // Der eine Knopf, um den es hier geht. Er stand zwischen zwei
+              // anderen unter einem Absatz Text und war damit da, aber nicht
+              // zu finden — und Zeilen von Hand aus einer Liste zu markieren
+              // ist keine Art, ein Protokoll weiterzugeben.
+              IconButton(
+                onPressed: entries.isEmpty ? null : () => unawaited(_copy()),
+                icon: Icon(FundusIcons.copy, size: FundusIcons.sizeMd),
+                tooltip: 'Protokoll kopieren',
+              ),
               Switch(
                 value: _log.isEnabled,
                 onChanged: (value) => _log.setEnabled(value),
@@ -650,10 +662,10 @@ class _LogCardState extends State<_LogCard> {
             spacing: FundusSpace.x2,
             runSpacing: FundusSpace.x2,
             children: [
-              FilledButton.tonalIcon(
+              FilledButton.icon(
                 onPressed: entries.isEmpty ? null : () => unawaited(_copy()),
                 icon: Icon(FundusIcons.copy, size: FundusIcons.sizeSm),
-                label: const Text('Kopieren'),
+                label: const Text('Protokoll kopieren'),
               ),
               OutlinedButton(
                 onPressed: entries.isEmpty ? null : () => unawaited(_save()),
@@ -766,6 +778,185 @@ class _Fact extends StatelessWidget {
 ///
 /// All three are habits rather than properties of a work — someone who
 /// listens at 1.4× listens to everything at 1.4× — so they are kept per
+/// Which language a film is watched in, once and for all files.
+///
+/// Picking the track by hand in every episode is the thing this replaces: a
+/// wish for the audio, and one rule for the subtitles. A choice made by hand
+/// still wins for the file it was made in — this decides what happens when
+/// nobody says anything.
+class _LanguageCard extends StatelessWidget {
+  const _LanguageCard();
+
+  static const _languages = <String, String>{
+    'de': 'Deutsch',
+    'en': 'Englisch',
+    'ja': 'Japanisch',
+    'fr': 'Französisch',
+    'es': 'Spanisch',
+    'it': 'Italienisch',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final rules = scope.player.preference;
+    final wish = rules.audioWishes.firstOrNull;
+    final second = rules.audioWishes.length > 1 ? rules.audioWishes[1] : null;
+
+    void save({
+      List<String>? audioWishes,
+      List<String>? understood,
+      SubtitleRule? subtitleRule,
+      String? subtitleWish,
+      bool clearSubtitleWish = false,
+    }) {
+      unawaited(
+        scope.setTrackRules(
+          rules.withRules(
+            audioWishes: audioWishes ?? rules.audioWishes,
+            understood: understood ?? rules.understood,
+            subtitleRule: subtitleRule ?? rules.subtitleRule,
+            subtitleWish: clearSubtitleWish
+                ? null
+                : subtitleWish ?? rules.subtitleWish,
+          ),
+        ),
+      );
+    }
+
+    List<String> withFirst(String? language) => [
+      ?language,
+      if (second != null && second != language) second,
+    ];
+
+    List<String> withSecond(String? language) => [
+      ?wish,
+      if (language != null && language != wish) language,
+    ];
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Sprache', style: theme.textTheme.titleMedium),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Der Ton wird in dieser Reihenfolge gesucht. Was eine Datei nicht '
+            'hat, wird nicht erzwungen — dann bleibt ihre eigene Wahl stehen.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x4),
+          Text('Ton, am liebsten', style: theme.textTheme.labelLarge),
+          const SizedBox(height: FundusSpace.x2),
+          _LanguageChips(
+            selected: wish,
+            onSelected: (value) => save(audioWishes: withFirst(value)),
+          ),
+          const SizedBox(height: FundusSpace.x4),
+          Text('Sonst', style: theme.textTheme.labelLarge),
+          const SizedBox(height: FundusSpace.x2),
+          _LanguageChips(
+            selected: second,
+            onSelected: (value) => save(audioWishes: withSecond(value)),
+          ),
+          const SizedBox(height: FundusSpace.x6),
+          Text('Untertitel', style: theme.textTheme.titleMedium),
+          const SizedBox(height: FundusSpace.x2),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            children: [
+              for (final rule in SubtitleRule.values)
+                ChoiceChip(
+                  selected: rules.subtitleRule == rule,
+                  onSelected: (_) => save(subtitleRule: rule),
+                  label: Text(rule.label),
+                ),
+            ],
+          ),
+          if (rules.subtitleRule == SubtitleRule.whenForeign ||
+              rules.subtitleRule == SubtitleRule.always) ...[
+            const SizedBox(height: FundusSpace.x4),
+            Text('Untertitel in', style: theme.textTheme.labelLarge),
+            const SizedBox(height: FundusSpace.x2),
+            _LanguageChips(
+              selected: rules.subtitleWish,
+              onSelected: (value) =>
+                  save(subtitleWish: value, clearSubtitleWish: value == null),
+            ),
+          ],
+          if (rules.subtitleRule == SubtitleRule.whenForeign) ...[
+            const SizedBox(height: FundusSpace.x4),
+            Text(
+              'Sprachen, die ich ohne Untertitel verstehe',
+              style: theme.textTheme.labelLarge,
+            ),
+            const SizedBox(height: FundusSpace.x2),
+            Text(
+              'Der gewünschte Ton zählt immer dazu. Alles andere führt zu '
+              'Untertiteln.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: tokens.textFaint,
+              ),
+            ),
+            const SizedBox(height: FundusSpace.x2),
+            Wrap(
+              spacing: FundusSpace.x2,
+              runSpacing: FundusSpace.x2,
+              children: [
+                for (final entry in _languages.entries)
+                  FilterChip(
+                    selected: rules.understood.contains(entry.key),
+                    onSelected: (on) => save(
+                      understood: on
+                          ? [...rules.understood, entry.key]
+                          : rules.understood
+                                .where((code) => code != entry.key)
+                                .toList(),
+                    ),
+                    label: Text(entry.value),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LanguageChips extends StatelessWidget {
+  const _LanguageChips({required this.selected, required this.onSelected});
+
+  final String? selected;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: FundusSpace.x2,
+    runSpacing: FundusSpace.x2,
+    children: [
+      ChoiceChip(
+        selected: selected == null,
+        onSelected: (_) => onSelected(null),
+        label: const Text('Egal'),
+      ),
+      for (final entry in _LanguageCard._languages.entries)
+        ChoiceChip(
+          selected:
+              selected != null &&
+              TrackPreference.normalise(selected!) == entry.key,
+          onSelected: (_) => onSelected(entry.key),
+          label: Text(entry.value),
+        ),
+    ],
+  );
+}
+
 /// device, in the vault, where a reinstall cannot take them.
 class _Playback extends StatelessWidget {
   const _Playback();
@@ -805,6 +996,7 @@ class _Playback extends StatelessWidget {
             ],
           ),
         ),
+        const _LanguageCard(),
         _Card(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

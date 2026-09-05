@@ -206,6 +206,22 @@ class AppSettings extends ChangeNotifier {
   Future<void> setMetadataLanguage(String value) =>
       _set('metadata_language', value);
 
+  /// The security bookmarks that let macOS reach a folder again after a
+  /// restart, by folder. They belong to this machine and this installation,
+  /// never to the vault.
+  Map<String, String> get vaultBookmarks {
+    final value = _values['vault_bookmarks'];
+    if (value is! Map) return const {};
+    return {
+      for (final entry in value.entries)
+        if (entry.key is String && entry.value is String)
+          entry.key as String: entry.value as String,
+    };
+  }
+
+  Future<void> setVaultBookmarks(Map<String, String> value) =>
+      _set('vault_bookmarks', value);
+
   Future<void> rememberVault(String path) async {
     final vaults = [path, ...recentVaults.where((entry) => entry != path)];
     await _set('recent_vaults', vaults.take(10).toList());
@@ -216,6 +232,10 @@ class AppSettings extends ChangeNotifier {
       'recent_vaults',
       recentVaults.where((entry) => entry != path).toList(),
     );
+    final bookmarks = vaultBookmarks;
+    if (bookmarks.containsKey(path)) {
+      await setVaultBookmarks({...bookmarks}..remove(path));
+    }
   }
 
   Future<void> _set(String key, Object? value) async {

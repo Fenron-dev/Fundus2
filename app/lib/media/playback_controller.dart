@@ -208,12 +208,21 @@ class PlaybackController extends ChangeNotifier {
   Future<void> _applyPreference() async {
     if (_appliedPreference || _tracks.audio.isEmpty) return;
     _appliedPreference = true;
+    // Which language ends up playing decides the subtitles, so the audio is
+    // settled first and the answer handed on: the rule is about what came
+    // out, not about what was asked for.
+    var spoken = _tracks.audio
+        .where((track) => track.id == _tracks.selectedAudioId)
+        .firstOrNull
+        ?.language;
     if (preference.audioFor(_tracks.audio) case final track?) {
+      spoken = track.language ?? spoken;
       if (track.id != _tracks.selectedAudioId) {
         await _engine.selectAudioTrack(track.id);
       }
     }
-    if (preference.subtitleFor(_tracks.subtitles) case final track?) {
+    if (preference.subtitleFor(_tracks.subtitles, spokenLanguage: spoken)
+        case final track?) {
       if (track.id != _tracks.selectedSubtitleId) {
         await _engine.selectSubtitleTrack(track.id);
       }

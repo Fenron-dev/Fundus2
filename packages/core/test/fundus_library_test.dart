@@ -1233,6 +1233,28 @@ void main() {
 
     expect(() => FundusLibrary.open(root), throwsA(isA<FileSystemException>()));
   });
+
+  test('a single work carries the same cover path as the whole list', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-one-work-');
+    addTearDown(() => root.delete(recursive: true));
+    final folder = Directory('${root.path}/Manga/Klingenwind')
+      ..createSync(recursive: true);
+    File('${folder.path}/Band 01.cbz').writeAsBytesSync([1, 2, 3]);
+    File('${folder.path}/cover.jpg').writeAsBytesSync(List.filled(8, 1));
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final listed = library.listWorks().single;
+    // Asking for one work used to skip the step that turns the stored,
+    // vault-relative path into a real one — so anything that refreshed a
+    // single work stripped it of its cover.
+    final single = library.workSummary(listed.id)!;
+    expect(single.coverPath, listed.coverPath);
+    expect(single.coverPath, isNotNull);
+    expect(File(single.coverPath!).existsSync(), isTrue);
+  });
 }
 
 List<int> _m4bWithJpegCover() => _atom('moov', [

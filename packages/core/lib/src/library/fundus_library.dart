@@ -951,8 +951,15 @@ final class FundusLibrary {
       _database.loadProgress(workId);
 
   /// One work as the list would show it — for refreshing a single row.
-  LibraryWorkSummary? workSummary(String workId) =>
-      _database.workSummary(workId);
+  /// One work, in the same shape [listWorks] hands them out.
+  ///
+  /// The absolute-path step is not optional decoration: without it the cover
+  /// comes back as a vault-relative path, no file is found under it, and the
+  /// work loses its picture the moment anything refreshes it on its own.
+  LibraryWorkSummary? workSummary(String workId) {
+    final work = _database.workSummary(workId);
+    return work == null ? null : _withAbsoluteCoverPath(work);
+  }
 
   List<LibraryPlaybackRevision> listProgressRevisions(String workId) =>
       _database.listProgressRevisions(workId);

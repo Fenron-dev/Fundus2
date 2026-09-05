@@ -71,4 +71,73 @@ void main() {
     expect(read.audioLanguage, 'ger');
     expect(read.subtitleLanguage, TrackPreference.off);
   });
+
+  group('Die Standardsprache gilt, wenn niemand etwas sagt', () {
+    const rules = TrackPreference(
+      audioWishes: ['de', 'en'],
+      subtitleRule: SubtitleRule.whenForeign,
+      subtitleWish: 'de',
+    );
+
+    test('Deutsch wird genommen, wo es Deutsch gibt', () {
+      expect(rules.audioFor([japanese, german, english])?.id, '2');
+      // Und ohne Untertitel: der gewünschte Ton zählt als verstanden.
+      expect(rules.subtitleFor([off, german], spokenLanguage: 'ger')?.id, 'no');
+    });
+
+    test('sonst die zweite Wahl', () {
+      expect(rules.audioFor([japanese, english])?.id, '3');
+    });
+
+    test('bleibt nur eine fremde Sprache, kommen Untertitel an', () {
+      const onlyJapanese = TrackPreference(
+        audioWishes: ['de'],
+        subtitleRule: SubtitleRule.whenForeign,
+        subtitleWish: 'de',
+      );
+      final subtitles = [off, german];
+
+      // Der Ton bleibt, wie die Datei ihn hat — erzwungen wird nichts.
+      expect(onlyJapanese.audioFor([japanese]), isNull);
+      expect(
+        onlyJapanese.subtitleFor(subtitles, spokenLanguage: 'jpn')?.id,
+        '2',
+      );
+    });
+
+    test('was von Hand gewählt wurde, schlägt die Vorgabe', () {
+      const chosen = TrackPreference(audioLanguage: 'jpn', audioWishes: ['de']);
+
+      expect(chosen.audioFor([japanese, german])?.id, '1');
+      // Und wo es die Handwahl nicht gibt, trägt wieder die Vorgabe.
+      expect(chosen.audioFor([german, english])?.id, '2');
+    });
+
+    test('eine neue Vorgabe vergisst die alte Handwahl', () {
+      const chosen = TrackPreference(audioLanguage: 'jpn');
+      final fresh = chosen.withRules(
+        audioWishes: const ['de'],
+        understood: const [],
+        subtitleRule: SubtitleRule.never,
+      );
+
+      expect(fresh.audioLanguage, isNull);
+      expect(fresh.audioFor([japanese, german])?.id, '2');
+    });
+
+    test('ohne Regel wird nichts umgeschaltet', () {
+      const nothing = TrackPreference();
+
+      expect(nothing.audioFor([japanese, german]), isNull);
+      expect(nothing.subtitleFor([off, german], spokenLanguage: 'jpn'), isNull);
+    });
+
+    test('eine Regel übersteht das Speichern', () {
+      final restored = TrackPreference.fromJson(rules.toJson());
+
+      expect(restored.audioWishes, ['de', 'en']);
+      expect(restored.subtitleRule, SubtitleRule.whenForeign);
+      expect(restored.subtitleWish, 'de');
+    });
+  });
 }

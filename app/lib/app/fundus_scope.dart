@@ -33,6 +33,7 @@ import 'fundus_log.dart';
 import 'fullscreen.dart';
 import 'pairing_scanner.dart';
 import 'storage_access.dart';
+import 'vault_access.dart';
 import 'app_settings.dart';
 
 /// The app's shared state, handed down once instead of threaded through every
@@ -56,6 +57,7 @@ class FundusScope extends StatefulWidget {
     this.supportRoot,
     this.captureSink = const FileCaptureSink(),
     this.storage = const PlatformStorageAccess(),
+    this.vaultAccess,
     this.scanner = const CameraPairingScanner(),
   });
 
@@ -101,6 +103,10 @@ class FundusScope extends StatefulWidget {
 
   /// Whether the device lets the app read its files. Only Android asks.
   final StorageAccess storage;
+
+  /// How the permission to read the library folder is kept across restarts.
+  /// Supplied by a test; the app builds one from the platform it runs on.
+  final VaultAccess? vaultAccess;
 
   /// How a pairing code is read off the other screen. The default opens the
   /// camera, which a test has none of.
@@ -153,6 +159,15 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   AppSettings get settings => widget.settings;
   CaptureSink get captureSink => widget.captureSink;
   StorageAccess get storage => widget.storage;
+
+  late final VaultAccess vaultAccess =
+      widget.vaultAccess ??
+      (SecurityScopedVaultAccess.platformNeedsIt
+          ? SecurityScopedVaultAccess(
+              read: () => settings.vaultBookmarks,
+              write: settings.setVaultBookmarks,
+            )
+          : const OpenVaultAccess());
   PairingScanner get scanner => widget.scanner;
   LibraryController get library => widget.library;
   WorkFilter get filter => _filter;
@@ -770,6 +785,13 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
 
   Future<void> _saveTrackPreference(TrackPreference value) =>
       _writeProfileSection(videoProfileKind, value.toJson());
+
+  /// Changes the standing language rules, and remembers them.
+  Future<void> setTrackRules(TrackPreference value) async {
+    player.preference = value;
+    await _saveTrackPreference(value);
+    _bump();
+  }
 
   /// Changes how this device plays, and remembers it.
   Future<void> setPlaybackHabits(PlaybackPreference value) async {

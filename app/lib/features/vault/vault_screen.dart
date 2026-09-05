@@ -186,16 +186,29 @@ class VaultScreen extends StatelessWidget {
       return;
     }
     if (selected == null) return;
-    await _open(scope, selected, createIfMissing: createIfMissing);
+    await _open(
+      scope,
+      selected,
+      createIfMissing: createIfMissing,
+      fromDialog: true,
+    );
   }
 
   static Future<void> _open(
     FundusScopeState scope,
     String path, {
     required bool createIfMissing,
+    bool fromDialog = false,
   }) async {
+    // Ein Ordner, den der Nutzer im Dialog gewählt hat, ist offen; einer aus
+    // der Liste braucht die Erlaubnis von damals zurück. Ohne sie meldet
+    // macOS „Cannot open file" für einen Ordner, der einwandfrei da ist.
+    if (!fromDialog) await scope.vaultAccess.unlock(path);
     await scope.library.open(Directory(path), createIfMissing: createIfMissing);
     if (!scope.library.isOpen) return;
+    // Erst jetzt, mit offener Bibliothek: die Erlaubnis steht, und genau die
+    // wird für den nächsten Start festgehalten.
+    if (fromDialog) await scope.vaultAccess.remember(path);
     await scope.settings.rememberVault(path);
     // The vault carries this device's own settings; after a reinstall this is
     // where they come back from.
@@ -223,7 +236,13 @@ class _RecentVaultTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
     final tokens = context.fundus;
-    final exists = Directory(path).existsSync();
+    // Ein Ordner, für den eine Erlaubnis hinterlegt ist, gilt als erreichbar,
+    // auch wenn die Abfrage jetzt gerade nichts sieht: unter der Sandbox
+    // antwortet er erst, nachdem die Erlaubnis zurückgeholt wurde, und die
+    // wird beim Antippen zurückgeholt.
+    final exists =
+        Directory(path).existsSync() ||
+        scope.settings.vaultBookmarks.containsKey(path);
     final name = path.split(Platform.pathSeparator).last;
 
     return Padding(
