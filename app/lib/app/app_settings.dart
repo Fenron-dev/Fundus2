@@ -110,6 +110,12 @@ class AppSettings extends ChangeNotifier {
   /// need none, so this stays empty for most people.
   String get tmdbKey => _values['tmdb_key'] as String? ?? '';
 
+  /// Whether the reading position question has been answered for good.
+  ///
+  /// „Künftig immer die weiteste Stelle" — set from the sheet itself, because
+  /// that is where somebody realises they never want to be asked again.
+  bool get alwaysFurthestPosition => _values['always_furthest'] == true;
+
   /// Which language metadata is asked for.
   String get metadataLanguage =>
       _values['metadata_language'] as String? ?? 'de-DE';
@@ -191,6 +197,9 @@ class AppSettings extends ChangeNotifier {
       _set('player_panel_visible', value);
 
   Future<void> setWatchesLibrary(bool value) => _set('watches_library', value);
+
+  Future<void> setAlwaysFurthestPosition(bool value) =>
+      _set('always_furthest', value);
 
   Future<void> setTmdbKey(String value) => _set('tmdb_key', value.trim());
 

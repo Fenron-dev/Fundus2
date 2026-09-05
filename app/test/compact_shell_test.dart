@@ -7,7 +7,7 @@ import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/app/fundus_scope.dart';
 import 'package:fundus/app/shell/fundus_shell.dart';
 import 'package:fundus/data/library_controller.dart';
-import 'package:fundus/features/library/work_tile.dart';
+import 'package:fundus/features/library/work_poster.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
@@ -155,17 +155,23 @@ void main() {
   });
 
   test('die Kachelhöhe wächst mit Spaltenbreite und Schriftgröße', () {
-    double extent(double width, double scale) => workTileExtent(
-      tileWidth: width,
-      density: FundusDensity.comfortable,
-      textScaler: TextScaler.linear(scale),
-    );
+    double extent(double width, double scale) =>
+        workPosterExtent(width: width, textScaler: TextScaler.linear(scale));
 
-    // Das Cover ist 2:3, also bestimmt die Breite den Löwenanteil.
+    // Das Bild ist 2:3, also bestimmt die Breite den Löwenanteil.
     expect(extent(160, 1), greaterThan(extent(120, 1)));
     // Und größere Schrift braucht mehr Platz, nicht denselben.
     expect(extent(160, 1.6), greaterThan(extent(160, 1)));
-    // Vier Textzeilen plus Cover — nie weniger als das Cover selbst.
-    expect(extent(160, 1), greaterThan((160 - 24) * 3 / 2));
+    // Zwei Textzeilen plus Bild — nie weniger als das Bild selbst.
+    expect(extent(160, 1), greaterThan(160 * 3 / 2));
+    // Ohne Beschriftung ist es genau das Bild.
+    expect(
+      workPosterExtent(
+        width: 160,
+        textScaler: TextScaler.noScaling,
+        withName: false,
+      ),
+      160 * 3 / 2,
+    );
   });
 }

@@ -12,4 +12,5 @@ export 'src/theme/fundus_tokens.dart';
 export 'src/tokens/fundus_icons.dart';
 export 'src/tokens/fundus_metrics.dart';
 export 'src/tokens/fundus_palette.dart';
+export 'src/tokens/fundus_stage.dart';
 export 'src/tokens/fundus_typography.dart';

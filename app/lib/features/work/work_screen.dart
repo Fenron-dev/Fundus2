@@ -10,7 +10,7 @@ import '../../media/reader_controller.dart';
 import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import '../../metadata/metadata_apply.dart';
-import '../library/work_cover.dart';
+import '../library/work_poster.dart';
 import 'metadata_dialog.dart';
 import 'metadata_editor.dart';
 
@@ -74,7 +74,7 @@ class _Hero extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 132, child: WorkCover(work: work)),
+          SizedBox(width: 132, child: WorkArtwork(work: work)),
           const SizedBox(width: FundusSpace.x8),
           Expanded(
             child: Column(

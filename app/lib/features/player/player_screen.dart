@@ -7,7 +7,7 @@ import '../../app/fundus_scope.dart';
 import '../../media/playback_preference.dart';
 import '../../media/playback_controller.dart';
 import '../../media/playback_engine.dart';
-import '../library/work_cover.dart';
+import '../library/work_poster.dart';
 
 /// The full player, laid over the shell.
 ///
@@ -387,7 +387,7 @@ class _Transport extends StatelessWidget {
         children: [
           SizedBox(
             width: compact ? 220 : 260,
-            child: WorkCover(work: work, showProgress: false),
+            child: WorkArtwork(work: work, showProgress: false),
           ),
           const SizedBox(height: FundusSpace.x8),
           Text(

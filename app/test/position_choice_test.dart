@@ -143,6 +143,55 @@ void main() {
     expect(library.library!.progressChoice(workId), isNull);
   });
 
+  testWidgets('„immer die weiteste Stelle" fragt kein zweites Mal', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.runAsync(disagree);
+    final player = PlaybackController(engine: FakeEngine());
+    addTearDown(player.dispose);
+
+    late FundusScopeState scope;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: FundusTheme.dark(),
+        home: FundusScope(
+          settings: settings,
+          library: library,
+          player: player,
+          child: Builder(
+            builder: (context) {
+              scope = FundusScope.of(context);
+              return const FundusShell();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final asking = scope.settlePosition(library.library!, library.works.single);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Künftig immer die weiteste Stelle'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Ab '));
+    await tester.pumpAndSettle();
+    await asking;
+
+    expect(settings.alwaysFurthestPosition, isTrue);
+
+    // Und beim nächsten Mal steht die Frage gar nicht mehr auf.
+    await tester.runAsync(disagree);
+    final again = scope.settlePosition(library.library!, library.works.single);
+    await tester.pumpAndSettle();
+    expect(find.text('Wo weitermachen?'), findsNothing);
+    await again;
+    expect(library.library!.progressChoice(workId), isNull);
+  });
+
   testWidgets('beim Öffnen wird gefragt, und die Antwort gilt', (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
@@ -175,10 +224,15 @@ void main() {
     final asking = scope.settlePosition(library.library!, library.works.single);
     await tester.pumpAndSettle();
 
-    expect(find.text('Zwei Stände'), findsOneWidget);
+    expect(find.text('Wo weitermachen?'), findsOneWidget);
     expect(find.textContaining(other.origin), findsWidgets);
+    // Die weitere Stelle ist vorgewählt — meistens die Antwort. Hier wird
+    // aber ausdrücklich die andere gewählt, denn genau das ist der Sinn.
+    expect(find.text('weiteste'), findsOneWidget);
+    await tester.tap(find.textContaining(other.origin).last);
+    await tester.pumpAndSettle();
 
-    await tester.tap(find.textContaining('Stand von ${other.origin}'));
+    await tester.tap(find.textContaining('Ab '));
     await tester.pumpAndSettle();
     await asking;
 

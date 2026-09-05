@@ -9,7 +9,9 @@ import '../../data/media_type.dart';
 import '../../data/work_filter.dart';
 import '../../data/work_view.dart';
 import '../work/bulk_metadata.dart';
-import 'work_tile.dart';
+import 'stage_screen.dart';
+import 'work_poster.dart';
+import 'work_row.dart';
 
 /// The one library view.
 ///
@@ -51,7 +53,7 @@ class LibraryScreen extends StatelessWidget {
         Expanded(
           child: works.isEmpty
               ? _empty(context, scope)
-              : _body(context, scope, works, grouping),
+              : _body(context, scope, works, grouping, type),
         ),
       ],
     );
@@ -106,10 +108,19 @@ class LibraryScreen extends StatelessWidget {
     FundusScopeState scope,
     List<WorkView> works,
     GroupingMode grouping,
+    MediaTypeDefinition? type,
   ) {
     void open(WorkView work) => scope.navigation.go(WorkRoute(work.id));
 
     if (grouping == GroupingMode.tiles) {
+      // A shelf of films or series leads with something to watch rather than
+      // with a wall of equal thumbnails. Drilled into a group, or filtered
+      // down to a search, the stage would be in the way of the answer.
+      if (StageScreen.suits(type) &&
+          route.group == null &&
+          scope.filter.text.isEmpty) {
+        return StageScreen(works: works, type: type, onOpen: open);
+      }
       return _TileGrid(works: works, onOpen: open);
     }
     if (grouping == GroupingMode.table) {
@@ -236,6 +247,12 @@ class LibraryScreen extends StatelessWidget {
   }
 }
 
+/// Every other shelf, in the same artwork the stage uses.
+///
+/// One look for a library: the poster carries the work, its name sits under
+/// it, and the panel that used to be drawn around each tile is gone. What
+/// changes between a phone and a desktop is how wide a poster is, and that is
+/// one number on [FundusStageSize] rather than a rule per screen.
 class _TileGrid extends StatelessWidget {
   const _TileGrid({required this.works, required this.onOpen});
 
@@ -244,34 +261,42 @@ class _TileGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final density = context.fundus.density;
-    const padding = EdgeInsets.all(FundusSpace.x6);
+    final stage = FundusStageSize.of(context);
+    final compact = context.fundus.density == FundusDensity.compact;
+    final target = compact ? stage.posterWidth * .78 : stage.posterWidth;
+    final padding = EdgeInsets.fromLTRB(
+      stage.gutter,
+      FundusSpace.x4,
+      stage.gutter,
+      FundusSpace.x16,
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // The same arithmetic the delegate below uses, so the height can be
-        // worked out for the width a tile will actually get.
         final available = constraints.maxWidth - padding.horizontal;
-        final columns = (available / density.tileMinWidth).ceil().clamp(1, 12);
-        final tileWidth = (available - density.gap * (columns - 1)) / columns;
-
-        // A grid of thousands of tiles has to be virtualised;
-        // GridView.builder only builds what is on screen.
+        final columns = ((available + stage.railGap) / (target + stage.railGap))
+            .floor()
+            .clamp(2, 12);
+        final width = (available - stage.railGap * (columns - 1)) / columns;
+        // A grid of thousands has to be virtualised; GridView.builder only
+        // builds what is on screen.
         return GridView.builder(
           padding: padding,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            mainAxisSpacing: density.gap,
-            crossAxisSpacing: density.gap,
-            mainAxisExtent: workTileExtent(
-              tileWidth: tileWidth,
-              density: density,
+            mainAxisSpacing: FundusSpace.x6,
+            crossAxisSpacing: stage.railGap,
+            mainAxisExtent: workPosterExtent(
+              width: width,
               textScaler: MediaQuery.textScalerOf(context),
             ),
           ),
           itemCount: works.length,
-          itemBuilder: (context, index) =>
-              WorkTile(work: works[index], onTap: () => onOpen(works[index])),
+          itemBuilder: (context, index) => WorkPoster(
+            work: works[index],
+            width: width,
+            onTap: () => onOpen(works[index]),
+          ),
         );
       },
     );

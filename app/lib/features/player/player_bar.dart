@@ -3,7 +3,7 @@ import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
 import '../../media/playback_controller.dart';
-import '../library/work_cover.dart';
+import '../library/work_poster.dart';
 
 /// The player strip below the content column.
 ///
@@ -32,7 +32,7 @@ class PlayerBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          SizedBox(width: 42, child: WorkCover(work: work, aspectRatio: 1)),
+          SizedBox(width: 42, child: WorkArtwork(work: work, aspectRatio: 1)),
           const SizedBox(width: FundusSpace.x3),
           Expanded(
             flex: 3,
@@ -158,7 +158,7 @@ class CompactPlayerBar extends StatelessWidget {
               children: [
                 SizedBox(
                   width: 34,
-                  child: WorkCover(work: work, aspectRatio: 1),
+                  child: WorkArtwork(work: work, aspectRatio: 1),
                 ),
                 const SizedBox(width: FundusSpace.x3),
                 Expanded(

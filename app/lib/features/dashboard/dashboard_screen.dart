@@ -6,7 +6,7 @@ import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/work_view.dart';
 import '../library/unassigned_folders_card.dart';
-import '../library/work_cover.dart';
+import '../library/work_poster.dart';
 
 /// The daily entry point: continue first, everything else after.
 class DashboardScreen extends StatelessWidget {
@@ -233,7 +233,7 @@ class _WorkStrip extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: WorkCover(work: work)),
+                  Expanded(child: WorkArtwork(work: work)),
                   const SizedBox(height: FundusSpace.x2),
                   Text(
                     work.title,

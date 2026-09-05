@@ -2210,46 +2210,59 @@ class _SyncState extends State<_Sync> {
     return FutureBuilder<List<DeviceProfile>>(
       future: profiles,
       builder: (context, snapshot) {
-        final others = (snapshot.data ?? const <DeviceProfile>[])
-            .where((profile) => profile.key != scope.settings.deviceKey)
-            .toList();
-        if (others.isEmpty) return const SizedBox.shrink();
+        final all = snapshot.data ?? const <DeviceProfile>[];
+        if (all.isEmpty) return const SizedBox.shrink();
+        final mine = all
+            .where((profile) => profile.key == scope.settings.deviceKey)
+            .firstOrNull;
+        final others =
+            all
+                .where((profile) => profile.key != scope.settings.deviceKey)
+                .toList()
+              ..sort(
+                (left, right) => (right.updatedAt ?? DateTime(0)).compareTo(
+                  left.updatedAt ?? DateTime(0),
+                ),
+              );
         return _Card(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Einstellungen übernehmen',
-                style: theme.textTheme.titleMedium,
-              ),
+              Text('Geräte-Einstellungen', style: theme.textTheme.titleMedium),
               const SizedBox(height: FundusSpace.x2),
               Text(
-                'Diese Bibliothek trägt Einstellungen anderer Geräte. Nach '
-                'einer Neuinstallation lassen sie sich hier zurückholen — die '
-                'Kennung bleibt dabei diese.',
+                'Lese- und Playereinstellungen liegen bei der Bibliothek, '
+                'nicht in der App — eine Neuinstallation kostet sie deshalb '
+                'nicht. Sie kostet allerdings die Kennung: das neu '
+                'installierte Fundus ist für die Bibliothek ein neues Gerät, '
+                'und der alte Eintrag bleibt liegen. Hier lässt er sich '
+                'zurückholen oder wegräumen.',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: tokens.textMuted,
                 ),
               ),
               const SizedBox(height: FundusSpace.x4),
+              if (mine != null)
+                _ProfileRow(
+                  profile: mine,
+                  current: true,
+                  onAdopt: null,
+                  onForget: null,
+                ),
               for (final profile in others)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: FundusSpace.x2),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${profile.displayName}'
-                          '${profile.platform.isEmpty ? '' : ' · ${profile.platform}'}',
-                          style: theme.textTheme.bodyMedium,
-                        ),
-                      ),
-                      OutlinedButton(
-                        onPressed: () => scope.adoptDeviceProfile(profile),
-                        child: const Text('Übernehmen'),
-                      ),
-                    ],
-                  ),
+                _ProfileRow(
+                  profile: profile,
+                  current: false,
+                  onAdopt: () async {
+                    await scope.adoptDeviceProfile(profile);
+                    if (context.mounted) _reloadProfiles(context);
+                  },
+                  onForget: () async {
+                    await scope.library.library?.deleteDeviceProfile(
+                      profile.key,
+                    );
+                    if (context.mounted) _reloadProfiles(context);
+                  },
                 ),
             ],
           ),
@@ -2258,11 +2271,115 @@ class _SyncState extends State<_Sync> {
     );
   }
 
+  void _reloadProfiles(BuildContext context) {
+    final library = FundusScope.of(context).library.library;
+    setState(() => _profiles = library?.listDeviceProfiles());
+  }
+
   static String _when(DateTime value) {
     final local = value.toLocal();
     String two(int number) => number.toString().padLeft(2, '0');
     return '${two(local.day)}.${two(local.month)}. ${two(local.hour)}:'
         '${two(local.minute)}';
+  }
+}
+
+/// One device's settings as they lie in the vault.
+///
+/// The current one is named as such and cannot be adopted from or thrown
+/// away — the reason six entries piled up unrecognisably is that nothing
+/// said which of them was this device, and nothing offered to remove the
+/// rest.
+class _ProfileRow extends StatefulWidget {
+  const _ProfileRow({
+    required this.profile,
+    required this.current,
+    required this.onAdopt,
+    required this.onForget,
+  });
+
+  final DeviceProfile profile;
+  final bool current;
+  final Future<void> Function()? onAdopt;
+  final Future<void> Function()? onForget;
+
+  @override
+  State<_ProfileRow> createState() => _ProfileRowState();
+}
+
+class _ProfileRowState extends State<_ProfileRow> {
+  bool _busy = false;
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final profile = widget.profile;
+    final updated = profile.updatedAt;
+    final subtitle = [
+      if (profile.platform.isNotEmpty) profile.platform,
+      if (updated != null) 'zuletzt ${_SyncState._when(updated)}',
+      if (profile.settings.isEmpty) 'keine Einstellungen',
+    ].join(' · ');
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: FundusSpace.x3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            widget.current ? FundusIcons.check : FundusIcons.devices,
+            size: FundusIcons.sizeMd,
+            color: widget.current ? tokens.accent : tokens.textFaint,
+          ),
+          const SizedBox(width: FundusSpace.x3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.current
+                      ? '${profile.displayName} · dieses Gerät'
+                      : profile.displayName,
+                  style: theme.textTheme.bodyMedium,
+                ),
+                if (subtitle.isNotEmpty)
+                  Text(
+                    subtitle,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: tokens.textFaint,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (!widget.current) ...[
+            const SizedBox(width: FundusSpace.x2),
+            TextButton(
+              onPressed: _busy || widget.onForget == null
+                  ? null
+                  : () => unawaited(_run(widget.onForget!)),
+              child: const Text('Entfernen'),
+            ),
+            OutlinedButton(
+              onPressed: _busy || widget.onAdopt == null
+                  ? null
+                  : () => unawaited(_run(widget.onAdopt!)),
+              child: const Text('Übernehmen'),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 

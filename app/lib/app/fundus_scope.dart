@@ -27,7 +27,7 @@ import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
-import '../features/work/progress_choice_dialog.dart';
+import '../features/work/progress_choice_sheet.dart';
 import 'app_navigation.dart';
 import 'fundus_log.dart';
 import 'fullscreen.dart';
@@ -477,15 +477,34 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       vault.clearProgressChoice(work.id);
       return;
     }
+    // Somebody who has said „immer die weiteste Stelle" has answered this
+    // question once and for all; asking again is not asking, it is nagging.
+    if (settings.alwaysFurthestPosition) {
+      final furthest =
+          (other.position.numericValue ?? 0) >
+          (mine?.position.numericValue ?? 0);
+      if (furthest) {
+        vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
+      } else {
+        vault.clearProgressChoice(work.id);
+      }
+      library.refreshWork(work.id);
+      return;
+    }
     if (!mounted) return;
-    final takeTheirs = await showProgressChoiceDialog(
+    final answer = await showProgressChoiceSheet(
       context,
       work: work,
       other: other,
       mine: mine,
       thisDevice: settings.deviceName,
     );
-    if (takeTheirs) {
+    // Dismissed without answering: stay here, and stop asking about this one.
+    // A question that comes back every time is not a question.
+    if (answer?.always ?? false) {
+      await settings.setAlwaysFurthestPosition(true);
+    }
+    if (answer?.takeOther ?? false) {
       vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
     } else {
       vault.clearProgressChoice(work.id);
