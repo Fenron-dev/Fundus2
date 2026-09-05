@@ -20,7 +20,8 @@ enum MetadataProviderKind {
   anilistAnime('AniList (Anime)'),
   anilistManga('AniList (Manga & Manhwa)'),
   tmdb('TMDB (Filme & Serien)'),
-  openLibrary('Open Library (Bücher)');
+  openLibrary('Open Library (Bücher)'),
+  applePodcasts('Apple Podcasts');
 
   const MetadataProviderKind(this.label);
 
@@ -49,6 +50,10 @@ enum MetadataProviderKind {
         ],
         'novel' => const [
           MetadataProviderKind.anilistManga,
+          MetadataProviderKind.openLibrary,
+        ],
+        'podcast' => const [
+          MetadataProviderKind.applePodcasts,
           MetadataProviderKind.openLibrary,
         ],
         _ => const [
@@ -87,6 +92,7 @@ MetadataProvider providerFor(
   ),
   MetadataProviderKind.tmdb => TmdbProvider(apiKey: apiKey, client: client),
   MetadataProviderKind.openLibrary => OpenLibraryProvider(client: client),
+  MetadataProviderKind.applePodcasts => ApplePodcastProvider(client: client),
 };
 
 /// Combines providers and applies the same local ranking to all of them.
@@ -484,6 +490,110 @@ final class OpenLibraryProvider implements MetadataProvider {
           : null,
       externalIds: {'openlibrary': key.replaceFirst('/works/', '')},
     );
+  }
+}
+
+/// Apple's podcast directory, through the public search interface.
+///
+/// It is the one catalogue of podcasts that answers without an account, and
+/// it knows what a shelf full of episode files does not: the show's own name,
+/// who makes it, its subject tags and its artwork. There is no wide picture
+/// here — a podcast has square artwork and nothing else — and no per-episode
+/// detail; those live in the feed, which is a separate matter from matching
+/// the show.
+final class ApplePodcastProvider implements MetadataProvider {
+  ApplePodcastProvider({http.Client? client, this.endpoint = _defaultEndpoint})
+    : _client = client ?? http.Client();
+
+  static const _defaultEndpoint = 'https://itunes.apple.com/search';
+  final http.Client _client;
+  final String endpoint;
+
+  @override
+  String get provider => 'apple_podcasts';
+
+  @override
+  Future<List<MetadataCandidate>> search(
+    String query, {
+    int limit = 10,
+    String? language,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) return const [];
+    final response = await _request(
+      _client.get(
+        Uri.parse(endpoint).replace(
+          queryParameters: {
+            'term': normalizedQuery,
+            'media': 'podcast',
+            'entity': 'podcast',
+            'limit': '${limit.clamp(1, 50)}',
+            if (language != null && language.length == 2)
+              'country': language.toUpperCase(),
+          },
+        ),
+        headers: const {'accept': 'application/json'},
+      ),
+    );
+    final data = _decodeObject(response, provider);
+    final results = data['results'];
+    if (results is! List) return const [];
+    return [
+      for (final value in results)
+        if (value is Map) ?_candidate(value),
+    ];
+  }
+
+  Future<http.Response> _request(Future<http.Response> request) async {
+    try {
+      return await request.timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      throw MetadataProviderException(provider, 'Zeitüberschreitung');
+    } on MetadataProviderException {
+      rethrow;
+    } on Object catch (error) {
+      throw MetadataProviderException(provider, 'Netzwerk: $error');
+    }
+  }
+
+  MetadataCandidate? _candidate(Map value) {
+    final title = _firstString([value['collectionName'], value['trackName']]);
+    final id = value['collectionId'];
+    if (title == null || id is! num) return null;
+    final genres = value['genres'] is List
+        ? (value['genres'] as List)
+              .whereType<String>()
+              // „Podcasts" ist die Gattung, kein Thema.
+              .where((genre) => genre.toLowerCase() != 'podcasts')
+              .take(8)
+              .toList(growable: false)
+        : const <String>[];
+    final host = _firstString([value['artistName']]);
+    return MetadataCandidate(
+      provider: provider,
+      providerId: '${id.round()}',
+      title: title,
+      authors: [?host],
+      workKind: 'podcast',
+      releaseYear: _year(value['releaseDate']),
+      episodeCount: (value['trackCount'] as num?)?.round(),
+      genres: genres,
+      isAdult: value['collectionExplicitness'] == 'explicit',
+      posterUrl: _firstString([
+        value['artworkUrl600'],
+        value['artworkUrl100'],
+        value['artworkUrl60'],
+      ]),
+      externalIds: {
+        'itunes': '${id.round()}',
+        'feed': ?_firstString([value['feedUrl']]),
+      },
+    );
+  }
+
+  static int? _year(Object? value) {
+    if (value is! String || value.length < 4) return null;
+    return int.tryParse(value.substring(0, 4));
   }
 }
 

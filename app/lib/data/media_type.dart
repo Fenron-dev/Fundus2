@@ -138,7 +138,7 @@ abstract final class MediaTypes {
     configurationKind: 'audiobook',
     label: 'Hörbücher',
     icon: FundusIcons.audiobook,
-    workKinds: const {'audiobook', 'podcast', 'podcast_episode'},
+    workKinds: const {'audiobook'},
     progressKind: ProgressKind.seconds,
     tabs: const [
       WorkTab.files,
@@ -152,6 +152,34 @@ abstract final class MediaTypes {
       GroupingMode.table,
       GroupingMode.author,
       GroupingMode.series,
+      GroupingMode.folder,
+    ],
+  );
+
+  /// Podcasts are not audiobooks.
+  ///
+  /// They landed in the same shelf because both are folders full of audio,
+  /// but nothing else about them matches: a podcast has a show and episodes
+  /// rather than an author and chapters, it grows over time instead of
+  /// ending, and what is worth knowing about it — the host, the guests, the
+  /// tags — is not what is worth knowing about a novel.
+  static final podcasts = MediaTypeDefinition(
+    id: 'podcast',
+    configurationKind: 'podcast',
+    label: 'Podcasts',
+    icon: FundusIcons.podcast,
+    workKinds: const {'podcast', 'podcast_episode'},
+    progressKind: ProgressKind.seconds,
+    tabs: const [
+      WorkTab.episodes,
+      WorkTab.cast,
+      WorkTab.notes,
+      WorkTab.properties,
+      WorkTab.devices,
+    ],
+    groupings: const [
+      GroupingMode.tiles,
+      GroupingMode.table,
       GroupingMode.folder,
     ],
   );
@@ -345,6 +373,7 @@ abstract final class MediaTypes {
   /// Navigation order, as in the prototype.
   static List<MediaTypeDefinition> get all => [
     audiobook,
+    podcasts,
     movies,
     series,
     anime,

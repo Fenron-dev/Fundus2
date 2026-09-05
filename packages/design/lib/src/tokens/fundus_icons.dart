@@ -34,6 +34,7 @@ abstract final class FundusIcons {
 
   // Media types.
   static final audiobook = PhosphorIcons.headphones();
+  static final podcast = PhosphorIcons.microphoneStage();
   static final film = PhosphorIcons.filmSlate();
   static final series = PhosphorIcons.monitorPlay();
   static final anime = PhosphorIcons.sparkle();

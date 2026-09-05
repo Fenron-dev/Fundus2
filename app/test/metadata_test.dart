@@ -323,4 +323,65 @@ void main() {
       expect(client.asked, isEmpty);
     });
   });
+
+  group('Podcasts kommen aus dem Apple-Verzeichnis', () {
+    test('eine Antwort wird zu einem Vorschlag', () async {
+      final client = FakeHttp(
+        (request) => http.Response(
+          jsonEncode({
+            'resultCount': 1,
+            'results': [
+              {
+                'collectionId': 1437,
+                'collectionName': 'Lage der Nation',
+                'artistName': 'Philip Banse & Ulf Buermeyer',
+                'artworkUrl600': 'https://bild/podcast600.jpg',
+                'genres': ['News', 'Podcasts', 'Politics'],
+                'trackCount': 412,
+                'releaseDate': '2026-08-30T04:00:00Z',
+                'collectionExplicitness': 'cleaned',
+                'feedUrl': 'https://lagedernation.org/feed/mp3/',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+
+      final results = await ApplePodcastProvider(
+        client: client,
+      ).search('Lage der Nation');
+
+      final candidate = results.single;
+      expect(candidate.title, 'Lage der Nation');
+      expect(candidate.authors, ['Philip Banse & Ulf Buermeyer']);
+      expect(candidate.workKind, 'podcast');
+      expect(candidate.episodeCount, 412);
+      expect(candidate.releaseYear, 2026);
+      expect(candidate.posterUrl, 'https://bild/podcast600.jpg');
+      // Die Gattung ist kein Thema.
+      expect(candidate.genres, ['News', 'Politics']);
+      expect(candidate.externalIds['feed'], contains('lagedernation'));
+    });
+
+    test('eine Antwort ohne Kennung wird übergangen', () async {
+      final client = FakeHttp(
+        (request) => http.Response(
+          jsonEncode({
+            'results': [
+              {'collectionName': 'Ohne Nummer'},
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+
+      expect(
+        await ApplePodcastProvider(client: client).search('irgendwas'),
+        isEmpty,
+      );
+    });
+  });
 }
