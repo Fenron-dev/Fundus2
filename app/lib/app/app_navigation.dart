@@ -20,13 +20,20 @@ final class DashboardRoute extends FundusRoute {
 }
 
 final class LibraryRoute extends FundusRoute {
-  const LibraryRoute({this.mediaTypeId, this.group});
+  const LibraryRoute({this.mediaTypeId, this.group, this.subgroup});
 
   /// Null shows everything the vault holds.
   final String? mediaTypeId;
 
   /// A group the user descended into — a folder, a series, a system.
   final String? group;
+
+  /// A second step below it.
+  ///
+  /// „Urheber" is the one grouping with a level under it that is worth
+  /// walking: an author's shelf is series and single books, and a series is
+  /// its volumes in order. Everywhere else this stays null.
+  final String? subgroup;
 
   LibraryRoute withGroup(String? value) =>
       LibraryRoute(mediaTypeId: mediaTypeId, group: value);

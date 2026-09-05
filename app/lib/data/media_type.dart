@@ -140,6 +140,13 @@ abstract final class MediaTypes {
       WorkTab.properties,
       WorkTab.devices,
     ],
+    groupings: const [
+      GroupingMode.tiles,
+      GroupingMode.table,
+      GroupingMode.author,
+      GroupingMode.series,
+      GroupingMode.folder,
+    ],
   );
 
   static final movies = MediaTypeDefinition(
@@ -227,6 +234,13 @@ abstract final class MediaTypes {
       WorkTab.properties,
       WorkTab.devices,
     ],
+    groupings: const [
+      GroupingMode.tiles,
+      GroupingMode.table,
+      GroupingMode.author,
+      GroupingMode.series,
+      GroupingMode.folder,
+    ],
   );
 
   static final books = MediaTypeDefinition(
@@ -247,6 +261,7 @@ abstract final class MediaTypes {
     groupings: const [
       GroupingMode.tiles,
       GroupingMode.table,
+      GroupingMode.author,
       GroupingMode.series,
       GroupingMode.folder,
     ],

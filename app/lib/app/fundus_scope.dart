@@ -313,13 +313,23 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     _bump();
   }
 
-  void _bump() => setState(() => _revision++);
+  /// Tells the screens below that something they read has changed.
+  ///
+  /// Every state change in this scope has to go through here. The screens
+  /// depend on an inherited widget whose `updateShouldNotify` compares this
+  /// number and nothing else, so a `setState` that does not raise it rebuilds
+  /// this widget and reaches none of them: „Ordnen nach" changed the filter
+  /// and left the same view on the screen.
+  void _bump([VoidCallback? change]) => setState(() {
+    change?.call();
+    _revision++;
+  });
 
-  void setFilter(WorkFilter value) => setState(() => _filter = value);
+  void setFilter(WorkFilter value) => _bump(() => _filter = value);
 
   /// Shows one machine's shelf, or all of them again.
   void showSource(String? sourceId) {
-    setState(() {
+    _bump(() {
       _filter = _filter.copyWith(
         sourceId: sourceId,
         clearSource: sourceId == null,
@@ -330,7 +340,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
 
   /// Opens a saved view: the filter it stored, and the library showing it.
   void applySavedView(LibrarySavedView view) {
-    setState(() => _filter = WorkFilterQuery.fromQuery(view.query));
+    _bump(() => _filter = WorkFilterQuery.fromQuery(view.query));
     navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
   }
 
@@ -433,7 +443,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// Opens a media type. The filter follows the place, so switching areas
   /// never leaves a stale filter behind that would explain an empty screen.
   void openMediaType(String? mediaTypeId) {
-    setState(() {
+    _bump(() {
       _filter = _filter.copyWith(
         mediaTypeId: mediaTypeId,
         clearMediaType: mediaTypeId == null,

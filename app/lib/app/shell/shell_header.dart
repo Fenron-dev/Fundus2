@@ -90,14 +90,23 @@ class ShellHeader extends StatelessWidget {
     ];
     final route = scope.navigation.current;
     switch (route) {
-      case LibraryRoute(:final mediaTypeId, :final group):
+      case LibraryRoute(:final mediaTypeId, :final group, :final subgroup):
         final type = mediaTypeId == null ? null : MediaTypes.byId(mediaTypeId);
         steps.add(
           PathStep(type?.label ?? 'Alle Werke', () {
             scope.navigation.go(LibraryRoute(mediaTypeId: mediaTypeId));
           }),
         );
-        if (group != null) steps.add(PathStep(group));
+        if (group != null) {
+          steps.add(
+            PathStep(group, () {
+              scope.navigation.go(
+                LibraryRoute(mediaTypeId: mediaTypeId, group: group),
+              );
+            }),
+          );
+        }
+        if (subgroup != null) steps.add(PathStep(subgroup));
       case WorkRoute(:final workId):
         final work = scope.library.workById(workId);
         final type = work?.mediaType;

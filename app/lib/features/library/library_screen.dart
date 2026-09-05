@@ -100,7 +100,11 @@ class LibraryScreen extends StatelessWidget {
         works,
         grouping,
       ).where((entry) => entry.label == openGroup).firstOrNull;
-      return _TileGrid(works: group?.works ?? const [], onOpen: open);
+      final inGroup = group?.works ?? const <WorkView>[];
+      if (grouping != GroupingMode.author) {
+        return _TileGrid(works: inGroup, onOpen: open);
+      }
+      return _authorShelf(context, scope, inGroup, open);
     }
 
     final groups = WorkGrouping.group(works, grouping);
@@ -116,6 +120,92 @@ class LibraryScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// One author's shelf: their series, then the books that stand alone.
+  ///
+  /// This is the step „Urheber" was missing. Grouping by author landed on a
+  /// flat wall of every volume they ever wrote, with the seven parts of one
+  /// series lying beside the three of another and nothing saying which was
+  /// which. A series is one row here, and opening it gives its volumes in
+  /// their own order — which is the order a series is read in, not the
+  /// alphabet.
+  Widget _authorShelf(
+    BuildContext context,
+    FundusScopeState scope,
+    List<WorkView> works,
+    void Function(WorkView) open,
+  ) {
+    final openSeries = route.subgroup;
+    if (openSeries != null) {
+      final volumes =
+          works.where((work) => work.summary.series == openSeries).toList()
+            ..sort(_bySequence);
+      return _TileGrid(works: volumes, onOpen: open);
+    }
+
+    final series = <String, List<WorkView>>{};
+    final loose = <WorkView>[];
+    for (final work in works) {
+      final name = work.summary.series?.trim();
+      if (name == null || name.isEmpty) {
+        loose.add(work);
+      } else {
+        series.putIfAbsent(name, () => []).add(work);
+      }
+    }
+    final names = series.keys.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    if (names.isEmpty) {
+      return _TileGrid(works: loose..sort(_bySequence), onOpen: open);
+    }
+
+    return ListView(
+      children: [
+        for (final name in names)
+          _GroupRow(
+            group: WorkGroup(label: name, works: series[name]!),
+            onTap: () => scope.navigation.go(
+              LibraryRoute(
+                mediaTypeId: route.mediaTypeId,
+                group: route.group,
+                subgroup: name,
+              ),
+            ),
+          ),
+        if (loose.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              FundusSpace.x6,
+              FundusSpace.x6,
+              FundusSpace.x6,
+              FundusSpace.x2,
+            ),
+            child: Text(
+              'Einzeln',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+          ),
+          for (final work in loose..sort(_bySequence))
+            WorkRow(work: work, onTap: () => open(work)),
+        ],
+      ],
+    );
+  }
+
+  /// Volumes go in the order they were written, not the order of the alphabet.
+  static int _bySequence(WorkView left, WorkView right) {
+    final leftNumber = left.summary.seriesSequence;
+    final rightNumber = right.summary.seriesSequence;
+    if (leftNumber != null &&
+        rightNumber != null &&
+        leftNumber != rightNumber) {
+      return leftNumber.compareTo(rightNumber);
+    }
+    if (leftNumber != null && rightNumber == null) return -1;
+    if (leftNumber == null && rightNumber != null) return 1;
+    return left.title.toLowerCase().compareTo(right.title.toLowerCase());
   }
 }
 
