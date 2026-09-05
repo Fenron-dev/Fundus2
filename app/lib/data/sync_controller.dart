@@ -169,6 +169,67 @@ class SyncController extends ChangeNotifier {
   /// this exists for is finishing an episode on the phone and finding the
   /// Mac at the same place. It reports nothing and disturbs nothing: a peer
   /// that is asleep simply does not answer.
+  /// How long a machine gets to answer before playback goes ahead.
+  ///
+  /// This runs between pressing play and anything happening, so it is short
+  /// on purpose. A Mac that is asleep must cost a moment, not the evening.
+  static const askTimeout = Duration(milliseconds: 1800);
+
+  /// Asks every paired machine where *this one work* stands, right now.
+  ///
+  /// The periodic round is the wrong tool for the question „ich habe eben am
+  /// Mac aufgehört, wo bin ich?" — it runs over the whole catalogue, at its
+  /// own rhythm, about works nobody is thinking about. One work, one call, at
+  /// the moment somebody wants that work, is what makes a position show up
+  /// straight away on whichever device is picked up next.
+  ///
+  /// Returns the furthest position any machine reports, or null when nobody
+  /// answers in time and when nobody has anything.
+  Future<({RemoteProgress progress, String peerName})?> furthestElsewhere(
+    String workId,
+  ) async {
+    final vault = library.library;
+    if (vault == null || peers.isEmpty) return null;
+    final asked = await Future.wait([
+      for (final peer in peers) _askOne(peer, vault, workId),
+    ]);
+    ({RemoteProgress progress, String peerName})? best;
+    for (final answer in asked) {
+      if (answer == null) continue;
+      final theirs = answer.progress.position.numericValue ?? 0;
+      final bestSoFar = best?.progress.position.numericValue ?? -1;
+      if (theirs > bestSoFar) best = answer;
+    }
+    return best;
+  }
+
+  Future<({RemoteProgress progress, String peerName})?> _askOne(
+    PeerConnection peer,
+    FundusLibrary vault,
+    String workId,
+  ) async {
+    final client = _connect(peer);
+    try {
+      final libraryId = await _libraryIdFor(
+        peer,
+        client,
+        vault,
+      ).timeout(askTimeout);
+      if (libraryId == null) return null;
+      final progress = await client
+          .progress(libraryId, workId)
+          .timeout(askTimeout);
+      if (progress == null) return null;
+      return (progress: progress, peerName: peer.name);
+    } on Object {
+      // A machine that is off, asleep or slow is not news here: the work
+      // opens at the position this device knows.
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> pushWork(String workId) async {
     final vault = library.library;
     if (vault == null || peers.isEmpty || _busy) return;

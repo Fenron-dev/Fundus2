@@ -111,6 +111,44 @@ void main() {
     await controller().syncWith(peer());
   }
 
+  test('der Stand vom anderen Gerät ist sofort abrufbar', () async {
+    // Kein Abgleich, keine Taste — nur: drüben wurde weitergehört.
+    await settings.savePeer(peer());
+    library.library!.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 12),
+      deviceId: settings.deviceKey,
+    );
+    theirs.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 40),
+      deviceId: 'mac-geraet',
+    );
+
+    final elsewhere = await controller().furthestElsewhere(workId);
+
+    expect(elsewhere, isNotNull);
+    expect(elsewhere!.peerName, 'mac');
+    expect(elsewhere.progress.position.numericValue, closeTo(40 * 60, 1));
+    // Und das ganz ohne Abgleich: hier steht weiterhin der eigene Stand.
+    expect(
+      library.library!.loadProgress(workId)!.position.numericValue,
+      closeTo(12 * 60, 1),
+    );
+  });
+
+  test('ein Gerät, das nicht antwortet, hält nichts auf', () async {
+    await settings.savePeer(peer());
+    // Ein Server, den es nicht gibt: der Aufruf muss trotzdem zurückkommen.
+    registry.close();
+
+    final elsewhere = await controller().furthestElsewhere(workId);
+
+    expect(elsewhere, isNull);
+  });
+
   test('die Seite, die verliert, bleibt als Frage stehen', () async {
     await disagree();
 

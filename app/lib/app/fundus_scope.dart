@@ -298,6 +298,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);
     peerLibraries.removeListener(_wireSources);
+    _pushTimer?.cancel();
     player.removeListener(_syncWhenClosed);
     reader.removeListener(_syncWhenClosed);
     textReader.removeListener(_syncWhenClosed);
@@ -408,15 +409,36 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     final open = playing ?? reading ?? texting;
     if (open != null) {
       _lastOpenWorkId = open;
+      // Pausing is where somebody stops, not where they close. „Ich höre am
+      // Mac auf und nehme das Handy" is a pause and a walk away, and if the
+      // position only leaves on closing, the phone finds nothing.
+      if (playing != null && !player.isPlaying) _pushSoon(playing);
       return;
     }
     final closed = _lastOpenWorkId;
     if (closed == null) return;
     _lastOpenWorkId = null;
-    unawaited(sync.pushWork(closed));
+    _pushSoon(closed);
   }
 
   String? _lastOpenWorkId;
+  Timer? _pushTimer;
+  String? _pushing;
+
+  /// Sends one work's position out, at most once every few seconds.
+  ///
+  /// Pausing, seeking and stopping arrive as a burst of notifications; a call
+  /// per notification would be a burst of network for one decision. The delay
+  /// is short enough that picking up the other device finds it there.
+  void _pushSoon(String workId) {
+    if (_pushing == workId && (_pushTimer?.isActive ?? false)) return;
+    _pushing = workId;
+    _pushTimer?.cancel();
+    _pushTimer = Timer(const Duration(seconds: 2), () {
+      _pushing = null;
+      unawaited(sync.pushWork(workId));
+    });
+  }
 
   /// Starts or resumes a work. One entry point, whatever the media type — a
   /// screen never decides between a player and a reader, and neither asks
@@ -470,6 +492,15 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// staying here: a question that comes back every time is not a question.
   Future<void> settlePosition(FundusLibrary vault, WorkView work) async {
     if (vault.isReadOnly) return;
+    // First ask the other machines about this one work, right now.
+    //
+    // Waiting for the periodic round is what made a position take until the
+    // next start to show up: it runs over the whole catalogue, at its own
+    // rhythm, about works nobody is thinking about. Stopping on the Mac and
+    // picking up the phone is one work and one moment, so it is one call —
+    // with a short deadline, because this sits between pressing play and
+    // anything happening.
+    await _askElsewhere(vault, work);
     final other = vault.progressChoice(work.id);
     if (other == null) return;
     final mine = vault.loadProgress(work.id);
@@ -508,8 +539,53 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
     } else {
       vault.clearProgressChoice(work.id);
+      // Staying here is a decision the other machine has to hear about, or
+      // the next device picked up asks the same question again.
+      unawaited(sync.pushWork(work.id));
     }
     library.refreshWork(work.id);
+  }
+
+  /// Fetches this work's position from the paired machines and, if one of
+  /// them stands somewhere else, writes it down as the open question.
+  ///
+  /// It goes through the same place a sync's leftovers go, so there is one
+  /// path to the sheet and one path to „immer die weiteste Stelle" rather
+  /// than two that can disagree.
+  Future<void> _askElsewhere(FundusLibrary vault, WorkView work) async {
+    if (sync.peers.isEmpty) return;
+    final span = FundusLog.instance.start('position.ask', {'work': work.title});
+    try {
+      final elsewhere = await sync.furthestElsewhere(work.id);
+      if (elsewhere == null) {
+        span.done({'answer': 'none'});
+        return;
+      }
+      final mine = vault.loadProgress(work.id);
+      final theirs = elsewhere.progress;
+      if (mine != null && _samePlace(mine.position, theirs.position)) {
+        span.done({'answer': 'same'});
+        return;
+      }
+      vault.recordProgressChoice(
+        LibraryProgressChoice(
+          workId: work.id,
+          position: theirs.position,
+          fileId: theirs.fileId,
+          finished: theirs.finished,
+          deviceId: theirs.deviceId.isEmpty
+              ? elsewhere.peerName
+              : theirs.deviceId,
+          deviceName: elsewhere.peerName,
+          updatedAt: theirs.updatedAt,
+          recordedAt: DateTime.now().toUtc(),
+        ),
+      );
+      span.done({'answer': 'differs'});
+    } on Object catch (error) {
+      // A machine that will not answer must not hold up a film.
+      span.failed(error);
+    }
   }
 
   /// Two positions that are the same place are not a question.
