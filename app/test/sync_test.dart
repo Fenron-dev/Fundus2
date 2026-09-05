@@ -72,7 +72,7 @@ void main() {
     connect: (peer) => FundusRemoteClient(
       baseUri: peer.baseUri,
       token: token,
-      httpClient: _InProcessClient(server.handler),
+      httpClient: InProcessClient(server.handler),
     ),
   );
 
@@ -284,8 +284,8 @@ void main() {
 /// A real port would work too, but this keeps the test to one process and one
 /// clock, and still runs every request through the server's own routing,
 /// authentication and JSON.
-class _InProcessClient extends http.BaseClient {
-  _InProcessClient(this._handler);
+class InProcessClient extends http.BaseClient {
+  InProcessClient(this._handler);
 
   final shelf.Handler _handler;
 

@@ -132,6 +132,7 @@ class SyncController extends ChangeNotifier {
         client: client,
         libraryId: libraryId,
         deviceId: settings.deviceKey,
+        peerName: peer.name,
         baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
       ).run(workIds: _worksOf(vault, peer));
       await _record(vault, peer, report);
@@ -181,6 +182,7 @@ class SyncController extends ChangeNotifier {
           client: client,
           libraryId: libraryId,
           deviceId: settings.deviceKey,
+          peerName: peer.name,
           baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
         ).run(workIds: [workId]);
         await _record(vault, peer, report);

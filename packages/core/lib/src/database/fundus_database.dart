@@ -123,7 +123,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 8;
+  static const schemaVersion = 9;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -916,6 +916,100 @@ final class FundusDatabase {
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
       deviceId: row['device_id'] as String,
       operationId: row['operation_id'] as String,
+    );
+  }
+
+  /// Writes down a position this device did not take.
+  ///
+  /// One per work and user: the newest unanswered question replaces an older
+  /// one, because being asked about three stale positions from last month is
+  /// not being asked a question, it is being made to do bookkeeping.
+  void recordProgressChoice(
+    LibraryProgressChoice choice, {
+    String userId = 'default',
+  }) {
+    _database.execute(
+      '''
+      INSERT INTO progress_choices (
+        work_id, user_id, position_json, file_id, finished, device_id,
+        device_name, updated_at, recorded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(work_id, user_id) DO UPDATE SET
+        position_json = excluded.position_json,
+        file_id = excluded.file_id,
+        finished = excluded.finished,
+        device_id = excluded.device_id,
+        device_name = excluded.device_name,
+        updated_at = excluded.updated_at,
+        recorded_at = excluded.recorded_at
+      ''',
+      [
+        choice.workId,
+        userId,
+        jsonEncode(choice.position.toJson()),
+        choice.fileId,
+        choice.finished ? 1 : 0,
+        choice.deviceId,
+        choice.deviceName,
+        choice.updatedAt.toUtc().millisecondsSinceEpoch,
+        choice.recordedAt.toUtc().millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  /// The open question for this work, if there is one.
+  LibraryProgressChoice? progressChoice(
+    String workId, {
+    String userId = 'default',
+  }) {
+    final rows = _database.select(
+      'SELECT * FROM progress_choices WHERE work_id = ? AND user_id = ?',
+      [workId, userId],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    try {
+      return LibraryProgressChoice(
+        workId: workId,
+        userId: userId,
+        position: MediaPosition.fromJson(
+          jsonDecode(row['position_json'] as String) as Map<String, Object?>,
+        ),
+        fileId: row['file_id'] as String?,
+        finished: (row['finished'] as int) == 1,
+        deviceId: row['device_id'] as String,
+        deviceName: row['device_name'] as String? ?? '',
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(
+          row['updated_at'] as int,
+          isUtc: true,
+        ),
+        recordedAt: DateTime.fromMillisecondsSinceEpoch(
+          row['recorded_at'] as int,
+          isUtc: true,
+        ),
+      );
+    } on Object {
+      // An unreadable row is a question nobody can answer; it is dropped
+      // rather than kept as a dialog that cannot be dismissed.
+      clearProgressChoice(workId, userId: userId);
+      return null;
+    }
+  }
+
+  /// Every work that has an open question, for the one place that lists them.
+  List<String> worksWithProgressChoices({String userId = 'default'}) {
+    final rows = _database.select(
+      'SELECT work_id FROM progress_choices WHERE user_id = ? '
+      'ORDER BY recorded_at DESC',
+      [userId],
+    );
+    return [for (final row in rows) row['work_id'] as String];
+  }
+
+  void clearProgressChoice(String workId, {String userId = 'default'}) {
+    _database.execute(
+      'DELETE FROM progress_choices WHERE work_id = ? AND user_id = ?',
+      [workId, userId],
     );
   }
 
@@ -2468,6 +2562,7 @@ final class FundusDatabase {
     if (_database.userVersion == 5 && !readOnly) _migrateToVersion6();
     if (_database.userVersion == 6 && !readOnly) _migrateToVersion7();
     if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
+    if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
   }
 
   void _migrateToVersion1() {
@@ -2644,6 +2739,27 @@ final class FundusDatabase {
         'Migration auf Schema 8 hat ${violations.length} verwaiste '
         'Verweise hinterlassen.',
       );
+    }
+  }
+
+  /// A position that lost a comparison is kept instead of dropped.
+  ///
+  /// Two devices with different positions used to end with one of them
+  /// winning silently and the other being gone. What was lost is exactly what
+  /// somebody would want to be asked about, so the other side is now written
+  /// down as an open question and asked at the moment it matters — when the
+  /// work is opened.
+  void _migrateToVersion9() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      for (final statement in _version9Statements) {
+        _database.execute(statement);
+      }
+      _database.userVersion = 9;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
     }
   }
 
@@ -3083,4 +3199,21 @@ const _version8Statements = <String>[
   "INSERT OR IGNORE INTO sources (id, kind, display_name, status) "
       "VALUES ('${FundusDatabase.localSourceId}', 'vault', "
       "'Diese Bibliothek', 'available')",
+];
+
+const _version9Statements = <String>[
+  '''
+  CREATE TABLE IF NOT EXISTS progress_choices (
+    work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    position_json TEXT NOT NULL,
+    file_id TEXT,
+    finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1)),
+    device_id TEXT NOT NULL,
+    device_name TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    PRIMARY KEY (work_id, user_id)
+  )
+  ''',
 ];

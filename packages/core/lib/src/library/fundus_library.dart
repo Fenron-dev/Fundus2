@@ -921,6 +921,46 @@ final class FundusLibrary {
   List<LibraryPlaybackRevision> listProgressRevisions(String workId) =>
       _database.listProgressRevisions(workId);
 
+  /// The position from elsewhere that is waiting to be answered, if any.
+  LibraryProgressChoice? progressChoice(String workId, {String? userId}) =>
+      _database.progressChoice(workId, userId: userId ?? 'default');
+
+  List<String> worksWithProgressChoices({String? userId}) =>
+      _database.worksWithProgressChoices(userId: userId ?? 'default');
+
+  /// Keeps a position that was not taken, so it can be offered on opening.
+  void recordProgressChoice(LibraryProgressChoice choice) {
+    _ensureWritable();
+    _database.recordProgressChoice(choice, userId: choice.userId);
+  }
+
+  void clearProgressChoice(String workId, {String? userId}) {
+    _ensureWritable();
+    _database.clearProgressChoice(workId, userId: userId ?? 'default');
+  }
+
+  /// Takes the position that was offered and makes it this device's.
+  LibraryPlaybackProgress? takeProgressChoice(
+    String workId, {
+    String deviceId = 'desktop-local',
+    String? userId,
+  }) {
+    _ensureWritable();
+    final choice = progressChoice(workId, userId: userId);
+    if (choice == null) return null;
+    clearProgressChoice(workId, userId: userId);
+    final fileId = choice.fileId;
+    if (fileId == null) return null;
+    return _database.saveMediaProgress(
+      workId: workId,
+      fileId: fileId,
+      position: choice.position,
+      finished: choice.finished,
+      deviceId: deviceId,
+      operationId: FundusId.generate(),
+    );
+  }
+
   LibraryPlaybackProgress restoreProgressRevision({
     required String workId,
     required int revision,

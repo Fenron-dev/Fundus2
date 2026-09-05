@@ -71,6 +71,44 @@ final class LibraryPlaybackProgress {
   final String? operationId;
 }
 
+/// A position from somewhere else that was not taken.
+///
+/// Kept so it can be offered when the work is opened, rather than being the
+/// thing that silently happened to someone's evening.
+final class LibraryProgressChoice {
+  const LibraryProgressChoice({
+    required this.workId,
+    required this.position,
+    required this.fileId,
+    required this.finished,
+    required this.deviceId,
+    required this.deviceName,
+    required this.updatedAt,
+    required this.recordedAt,
+    this.userId = 'default',
+  });
+
+  final String workId;
+  final MediaPosition position;
+  final String? fileId;
+  final bool finished;
+
+  /// Which device wrote it, and what that device calls itself. The id alone
+  /// says nothing to a person; the name is what makes the question answerable.
+  final String deviceId;
+  final String deviceName;
+
+  /// The account the position belongs to. One row per user, so two people
+  /// sharing a device are never offered each other's place.
+  final String userId;
+
+  final DateTime updatedAt;
+  final DateTime recordedAt;
+
+  /// What to call the side it came from.
+  String get origin => deviceName.trim().isEmpty ? deviceId : deviceName.trim();
+}
+
 final class LibraryPlaybackRevision {
   const LibraryPlaybackRevision({
     required this.workId,

@@ -27,6 +27,7 @@ import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
+import '../features/work/progress_choice_dialog.dart';
 import 'app_navigation.dart';
 import 'fullscreen.dart';
 import 'pairing_scanner.dart';
@@ -410,6 +411,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   Future<void> play(WorkView work) async {
     final vault = library.library;
     if (vault == null) return;
+    await settlePosition(vault, work);
     if (ReaderController.handles(work)) {
       // A comic in the audio player is silence with a progress bar: pages and
       // seconds are different units, so they get different controllers.
@@ -433,6 +435,47 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     await player.open(vault, work);
     if (player.failure == null) library.refresh();
   }
+
+  /// Asks where to carry on, when two devices disagree.
+  ///
+  /// The sync has to choose — a position is not mergeable, and a dialog in
+  /// the middle of a run would be about works nobody is thinking about — but
+  /// the side it did not take is kept. Here is where that becomes a question,
+  /// because this is the moment somebody is thinking about this work.
+  ///
+  /// Answering it either way settles it. An unanswered dialog counts as
+  /// staying here: a question that comes back every time is not a question.
+  Future<void> settlePosition(FundusLibrary vault, WorkView work) async {
+    if (vault.isReadOnly) return;
+    final other = vault.progressChoice(work.id);
+    if (other == null) return;
+    final mine = vault.loadProgress(work.id);
+    if (mine != null && _samePlace(mine.position, other.position)) {
+      vault.clearProgressChoice(work.id);
+      return;
+    }
+    if (!mounted) return;
+    final takeTheirs = await showProgressChoiceDialog(
+      context,
+      work: work,
+      other: other,
+      mine: mine,
+      thisDevice: settings.deviceName,
+    );
+    if (takeTheirs) {
+      vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
+    } else {
+      vault.clearProgressChoice(work.id);
+    }
+    library.refresh();
+  }
+
+  /// Two positions that are the same place are not a question.
+  static bool _samePlace(MediaPosition left, MediaPosition right) =>
+      left.kind == right.kind &&
+      left.fileId == right.fileId &&
+      left.elementId == right.elementId &&
+      ((left.numericValue ?? 0) - (right.numericValue ?? 0)).abs() < 1;
 
   /// Leaves the gallery and returns to the library.
   void leavePhotos() {

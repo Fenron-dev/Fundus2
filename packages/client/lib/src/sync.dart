@@ -97,6 +97,7 @@ final class FundusSync {
     required this.client,
     required this.libraryId,
     required this.deviceId,
+    this.peerName = '',
     this.baseline = const SyncBaseline({}),
   }) : _agreed = Map.of(baseline.marks);
 
@@ -111,6 +112,11 @@ final class FundusSync {
   /// The library on the other side that answers for this vault.
   final String libraryId;
   final String deviceId;
+
+  /// What the machine on the other side calls itself.
+  ///
+  /// „mac" is an answer to „welchen Stand willst du?"; a device id is not.
+  final String peerName;
 
   /// Reconciles every work of the local vault.
   Future<SyncReport> run({Iterable<String>? workIds}) async {
@@ -208,6 +214,7 @@ final class FundusSync {
     // point and nothing to call a conflict. The old rule, and no drama.
     if (base == null) {
       if (takeTheirs()) {
+        _keepAsQuestion(workId, mine);
         _pull(workId, theirs);
         return report._add(
           pulledProgress: 1,
@@ -219,6 +226,7 @@ final class FundusSync {
           ),
         );
       }
+      _keepAsQuestion(workId, theirs);
       await _push(workId, mine);
       return report._add(
         pushedProgress: 1,
@@ -249,8 +257,10 @@ final class FundusSync {
     // position is not mergeable — but it is written down as contested.
     final chooseTheirs = takeTheirs();
     if (chooseTheirs) {
+      _keepAsQuestion(workId, mine);
       _pull(workId, theirs);
     } else {
+      _keepAsQuestion(workId, theirs);
       await _push(workId, mine);
     }
     return report._add(
@@ -266,6 +276,47 @@ final class FundusSync {
             : 'Der Stand von hier wurde gesendet.',
       ),
     );
+  }
+
+  /// Keeps the position that lost, as a question for when the work is opened.
+  ///
+  /// Something has to be chosen during a sync — a position is not mergeable,
+  /// and asking about works nobody is thinking about is not asking. But the
+  /// side that lost is exactly what someone would want to be asked about, so
+  /// it is written down rather than dropped, and the question is put at the
+  /// moment it means something: pressing play.
+  void _keepAsQuestion(String workId, Object losing) {
+    if (library.isReadOnly) return;
+    final choice = switch (losing) {
+      LibraryPlaybackProgress value => LibraryProgressChoice(
+        workId: workId,
+        position: value.position,
+        fileId: value.fileId,
+        finished: value.finished,
+        deviceId: value.deviceId,
+        deviceName: value.deviceId == deviceId ? 'dieses Gerät' : '',
+        updatedAt: value.updatedAt,
+        recordedAt: DateTime.now().toUtc(),
+      ),
+      RemoteProgress value => LibraryProgressChoice(
+        workId: workId,
+        position: value.position,
+        fileId: value.fileId,
+        finished: value.finished,
+        deviceId: value.deviceId.isEmpty ? libraryId : value.deviceId,
+        deviceName: peerName,
+        updatedAt: value.updatedAt,
+        recordedAt: DateTime.now().toUtc(),
+      ),
+      _ => null,
+    };
+    if (choice == null) return;
+    try {
+      library.recordProgressChoice(choice);
+    } on Object {
+      // A question that cannot be written down is not worth failing a sync
+      // over; the decision itself already stands.
+    }
   }
 
   /// A short, comparable description of where a side stands.
