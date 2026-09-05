@@ -205,11 +205,21 @@ abstract final class WorkGrouping {
     _ => 'Ohne Zuordnung',
   };
 
+  /// Where a work lies, as the path says it.
+  ///
+  /// It used to be read off the cover's file path, which named the wrong
+  /// thing twice over: a work whose cover Fundus fetched landed under
+  /// „covers", and one without a cover under „Bibliothekswurzel" no matter
+  /// where it actually was. The work's own place in the vault is the answer,
+  /// and it is the whole path — „Podcasts/Auf ein Bier" says what „Auf ein
+  /// Bier" alone does not.
   static String _folderOf(WorkView work) {
-    final path = work.summary.coverPath ?? '';
-    final separator = path.contains('/') ? '/' : r'\';
-    final parts = path.split(separator);
-    return parts.length > 1 ? parts[parts.length - 2] : 'Bibliothekswurzel';
+    final parts = work.summary.sourcePath
+        .split(RegExp(r'[/\\]'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.length < 2) return 'Bibliothekswurzel';
+    return parts.sublist(0, parts.length - 1).join('/');
   }
 
   static String _monthOf(WorkView work) {

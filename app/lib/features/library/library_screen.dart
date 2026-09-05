@@ -274,8 +274,10 @@ class _GroupRow extends StatelessWidget {
             ),
             const SizedBox(width: FundusSpace.x3),
             Expanded(
+              // Ein Ordnerpfad wird gelesen, nicht ausgesprochen: die
+              // Trennzeichen stehen so, wie man sie im Finder sieht.
               child: Text(
-                group.label,
+                group.label.replaceAll('/', ' › '),
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),

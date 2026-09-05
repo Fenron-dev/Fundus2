@@ -28,6 +28,7 @@ final class LibraryWorkSummary {
     required this.addedAt,
     this.series,
     this.seriesSequence,
+    this.sourcePath = '',
     this.coverPath,
     this.hasFolderCover = false,
     this.backdropPath,
@@ -69,6 +70,12 @@ final class LibraryWorkSummary {
   final DateTime addedAt;
   final String? series;
   final double? seriesSequence;
+
+  /// Where the work lies in the vault, as a path relative to its root:
+  /// `Podcasts/Auf ein Bier`. The folder view groups by it, and a folder is
+  /// the one thing about a work that is never a matter of opinion.
+  final String sourcePath;
+
   final String? coverPath;
 
   /// Whether the picture is a file lying next to the work rather than one
@@ -142,6 +149,7 @@ final class LibraryWorkSummary {
         addedAt: addedAt,
         series: series,
         seriesSequence: seriesSequence,
+        sourcePath: sourcePath,
         coverPath: coverPath,
         hasFolderCover: hasFolderCover,
         backdropPath: backdropPath,
@@ -747,6 +755,7 @@ final class FundusDatabase {
     final rows = _database.select(
       '''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
+             w.source_path,
              w.metadata_json, w.status, w.source_id, w.availability,
              COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
@@ -808,6 +817,7 @@ final class FundusDatabase {
             addedAt: DateTime.fromMillisecondsSinceEpoch(
               row['added_at'] as int,
             ),
+            sourcePath: row['source_path'] as String? ?? '',
             coverPath: row['cover_path'] as String?,
             hasFolderCover: row['folder_cover_path'] != null,
             backdropPath: row['backdrop_path'] as String?,
