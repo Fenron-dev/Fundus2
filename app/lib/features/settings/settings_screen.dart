@@ -1743,9 +1743,14 @@ class _SyncState extends State<_Sync> {
           ),
           if (mirror != null) ...[
             const SizedBox(height: FundusSpace.x2),
+            // What the last pass *changed*, not how large the library is:
+            // only what differs is fetched, so „0 geändert" is the normal
+            // and the good answer.
             Text(
-              '${mirror.written} Werke im Bestand'
-              '${mirror.removed == 0 ? '' : ' · ${mirror.removed} entfallen'}',
+              mirror.written == 0 && mirror.removed == 0
+                  ? 'Zuletzt: nichts zu holen, alles war aktuell'
+                  : 'Zuletzt: ${mirror.written} Werke geholt'
+                        '${mirror.removed == 0 ? '' : ', ${mirror.removed} entfallen'}',
               style: theme.textTheme.labelMedium?.copyWith(
                 color: tokens.textFaint,
               ),

@@ -288,8 +288,12 @@ final class FundusRemoteClient {
   /// This is what a mirror reads. The alternative — the works list, then one
   /// request per work for its files — is a thousand round trips over the very
   /// network the mirror exists to stop depending on.
-  Future<List<RemoteWorkRecord>> catalogue(String libraryId) async {
-    final decoded = await _get('/v1/libraries/$libraryId/catalogue');
+  Future<List<RemoteWorkRecord>> catalogue(
+    String libraryId, {
+    Iterable<String>? ids,
+  }) async {
+    final query = ids == null ? '' : '?ids=${ids.join(',')}';
+    final decoded = await _get('/v1/libraries/$libraryId/catalogue$query');
     final entries = decoded['works'];
     if (entries is! List) return const [];
     return [
@@ -346,6 +350,21 @@ final class FundusRemoteClient {
       extension: dot > 0 ? filename.substring(dot).toLowerCase() : '',
       durationMs: seconds == null ? null : (seconds * 1000).round(),
     );
+  }
+
+  /// What the other side holds, as „this work, in this state".
+  ///
+  /// Thirty-odd bytes per work rather than the record itself, which is what
+  /// makes asking „what changed?" cheap enough to ask every time.
+  Future<Map<String, String>> catalogueIndex(String libraryId) async {
+    final decoded = await _get('/v1/libraries/$libraryId/catalogue/index');
+    final works = decoded['works'];
+    if (works is! List) return const {};
+    return {
+      for (final entry in works)
+        if (entry is Map && entry['id'] is String)
+          entry['id'] as String: '${entry['hash'] ?? ''}',
+    };
   }
 
   /// The pages of a comic volume, without fetching the volume.

@@ -2078,6 +2078,7 @@ final class FundusDatabase {
   RemoteMirrorReport mirrorRemoteCatalogue({
     required String sourceId,
     required List<RemoteWorkRecord> works,
+    Set<String>? keepIds,
   }) {
     if (sourceId == localSourceId) {
       throw ArgumentError.value(
@@ -2094,7 +2095,10 @@ final class FundusDatabase {
         _writeRemoteWork(sourceId, work, now);
         written++;
       }
-      final keep = {for (final work in works) work.id};
+      // Normally what arrived is the whole catalogue, so anything else is
+      // gone. A delta says otherwise: it carries only what changed, and
+      // names separately what still exists.
+      final keep = keepIds ?? {for (final work in works) work.id};
       final existing = _database
           .select('SELECT id FROM works WHERE source_id = ?', [sourceId])
           .map((row) => row['id'] as String)

@@ -19,8 +19,46 @@ void main() {
   late FundusLibraryRegistry registry;
   late HttpServer socket;
   late FundusRemoteClient client;
+  HttpServer? socketOrNull;
+  FundusLibraryRegistry? registryOrNull;
+
+  /// Publishes the library, replacing any earlier server.
+  ///
+  /// The shared view reads the work list once when it is made, so anything
+  /// changed on that side needs a fresh one — which is also what happens in
+  /// life, where the other machine is restarted or rescans.
+  Future<void> share() async {
+    await socketOrNull?.close(force: true);
+    // Not `close()`: the registry only borrows this library, and closing it
+    // would take the library down with it.
+    registryOrNull?.unregister(theirs.manifest.libraryId);
+    registry = FundusLibraryRegistry()..register(theirs, name: 'Hörbücher');
+    registryOrNull = registry;
+    socket = await shelf_io.serve(
+      FundusServerHandler(
+        token: 'geheim',
+        serverId: 'server-test',
+        serverName: 'Mac',
+        registry: registry,
+      ).handler,
+      'localhost',
+      0,
+    );
+    socketOrNull = socket;
+    client.close();
+    client = FundusRemoteClient(
+      baseUri: Uri.parse('http://localhost:${socket.port}'),
+      token: 'geheim',
+    );
+  }
 
   setUp(() async {
+    socketOrNull = null;
+    registryOrNull = null;
+    client = FundusRemoteClient(
+      baseUri: Uri.parse('http://localhost:1'),
+      token: 'geheim',
+    );
     temporary = await Directory.systemTemp.createTemp('fundus-mirror-');
 
     final source = Directory('${temporary.path}/mac');
@@ -35,24 +73,14 @@ void main() {
     // Das Telefon: ein Vault ohne eine einzige Mediendatei.
     mine = await FundusLibrary.create(Directory('${temporary.path}/handy'));
 
-    registry = FundusLibraryRegistry()..register(theirs, name: 'Hörbücher');
-    final handler = FundusServerHandler(
-      token: 'geheim',
-      serverId: 'server-test',
-      serverName: 'Mac',
-      registry: registry,
-    );
-    socket = await shelf_io.serve(handler.handler, 'localhost', 0);
-    client = FundusRemoteClient(
-      baseUri: Uri.parse('http://localhost:${socket.port}'),
-      token: 'geheim',
-    );
+    await share();
   });
 
   tearDown(() async {
     client.close();
     await socket.close(force: true);
-    registry.close();
+    registry.unregister(theirs.manifest.libraryId);
+    theirs.close();
     mine.close();
     await temporary.delete(recursive: true);
   });
@@ -121,18 +149,24 @@ void main() {
   test('was drüben verschwindet, verschwindet auch hier', () async {
     registerPeer();
     await mirror().run();
+    expect(mine.listWorks(), hasLength(1));
 
-    final gone = RemoteWorkRecord(
-      id: 'gibt-es-nur-hier',
-      kind: 'audiobook',
-      title: 'Verirrt',
-    );
-    mine.mirrorRemoteCatalogue(sourceId: 'peer-server-test', works: [gone]);
-    expect(mine.listWorks().single.title, 'Verirrt');
+    // Drüben ist das Werk weg — Ordner gelöscht, neu eingelesen.
+    await Directory(
+      '${theirs.root.path}/Hörbücher/Karl May',
+    ).delete(recursive: true);
+    await for (final _ in theirs.index()) {}
+    await share();
 
-    final report = await mirror().run();
+    final report = await FundusCatalogueMirror(
+      library: mine,
+      client: client,
+      libraryId: theirs.manifest.libraryId,
+      sourceId: 'peer-server-test',
+    ).run();
+
     expect(report.removed, 1);
-    expect(mine.listWorks().single.title, 'Der Schacht');
+    expect(mine.listWorks(), isEmpty);
   });
 
   test('der Lesestand überlebt ein Werk, das kurz fehlt', () async {
@@ -155,6 +189,71 @@ void main() {
     expect(
       mine.loadProgress(workId)!.position.numericValue,
       closeTo(9 * 60, 0.001),
+    );
+  });
+
+  test(
+    'ein zweiter Durchlauf holt nichts, wenn sich nichts geändert hat',
+    () async {
+      registerPeer();
+      final first = await mirror().run();
+      expect(first.written, 1);
+
+      // Das Verzeichnis sagt: alles beim Alten. Also kommt kein Werk herüber.
+      final second = await mirror().run();
+      expect(second.written, 0);
+      expect(second.removed, 0);
+      // Und die Bibliothek steht unverändert da.
+      expect(mine.listWorks(), hasLength(1));
+    },
+  );
+
+  test('nur das geänderte Werk wird geholt', () async {
+    // Ein zweites Werk drüben, damit es etwas zu unterscheiden gibt.
+    final second = Directory(
+      '${theirs.root.path}/Hörbücher/Karl May/Der Ölprinz',
+    );
+    await second.create(recursive: true);
+    await File(
+      '${second.path}/01 - Anfang.mp3',
+    ).writeAsBytes(List.filled(64, 2));
+    await for (final _ in theirs.index()) {}
+    await share();
+
+    mine.registerPeerSource(
+      sourceId: 'peer-server-test',
+      displayName: 'Mac',
+      libraryId: theirs.manifest.libraryId,
+      baseUrl: 'http://localhost:${socket.port}',
+    );
+    await mirror().run();
+    expect(mine.listWorks(), hasLength(2));
+
+    // Ein Titel ändert sich; das andere Werk bleibt, wie es war.
+    final changed = theirs.listWorks().firstWhere(
+      (work) => work.title == 'Der Ölprinz',
+    );
+    await theirs.updateWorkMetadata(
+      workId: changed.id,
+      title: 'Der Ölprinz (neu)',
+      authors: [changed.author],
+    );
+    await share();
+
+    final delta = FundusCatalogueMirror(
+      library: mine,
+      client: client,
+      libraryId: theirs.manifest.libraryId,
+      sourceId: 'peer-server-test',
+    );
+    final report = await delta.run();
+
+    // Genau eines — nicht der ganze Katalog.
+    expect(report.written, 1);
+    expect(report.removed, 0);
+    expect(
+      mine.listWorks().map((work) => work.title),
+      containsAll(['Der Schacht', 'Der Ölprinz (neu)']),
     );
   });
 

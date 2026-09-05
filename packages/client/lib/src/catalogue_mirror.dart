@@ -39,12 +39,71 @@ final class FundusCatalogueMirror {
   /// usable, a mirror that takes five minutes is not.
   final int coverLimit;
 
+  /// How many works to ask for in one request.
+  ///
+  /// The ids travel in the address, so this is bounded by what a URL can
+  /// carry rather than by anything about the works themselves.
+  static const _batch = 40;
+
+  /// Above this share of the catalogue changed, asking for „everything" is
+  /// cheaper than naming what to fetch — the ids alone would be most of the
+  /// request.
+  static const _fetchAllAbove = 0.6;
+
   Future<RemoteMirrorReport> run() async {
+    // What the other side holds, as a list of state markers: cheap enough to
+    // ask every time, and exact — a hash covers the whole record, so nothing
+    // can change without it changing.
+    final Map<String, String> index;
+    try {
+      index = await client.catalogueIndex(libraryId);
+    } on FundusRemoteException catch (error) {
+      // An older Fundus does not know the index. Fetching everything is what
+      // this always did, and it still works.
+      if (error.statusCode != 404) rethrow;
+      return _full();
+    }
+
+    final known = await library.loadMirrorState(sourceId);
+    final changed = <String>[
+      for (final entry in index.entries)
+        if (known[entry.key] != entry.value) entry.key,
+    ];
+    final vanished = known.keys.where((id) => !index.containsKey(id)).toList();
+
+    if (changed.isEmpty && vanished.isEmpty) {
+      return const RemoteMirrorReport(written: 0, removed: 0);
+    }
+    if (changed.length > index.length * _fetchAllAbove) return _full(index);
+
+    // Only the works whose state differs, and — because the mirror removes
+    // what the other side no longer has — the ones that are still there.
+    final works = <RemoteWorkRecord>[];
+    for (var start = 0; start < changed.length; start += _batch) {
+      final slice = changed.skip(start).take(_batch);
+      works.addAll(await client.catalogue(libraryId, ids: slice));
+    }
+    final report = library.mirrorRemoteCatalogue(
+      sourceId: sourceId,
+      works: works,
+      // The rest of the catalogue is unchanged, not gone: without this the
+      // works that were not fetched would be marked missing.
+      keepIds: index.keys.toSet(),
+    );
+    await library.saveMirrorState(sourceId, index);
+    await _covers(works);
+    return report;
+  }
+
+  /// Fetches the whole catalogue. The first pass, and the answer whenever
+  /// most of it has changed anyway.
+  Future<RemoteMirrorReport> _full([Map<String, String>? index]) async {
     final works = await client.catalogue(libraryId);
     final report = library.mirrorRemoteCatalogue(
       sourceId: sourceId,
       works: works,
     );
+    if (index != null) await library.saveMirrorState(sourceId, index);
     await _covers(works);
     return report;
   }

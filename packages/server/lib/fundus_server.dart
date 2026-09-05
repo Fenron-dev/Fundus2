@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
@@ -124,6 +125,7 @@ final class FundusServerHandler {
       ..get('/v1/libraries', _libraries)
       ..get('/v1/libraries/<libraryId>/works', _works)
       ..get('/v1/libraries/<libraryId>/catalogue', _catalogue)
+      ..get('/v1/libraries/<libraryId>/catalogue/index', _catalogueIndex)
       ..get('/v1/libraries/<libraryId>/works/<workId>', _work)
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
@@ -351,7 +353,32 @@ final class FundusServerHandler {
   /// A device that mirrors this library would otherwise ask for each work
   /// separately just to learn its files — a thousand round trips for a
   /// thousand works, over a network that is the reason mirroring exists.
+  ///
+  /// With `?ids=` it answers only for those works, which is how a mirror that
+  /// already has most of the catalogue asks for the rest.
   Response _catalogue(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    final wanted = _idsParameter(request);
+    return _json({
+      'library_id': libraryId,
+      'works': [
+        for (final work in entry.works)
+          if (_canViewWork(request, work))
+            if (wanted == null || wanted.contains(work.id))
+              _catalogueEntry(entry, work),
+      ],
+    });
+  }
+
+  /// The catalogue as a list of „this work, in this state".
+  ///
+  /// Thirty-odd bytes per work instead of the record itself, which is what
+  /// makes asking „what changed?" cheap enough to ask every time. The hash
+  /// covers the whole record, so nothing can change without it changing —
+  /// no timestamp to keep up to date, and nothing to get wrong when a field
+  /// is added later.
+  Response _catalogueIndex(Request request, String libraryId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
     return _json({
@@ -359,15 +386,37 @@ final class FundusServerHandler {
       'works': [
         for (final work in entry.works)
           if (_canViewWork(request, work))
-            {
-              ..._workJson(work),
-              'files': [
-                for (final track in entry.tracksFor(work.id)) _trackJson(track),
-              ],
-            },
+            {'id': work.id, 'hash': _hashOf(_catalogueEntry(entry, work))},
       ],
     });
   }
+
+  Map<String, Object?> _catalogueEntry(
+    SharedFundusLibrary entry,
+    LibraryWorkSummary work,
+  ) => {
+    ..._workJson(work),
+    'files': [for (final track in entry.tracksFor(work.id)) _trackJson(track)],
+  };
+
+  /// Which works were asked for, or null for „all of them".
+  static Set<String>? _idsParameter(Request request) {
+    final raw = request.url.queryParameters['ids'];
+    if (raw == null) return null;
+    return raw
+        .split(',')
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  /// Short on purpose: this is a change marker, not a signature. Sixteen hex
+  /// characters is far past the point where two works collide by accident,
+  /// and it is what the list is mostly made of.
+  static String _hashOf(Map<String, Object?> value) => sha256
+      .convert(utf8.encode(jsonEncode(value)))
+      .toString()
+      .substring(0, 16);
 
   Response _works(Request request, String libraryId) {
     final entry = registry.lookup(libraryId);

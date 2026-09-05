@@ -205,12 +205,22 @@ final class FundusLibrary {
   }
 
   /// Writes what the peer has into this vault's index.
+  /// Writes what the peer has into this vault's index.
+  ///
+  /// [keepIds] names every work the other side still holds, for the case
+  /// where [works] is only what changed. Without it, a delta would look like
+  /// a catalogue that had lost almost everything.
   RemoteMirrorReport mirrorRemoteCatalogue({
     required String sourceId,
     required List<RemoteWorkRecord> works,
+    Set<String>? keepIds,
   }) {
     _ensureWritable();
-    return _database.mirrorRemoteCatalogue(sourceId: sourceId, works: works);
+    return _database.mirrorRemoteCatalogue(
+      sourceId: sourceId,
+      works: works,
+      keepIds: keepIds,
+    );
   }
 
   /// Records a downloaded copy of a remote file.
@@ -230,6 +240,44 @@ final class FundusLibrary {
     ({String fileId, String filename, String? offlinePath, String availability})
   >
   contentFiles(String workId) => _database.contentFiles(workId);
+
+  /// What a mirror last saw of a source, as work id → state marker.
+  ///
+  /// Kept beside the index it belongs to rather than with the app: it
+  /// describes the *vault's* copy of a peer catalogue, so it is only true for
+  /// this folder, and a folder moved to another device brings it along.
+  Future<Map<String, String>> loadMirrorState(String sourceId) async {
+    final file = _mirrorStateFile(sourceId);
+    if (!await file.exists()) return const {};
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map) return const {};
+      return {
+        for (final entry in decoded.entries)
+          if (entry.value is String) '${entry.key}': entry.value as String,
+      };
+    } on FormatException {
+      // A damaged marker file costs one full catalogue fetch, nothing more.
+      return const {};
+    } on FileSystemException {
+      return const {};
+    }
+  }
+
+  Future<void> saveMirrorState(
+    String sourceId,
+    Map<String, String> state,
+  ) async {
+    _ensureWritable();
+    await _writeSidecar(_mirrorStateFile(sourceId), jsonEncode(state));
+  }
+
+  File _mirrorStateFile(String sourceId) {
+    final safe = sourceId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    return File(
+      p.join(root.path, metadataDirectoryName, 'mirrors', '$safe.json'),
+    );
+  }
 
   /// Whether a source is answering right now.
   ///
