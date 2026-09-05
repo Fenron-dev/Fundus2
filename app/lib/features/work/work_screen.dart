@@ -93,7 +93,11 @@ class _Hero extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              WorkImage(work: work, blurred: true),
+              WorkImage(
+                work: work,
+                wide: true,
+                blurred: work.backdropPath == null,
+              ),
               const DecoratedBox(
                 decoration: BoxDecoration(color: Color(0x66000000)),
               ),
@@ -436,6 +440,10 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
           content: Text(
             result.coverFailed
                 ? '„${result.title}" übernommen — das Titelbild kam nicht an.'
+                : result.coverFetched && result.backdropFetched
+                ? '„${result.title}" übernommen, mit Titelbild und Breitbild.'
+                : result.backdropFetched
+                ? '„${result.title}" übernommen, mit Breitbild.'
                 : result.coverFetched
                 ? '„${result.title}" übernommen, mit Titelbild.'
                 : '„${result.title}" übernommen.',

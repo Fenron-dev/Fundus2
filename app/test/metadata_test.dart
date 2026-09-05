@@ -268,6 +268,32 @@ void main() {
       },
     );
 
+    test('ein Breitbild wird neben dem Titelbild abgelegt', () async {
+      final client = FakeHttp(
+        (_) => http.Response.bytes(List.filled(32, 9), 200),
+      );
+
+      final result = await applyMetadata(
+        library: library,
+        work: work,
+        client: client,
+        candidate: const MetadataCandidate(
+          provider: 'tmdb',
+          providerId: '7',
+          title: 'Berserk',
+          posterUrl: 'https://bild/hochkant.jpg',
+          backdropUrl: 'https://bild/breit.jpg',
+        ),
+      );
+
+      final updated = library.listWorks().single;
+      expect(result.backdropFetched, isTrue);
+      expect(updated.backdropPath, isNotNull);
+      // Getrennt abgelegt: die Bühne braucht das breite, die Kachel das hohe.
+      expect(updated.backdropPath, isNot(updated.coverPath));
+      expect(File(updated.backdropPath!).existsSync(), isTrue);
+    });
+
     test('ein Titelbild im Ordner wird nicht ersetzt', () async {
       final folder = Directory('${root.path}/Manga/Mit Bild')
         ..createSync(recursive: true);

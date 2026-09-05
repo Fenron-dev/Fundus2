@@ -22,6 +22,7 @@ final class WorkView {
     this.progressLabel,
     this.finished = false,
     this.coverPath,
+    this.backdropPath,
     this.folderPath = '',
   });
 
@@ -40,6 +41,7 @@ final class WorkView {
       progressLabel: progress.$2,
       finished: summary.progressFinished,
       coverPath: summary.coverPath,
+      backdropPath: summary.backdropPath,
       folderPath: summary.series ?? '',
     );
   }
@@ -59,6 +61,11 @@ final class WorkView {
   final String? progressLabel;
   final bool finished;
   final String? coverPath;
+
+  /// A wide picture, where a match brought one. The places a poster cannot
+  /// fill — the stage, the head of a detail page — use it instead of blowing
+  /// the cover up and blurring it.
+  final String? backdropPath;
   final String folderPath;
 
   bool get hasProgress => progressFraction != null && progressFraction! > 0;

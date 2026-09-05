@@ -14,6 +14,7 @@ final class MetadataApplyResult {
     required this.provider,
     this.coverFetched = false,
     this.coverFailed = false,
+    this.backdropFetched = false,
   });
 
   final String workId;
@@ -21,6 +22,9 @@ final class MetadataApplyResult {
   final String provider;
   final bool coverFetched;
   final bool coverFailed;
+
+  /// Whether a wide picture came down with it.
+  final bool backdropFetched;
 }
 
 /// Writes a chosen match onto a work.
@@ -80,12 +84,30 @@ Future<MetadataApplyResult> applyMetadata({
       fetched = true;
     }
   }
+  // The wide picture is the one the stage and the head of a detail page
+  // need, and no folder ever holds one — so unlike the cover it is fetched
+  // whenever the match offers it and the work has none.
+  var wide = false;
+  final backdrop = candidate.backdropUrl;
+  if (fetchCover && backdrop != null && summary.backdropPath == null) {
+    final bytes = await fetchCoverBytes(backdrop, client: client);
+    if (bytes != null) {
+      await library.cacheBackdrop(
+        workId: work.id,
+        bytes: bytes,
+        extension: backdrop.toLowerCase().endsWith('.png') ? 'png' : 'jpg',
+      );
+      wide = true;
+    }
+  }
+
   return MetadataApplyResult(
     workId: work.id,
     title: candidate.title,
     provider: candidate.provider,
     coverFetched: fetched,
     coverFailed: failed,
+    backdropFetched: wide,
   );
 }
 

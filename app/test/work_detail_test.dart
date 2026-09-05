@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -101,6 +102,32 @@ void main() {
           .hitTestable(),
       findsNothing,
       reason: 'der Kopf scrollt weg, statt den Bildschirm zu besetzen',
+    );
+  });
+
+  testWidgets('ein Breitbild wird im Kopf gezeigt, nicht das Cover', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await library.library!.cacheBackdrop(
+        workId: library.works.first.id,
+        bytes: Uint8List.fromList(List.filled(64, 5)),
+      );
+      library.refreshWork(library.works.first.id);
+    });
+    await pumpPhone(tester);
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Image &&
+            widget.image is FileImage &&
+            (widget.image as FileImage).file.path.endsWith('.backdrop.jpg'),
+      ),
+      findsWidgets,
+      reason: 'wo ein Breitbild liegt, füllt es den Kopf',
     );
   });
 

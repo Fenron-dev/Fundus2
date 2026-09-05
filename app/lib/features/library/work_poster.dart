@@ -205,13 +205,25 @@ class _Chip extends StatelessWidget {
 
 /// The cover file, the veil over a protected work, or a stand-in ground.
 class WorkImage extends StatelessWidget {
-  const WorkImage({super.key, required this.work, this.blurred = false});
+  const WorkImage({
+    super.key,
+    required this.work,
+    this.blurred = false,
+    this.wide = false,
+  });
 
   final WorkView work;
 
   /// A stage uses the same picture twice: once sharp, once as the ground
   /// behind it. The blurred copy has no marks and no detail to read.
   final bool blurred;
+
+  /// Prefers the wide picture where the work has one.
+  ///
+  /// A stage and the head of a detail page are landscape, a cover is not, so
+  /// without a backdrop they can only blow the poster up and blur it. Where a
+  /// match brought a backdrop, this is the place it earns its keep.
+  final bool wide;
 
   static const _grounds = <List<Color>>[
     [Color(0xff4b3f86), Color(0xff221f3c), Color(0xff151726)],
@@ -229,7 +241,7 @@ class WorkImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.fundus;
-    final path = work.coverPath;
+    final path = (wide ? work.backdropPath : null) ?? work.coverPath;
     final file = path == null ? null : File(path);
     final picture = file != null && file.existsSync()
         ? Image.file(

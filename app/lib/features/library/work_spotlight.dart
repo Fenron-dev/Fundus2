@@ -58,10 +58,11 @@ class WorkSpotlight extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // The artwork is its own background: blown up, blurred, and dimmed
-          // into the page so the picture has no edge and the text has a
-          // ground dark enough to sit on.
-          WorkImage(work: work, blurred: true),
+          // A backdrop fills the frame and is shown as it is; without one
+          // the work's own cover stands in, blown up and blurred, so the
+          // picture has no edge and the text has a ground dark enough to sit
+          // on.
+          WorkImage(work: work, wide: true, blurred: work.backdropPath == null),
           const DecoratedBox(
             decoration: BoxDecoration(color: Color(0x55000000)),
           ),

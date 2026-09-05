@@ -29,6 +29,7 @@ final class LibraryWorkSummary {
     this.series,
     this.seriesSequence,
     this.coverPath,
+    this.backdropPath,
     this.language,
     this.subtitle,
     this.description,
@@ -68,6 +69,10 @@ final class LibraryWorkSummary {
   final String? series;
   final double? seriesSequence;
   final String? coverPath;
+
+  /// A wide picture for the places a poster does not fill: the stage, the
+  /// head of a detail page. Relative to the vault, like a cover.
+  final String? backdropPath;
   final String? language;
   final String? subtitle;
   final String? description;
@@ -111,6 +116,54 @@ final class LibraryWorkSummary {
   bool get available => status == 'available';
 
   bool get isHhh => contentSensitivity == 'adult_explicit';
+
+  /// The same work with its pictures pointing somewhere else.
+  ///
+  /// The library hands out absolute paths and the database stores relative
+  /// ones, so exactly one thing changes on the way out. Written here, beside
+  /// the fields, because a copy assembled at the call site quietly loses
+  /// whatever field is added next.
+  LibraryWorkSummary withPictures({String? coverPath, String? backdropPath}) =>
+      LibraryWorkSummary(
+        id: id,
+        kind: kind,
+        title: title,
+        author: author,
+        authors: authors,
+        fileCount: fileCount,
+        addedAt: addedAt,
+        series: series,
+        seriesSequence: seriesSequence,
+        coverPath: coverPath,
+        backdropPath: backdropPath,
+        language: language,
+        subtitle: subtitle,
+        description: description,
+        narrators: narrators,
+        genres: genres,
+        publisher: publisher,
+        publishedYear: publishedYear,
+        isbn: isbn,
+        asin: asin,
+        explicit: explicit,
+        contentSensitivity: contentSensitivity,
+        contentStyle: contentStyle,
+        abridged: abridged,
+        progressPosition: progressPosition,
+        progressDuration: progressDuration,
+        mediaProgress: mediaProgress,
+        progressTrackIndex: progressTrackIndex,
+        progressFinished: progressFinished,
+        status: status,
+        metadataOrigins: metadataOrigins,
+        tags: tags,
+        lastListenedAt: lastListenedAt,
+        offline: offline,
+        sourceServerName: sourceServerName,
+        sourceLibraryName: sourceLibraryName,
+        sourceId: sourceId,
+        availability: availability,
+      );
 }
 
 final class WorkMetadataOrigin {
@@ -123,7 +176,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 9;
+  static const schemaVersion = 10;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -450,6 +503,13 @@ final class FundusDatabase {
     );
   }
 
+  void setBackdropPath(String workId, String? path) {
+    _database.execute('UPDATE works SET backdrop_path = ? WHERE id = ?', [
+      path,
+      workId,
+    ]);
+  }
+
   void updateWorkMetadata({
     required String workId,
     required String title,
@@ -681,6 +741,7 @@ final class FundusDatabase {
              w.metadata_json, w.status, w.source_id, w.availability,
              COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
+             w.backdrop_path AS backdrop_path,
              progress.numeric_value AS progress_position,
              progress.position_kind AS progress_kind,
              progress.position_key AS progress_key,
@@ -738,6 +799,7 @@ final class FundusDatabase {
               row['added_at'] as int,
             ),
             coverPath: row['cover_path'] as String?,
+            backdropPath: row['backdrop_path'] as String?,
             language: metadata['language'] as String?,
             subtitle: metadata['subtitle'] as String?,
             description: metadata['description'] as String?,
@@ -2611,6 +2673,7 @@ final class FundusDatabase {
     if (_database.userVersion == 6 && !readOnly) _migrateToVersion7();
     if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
     if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
+    if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
   }
 
   void _migrateToVersion1() {
@@ -2804,6 +2867,26 @@ final class FundusDatabase {
         _database.execute(statement);
       }
       _database.userVersion = 9;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  /// A wide picture beside the upright one.
+  ///
+  /// A poster is 2:3 and a stage is 21:9, so the big places in the app had to
+  /// blow the cover up and blur it. The services that know a film also know
+  /// its backdrop, and one column is all it takes to keep it.
+  void _migrateToVersion10() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      // A fixture from an old version need not carry every table.
+      if (tableExists('works') && !columnExists('works', 'backdrop_path')) {
+        _database.execute('ALTER TABLE works ADD COLUMN backdrop_path TEXT');
+      }
+      _database.userVersion = 10;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -3212,6 +3295,7 @@ CREATE TABLE works_v8 (
   year INTEGER,
   cover_file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
   generated_cover_path TEXT,
+  backdrop_path TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   availability TEXT NOT NULL DEFAULT 'available'
     CHECK (availability IN ('available', 'offline_copy', 'remote',

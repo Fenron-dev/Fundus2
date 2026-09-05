@@ -1070,6 +1070,36 @@ final class FundusLibrary {
     return target.path;
   }
 
+  /// Keeps a wide picture for a work.
+  ///
+  /// The stage and the head of a detail page are landscape; a cover is not.
+  /// Blowing a 2:3 poster up to fill them and blurring the result is a
+  /// stopgap — where a service knows the backdrop, it is kept beside the
+  /// cover and used instead.
+  Future<String> cacheBackdrop({
+    required String workId,
+    required Uint8List bytes,
+    String extension = 'jpg',
+  }) async {
+    _ensureWritable();
+    if (bytes.isEmpty) throw ArgumentError.value(bytes, 'bytes');
+    final normalizedExtension = extension.toLowerCase() == 'png'
+        ? 'png'
+        : 'jpg';
+    final directory = Directory(
+      p.join(root.path, metadataDirectoryName, 'backdrops'),
+    );
+    await directory.create(recursive: true);
+    final filename = '$workId.backdrop.$normalizedExtension';
+    final target = File(p.join(directory.path, filename));
+    await target.writeAsBytes(bytes, flush: true);
+    _database.setBackdropPath(
+      workId,
+      p.posix.join(metadataDirectoryName, 'backdrops', filename),
+    );
+    return target.path;
+  }
+
   PlaybackSession savePlaybackSession(
     PlaybackSession session, {
     String userId = 'default',
@@ -1738,47 +1768,23 @@ final class FundusLibrary {
     }
   }
 
+  /// Turns the stored, vault-relative picture paths into absolute ones.
+  ///
+  /// A path that climbs out of the vault is dropped rather than followed: the
+  /// catalogue is data, and data does not get to name a file on the rest of
+  /// the disk.
   LibraryWorkSummary _withAbsoluteCoverPath(LibraryWorkSummary work) {
-    final coverPath = work.coverPath;
-    if (coverPath == null) return work;
-    final absolutePath = p.normalize(p.join(root.path, coverPath));
-    final safeCoverPath = p.isWithin(root.path, absolutePath)
-        ? absolutePath
-        : null;
-    return LibraryWorkSummary(
-      id: work.id,
-      kind: work.kind,
-      title: work.title,
-      author: work.author,
-      authors: work.authors,
-      fileCount: work.fileCount,
-      addedAt: work.addedAt,
-      series: work.series,
-      seriesSequence: work.seriesSequence,
-      coverPath: safeCoverPath,
-      language: work.language,
-      subtitle: work.subtitle,
-      description: work.description,
-      narrators: work.narrators,
-      genres: work.genres,
-      publisher: work.publisher,
-      publishedYear: work.publishedYear,
-      isbn: work.isbn,
-      asin: work.asin,
-      explicit: work.explicit,
-      contentSensitivity: work.contentSensitivity,
-      abridged: work.abridged,
-      progressPosition: work.progressPosition,
-      progressDuration: work.progressDuration,
-      mediaProgress: work.mediaProgress,
-      progressTrackIndex: work.progressTrackIndex,
-      progressFinished: work.progressFinished,
-      status: work.status,
-      metadataOrigins: work.metadataOrigins,
-      tags: work.tags,
-      lastListenedAt: work.lastListenedAt,
-      offline: work.offline,
+    if (work.coverPath == null && work.backdropPath == null) return work;
+    return work.withPictures(
+      coverPath: _insideVault(work.coverPath),
+      backdropPath: _insideVault(work.backdropPath),
     );
+  }
+
+  String? _insideVault(String? relative) {
+    if (relative == null) return null;
+    final absolute = p.normalize(p.join(root.path, relative));
+    return p.isWithin(root.path, absolute) ? absolute : null;
   }
 
   Future<void> _cacheEmbeddedCover(
