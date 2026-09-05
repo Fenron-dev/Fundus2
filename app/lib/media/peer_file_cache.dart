@@ -25,9 +25,14 @@ final class PeerFileCache {
   /// [onProgress] is called with a fraction between 0 and 1 where the other
   /// side said how large the file is, and with null where it did not — a
   /// download of unknown length still has to look like it is moving.
+  ///
+  /// [onBytes] carries how much has arrived and how much was announced, which
+  /// is what a speed and a remaining time are made of. Zero as the total
+  /// means the other side did not say.
   Future<String> fileFor(
     LibraryPlaybackTrack track, {
     void Function(double? fraction)? onProgress,
+    void Function(int received, int expected)? onBytes,
   }) async {
     if (!track.isRemote) return track.absolutePath;
     await directory.create(recursive: true);
@@ -66,6 +71,7 @@ final class PeerFileCache {
           sink.add(chunk);
           received += chunk.length;
           onProgress?.call(expected > 0 ? received / expected : null);
+          onBytes?.call(received, expected > 0 ? expected : 0);
         }
         await sink.flush();
       } finally {

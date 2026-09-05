@@ -94,6 +94,7 @@ abstract final class FundusIcons {
   static final finished = PhosphorIcons.checkCircle(PhosphorIconsStyle.fill);
   static final unfinished = PhosphorIcons.circle();
   static final close = PhosphorIcons.x();
+  static final delete = PhosphorIcons.trashSimple();
 
   /// Icon sizes used by the interface. Anything else is a mistake.
   static const sizeSm = 14.0;

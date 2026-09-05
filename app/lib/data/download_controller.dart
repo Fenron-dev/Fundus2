@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
+import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
 
 import '../media/peer_file_cache.dart';
@@ -23,6 +24,8 @@ final class DownloadJob {
     this.total = 0,
     this.fraction,
     this.failure,
+    this.bytesPerSecond,
+    this.bytesLeft,
   });
 
   final String workId;
@@ -38,11 +41,26 @@ final class DownloadJob {
   final double? fraction;
   final String? failure;
 
+  /// How fast the current file is arriving, and how much of it is left.
+  /// Null where the other side did not say how large it is.
+  final double? bytesPerSecond;
+  final int? bytesLeft;
+
+  /// Roughly how long the file being fetched still needs.
+  Duration? get remaining {
+    final speed = bytesPerSecond;
+    final left = bytesLeft;
+    if (speed == null || left == null || speed <= 0) return null;
+    return Duration(seconds: (left / speed).round());
+  }
+
   DownloadJob copyWith({
     DownloadState? state,
     int? done,
     double? fraction,
     String? failure,
+    double? bytesPerSecond,
+    int? bytesLeft,
   }) => DownloadJob(
     workId: workId,
     title: title,
@@ -51,6 +69,8 @@ final class DownloadJob {
     total: total,
     fraction: fraction,
     failure: failure ?? this.failure,
+    bytesPerSecond: bytesPerSecond ?? this.bytesPerSecond,
+    bytesLeft: bytesLeft ?? this.bytesLeft,
   );
 
   /// Roughly how far along the whole work is.
@@ -119,6 +139,78 @@ class DownloadController extends ChangeNotifier {
         files.every((file) => file.availability == 'offline_copy');
   }
 
+  /// Whether this controller is still in use.
+  ///
+  /// Measuring and fetching both run past the moment somebody closes a
+  /// library, and a notification after that is an error rather than a
+  /// message. Guarded here instead of at every call site.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  /// How much room the copies take on this device, by media type.
+  ///
+  /// Measured rather than remembered: a file can be deleted from outside, and
+  /// a number that says 6 GB when the folder is empty is worse than no
+  /// number. Measuring means asking the file system for a few hundred sizes,
+  /// so it happens when somebody looks at the list, not on every rebuild.
+  Map<String, int> get storageByType => Map.unmodifiable(_storage);
+  final Map<String, int> _storage = {};
+
+  int get storedBytes =>
+      _storage.values.fold(0, (total, value) => total + value);
+
+  /// The measurement that is running, if one is.
+  ///
+  /// A second caller waits for the first rather than being told „busy" and
+  /// left with an empty answer — which is what a plain flag would do, and
+  /// what would make the number on screen depend on timing.
+  Future<void>? _measuring;
+
+  Future<void> measureStorage() =>
+      _measuring ??= _measure().whenComplete(() => _measuring = null);
+
+  Future<void> _measure() async {
+    final vault = library.library;
+    if (vault == null || _disposed) return;
+    try {
+      final sizes = <String, int>{};
+      for (final work in library.works) {
+        if (work.origin != FundusOrigin.offline) continue;
+        var bytes = 0;
+        for (final file in vault.contentFiles(work.id)) {
+          final path = file.offlinePath;
+          if (path == null) continue;
+          try {
+            bytes += await File(path).length();
+          } on FileSystemException {
+            // A copy somebody deleted from outside simply counts for nothing.
+          }
+        }
+        if (bytes == 0) continue;
+        final type = work.mediaType?.label ?? 'Nicht zugeordnet';
+        sizes[type] = (sizes[type] ?? 0) + bytes;
+      }
+      _storage
+        ..clear()
+        ..addAll(sizes);
+      notifyListeners();
+    } on Object {
+      // Ein Ordner, der sich gerade nicht lesen lässt, ist eine Zahl weniger,
+      // kein Fehler.
+    }
+  }
+
   /// Queues a work and starts working through the queue.
   Future<void> download(WorkView work) async {
     final vault = library.library;
@@ -152,6 +244,7 @@ class DownloadController extends ChangeNotifier {
     _jobs.remove(workId);
     library.refreshWork(workId);
     notifyListeners();
+    unawaited(measureStorage());
   }
 
   /// Takes a work out of the queue. What is already fetched stays — half a
@@ -211,6 +304,10 @@ class DownloadController extends ChangeNotifier {
         done++;
         continue;
       }
+      // Tempo aus dem, was tatsächlich ankommt: ein gleitender Wert, damit
+      // eine Sekunde Funkloch nicht als „noch 4 Stunden" durchschlägt.
+      final started = Stopwatch()..start();
+      var lastReported = Duration.zero;
       try {
         final path = await cache.fileFor(
           _trackFor(vault.playbackTracks(job.workId), file.fileId),
@@ -218,6 +315,19 @@ class DownloadController extends ChangeNotifier {
             _jobs[job.workId] = _jobs[job.workId]!.copyWith(
               done: done,
               fraction: fraction,
+            );
+          },
+          onBytes: (received, expected) {
+            final elapsed = started.elapsed;
+            // Viermal je Sekunde reicht für etwas, das ein Mensch liest.
+            if (elapsed - lastReported < const Duration(milliseconds: 250)) {
+              return;
+            }
+            lastReported = elapsed;
+            final seconds = elapsed.inMilliseconds / 1000;
+            _jobs[job.workId] = _jobs[job.workId]!.copyWith(
+              bytesPerSecond: seconds <= 0 ? null : received / seconds,
+              bytesLeft: expected > 0 ? expected - received : null,
             );
             notifyListeners();
           },
@@ -241,6 +351,7 @@ class DownloadController extends ChangeNotifier {
     );
     library.refreshWork(job.workId);
     notifyListeners();
+    unawaited(measureStorage());
   }
 
   static LibraryPlaybackTrack _trackFor(

@@ -155,4 +155,19 @@ void main() {
       isTrue,
     );
   });
+
+  test('der belegte Platz wird nach Medienart aufgeteilt', () async {
+    await downloads.download(theWork());
+    await settle();
+    await downloads.measureStorage();
+
+    // Zwei Dateien à 1024 Byte.
+    expect(downloads.storedBytes, 2048);
+    expect(downloads.storageByType, hasLength(1));
+
+    // Und was gelöscht ist, zählt nicht mehr mit.
+    await downloads.remove(theWork().id);
+    await downloads.measureStorage();
+    expect(downloads.storedBytes, 0);
+  });
 }
