@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -114,6 +115,26 @@ $navigation  </navMap>
   return path;
 }
 
+/// Answers only when told to, which is how „was zeigt er, während er lädt?"
+/// becomes a question a test can ask.
+final class SlowTextSource implements TextSource {
+  SlowTextSource(this.name, this.titles);
+
+  final _gate = Completer<void>();
+
+  @override
+  final String name;
+  final List<String> titles;
+
+  void answer() => _gate.complete();
+
+  @override
+  Future<List<TextChapter>> chapters() async {
+    await _gate.future;
+    return FakeTextSource(name, titles).chapters();
+  }
+}
+
 void main() {
   group('Der Textleser rechnet im Kapitel, nicht in Seiten', () {
     late Directory root;
@@ -145,6 +166,40 @@ void main() {
       await library.scan();
       await reader.open(library.library!, library.works.first);
     }
+
+    test(
+      'das vorige Buch verschwindet, sobald ein neues geöffnet wird',
+      () async {
+        SlowTextSource? slow;
+        final same = TextReaderController(
+          openSource: (path, name) =>
+              slow ?? FakeTextSource(name, const ['Kapitel eins']),
+        );
+        addTearDown(same.dispose);
+        await library.open(root, createIfMissing: true);
+        await library.scan();
+        await same.open(library.library!, library.works.first);
+        expect(same.chapters.single.title, 'Kapitel eins');
+
+        // Derselbe Leser, das nächste Buch: der Moment dazwischen ist die Frage.
+        slow = SlowTextSource('Band 02.epub', const ['Ganz anderes']);
+        final opening = same.open(library.library!, library.works.first);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(same.isBusy, isTrue);
+        expect(
+          same.chapters,
+          isEmpty,
+          reason:
+              'das vorige Buch darf nicht stehen bleiben, '
+              'während das nächste gelesen wird',
+        );
+
+        slow.answer();
+        await opening;
+        expect(same.chapters.single.title, 'Ganz anderes');
+      },
+    );
 
     test('eine Light Novel landet im Textleser', () async {
       await library.open(root, createIfMissing: true);

@@ -4,6 +4,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
+import '../../media/text_reader_controller.dart';
 
 /// The reader for running text, laid over the shell.
 ///
@@ -203,11 +204,21 @@ class _TextSurfaceState extends State<_TextSurface> {
   final _keys = <int, GlobalKey>{};
   int _restoredTo = -1;
   String? _restoredChapter;
+  TextReaderController? _reader;
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_report);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Held rather than looked up per frame: the scroll listener runs outside
+    // a build, where asking an inherited widget for the scope is both wrong
+    // and, sixty times a second, not free.
+    _reader = FundusScope.of(context).textReader;
   }
 
   @override
@@ -223,7 +234,8 @@ class _TextSurfaceState extends State<_TextSurface> {
   /// screen — so this stays a handful of comparisons per scroll.
   void _report() {
     if (!mounted) return;
-    final reader = FundusScope.of(context).textReader;
+    final reader = _reader;
+    if (reader == null) return;
     final viewport = context.findRenderObject();
     if (viewport is! RenderBox) return;
 
@@ -280,6 +292,10 @@ class _TextSurfaceState extends State<_TextSurface> {
     final chapterId = reader.currentChapter?.id;
     if (_restoredChapter != chapterId ||
         (_restoredTo != reader.paragraphIndex && _restoredTo < 0)) {
+      // Each chapter measures its own paragraphs. Keeping the keys of the
+      // last one means measuring detached boxes on every scrolled frame, and
+      // the map grows for as long as the book is open.
+      if (_restoredChapter != chapterId) _keys.clear();
       _restoredChapter = chapterId;
       final target = reader.paragraphIndex;
       _restoredTo = target;

@@ -1,3 +1,24 @@
+import 'package:fundus_core/fundus_core.dart';
+
+/// What happens when the queue runs out.
+///
+/// The modes themselves are [RepeatMode] from the core, where a playback
+/// session already records them; this is only how they are stepped through
+/// and named on a button.
+extension RepeatModeCycle on RepeatMode {
+  RepeatMode get next => switch (this) {
+    RepeatMode.none => RepeatMode.all,
+    RepeatMode.all => RepeatMode.one,
+    RepeatMode.one => RepeatMode.none,
+  };
+
+  String get label => switch (this) {
+    RepeatMode.none => 'Keine Wiederholung',
+    RepeatMode.all => 'Alles wiederholen',
+    RepeatMode.one => 'Titel wiederholen',
+  };
+}
+
 /// How this device plays.
 ///
 /// Speed and skip distances are habits, not properties of a work: someone who
@@ -13,6 +34,8 @@ final class PlaybackPreference {
     this.sleepAtChapterEnd = true,
     this.autoplayNext = true,
     this.autoplayDelay = const Duration(seconds: 8),
+    this.shuffle = false,
+    this.repeat = RepeatMode.none,
   });
 
   factory PlaybackPreference.fromJson(Map<String, Object?> value) =>
@@ -24,6 +47,8 @@ final class PlaybackPreference {
         sleepAtChapterEnd: value['sleep_at_chapter_end'] != false,
         autoplayNext: value['autoplay_next'] != false,
         autoplayDelay: _secondsOf(value['autoplay_delay'], 8),
+        shuffle: value['shuffle'] == true,
+        repeat: _repeatOf(value['repeat']),
       );
 
   /// Playback speed. Bounded on both sides: below a half nothing is
@@ -54,6 +79,16 @@ final class PlaybackPreference {
   /// stop it, short enough not to be a pause.
   final Duration autoplayDelay;
 
+  /// Whether the tracks are played in an order drawn once rather than in the
+  /// order they are in.
+  ///
+  /// Drawn once and kept: „zufällig" that redraws on every step cannot say
+  /// what came before, and would play the same track twice in a row often
+  /// enough to look broken.
+  final bool shuffle;
+
+  final RepeatMode repeat;
+
   static const rates = <double>[0.75, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
   static const skips = <int>[5, 10, 15, 30, 45, 60, 90];
   static const sleepChoices = <int>[5, 10, 15, 30, 45, 60, 90];
@@ -67,6 +102,8 @@ final class PlaybackPreference {
     'sleep_at_chapter_end': sleepAtChapterEnd,
     'autoplay_next': autoplayNext,
     'autoplay_delay': autoplayDelay.inSeconds,
+    'shuffle': shuffle,
+    'repeat': repeat.name,
   };
 
   PlaybackPreference copyWith({
@@ -77,6 +114,8 @@ final class PlaybackPreference {
     bool? sleepAtChapterEnd,
     bool? autoplayNext,
     Duration? autoplayDelay,
+    bool? shuffle,
+    RepeatMode? repeat,
   }) => PlaybackPreference(
     rate: rate ?? this.rate,
     skipBack: skipBack ?? this.skipBack,
@@ -85,7 +124,13 @@ final class PlaybackPreference {
     sleepAtChapterEnd: sleepAtChapterEnd ?? this.sleepAtChapterEnd,
     autoplayNext: autoplayNext ?? this.autoplayNext,
     autoplayDelay: autoplayDelay ?? this.autoplayDelay,
+    shuffle: shuffle ?? this.shuffle,
+    repeat: repeat ?? this.repeat,
   );
+
+  static RepeatMode _repeatOf(Object? value) =>
+      RepeatMode.values.where((mode) => mode.name == value).firstOrNull ??
+      RepeatMode.none;
 
   static double _rateOf(Object? value) {
     final number = value is num ? value.toDouble() : 1.0;

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/widgets.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -60,8 +61,27 @@ final class FileTextSource implements TextSource {
   @override
   String get name => _name ?? p.basename(path);
 
+  /// Unpacks the book and turns it into paragraphs — away from the interface.
+  ///
+  /// Opening an EPUB reads every entry of a zip and runs every chapter
+  /// through the reflow. That is a second or several of straight computation,
+  /// and on the interface's own isolate it stops the app dead: nothing
+  /// repaints, so the book that was open before stays on the screen looking
+  /// like the answer. It belongs on a worker, like the comic archives already
+  /// are.
   @override
-  Future<List<TextChapter>> chapters() async {
+  Future<List<TextChapter>> chapters() {
+    final resolved = name;
+    return identical(adapter, const EpubPackageAdapter())
+        ? Isolate.run(() => _read(path, resolved))
+        : _read(path, resolved, adapter: adapter);
+  }
+
+  static Future<List<TextChapter>> _read(
+    String path,
+    String name, {
+    EpubPackageAdapter adapter = const EpubPackageAdapter(),
+  }) async {
     final extension = p.extension(path).toLowerCase();
     if (extension == '.epub') {
       final publication = await adapter.openFile(path);
@@ -246,6 +266,11 @@ class TextReaderController extends ChangeNotifier {
     _open = true;
     _chrome = true;
     _busy = true;
+    // Nothing of the last book survives the opening of this one. It used to:
+    // the chapters stayed until the new ones had been parsed, so for the
+    // seconds that took, the reader showed the previous book — and answered
+    // scrolling and page turns as if that were what had been opened.
+    _clearBook();
     notifyListeners();
 
     try {
@@ -280,9 +305,22 @@ class TextReaderController extends ChangeNotifier {
     }
   }
 
+  /// Everything that belongs to one book and nothing else.
+  void _clearBook() {
+    _chapters = const [];
+    _chapterIndex = 0;
+    _paragraphIndex = 0;
+    _innerOffset = 0;
+    _bookmarks = const [];
+    _highlights = const [];
+    _volumes = const [];
+    _volumeIndex = 0;
+  }
+
   Future<void> _openVolume(int index, {MediaPosition? at}) async {
     _busy = true;
     _failure = null;
+    _chapters = const [];
     notifyListeners();
     try {
       final volume = _volumes[index];
@@ -312,8 +350,17 @@ class TextReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Reports where reading has got to. Called as the text scrolls, so it
-  /// writes back on the media type's own rhythm rather than every frame.
+  /// Reports where reading has got to.
+  ///
+  /// This is called once per scrolled frame, and every listener of this
+  /// controller — which is the whole interface, through the scope — used to
+  /// be woken by it. Sixty rebuilds a second of the reader, the shell and the
+  /// navigation is what made scrolling a book stutter.
+  ///
+  /// The position itself is kept on every call, because the save and the
+  /// resume need it exactly. Listeners are only told when what they *show*
+  /// changes: the paragraph and the rounded percentage, which move a couple
+  /// of times a second rather than sixty.
   void reportPosition(int paragraphIndex, double innerOffset) {
     final clamped = paragraphs.isEmpty
         ? 0
@@ -322,9 +369,10 @@ class TextReaderController extends ChangeNotifier {
         (innerOffset - _innerOffset).abs() < .01) {
       return;
     }
+    final shown = positionLabel;
     _paragraphIndex = clamped;
     _innerOffset = innerOffset.clamp(0, 1);
-    notifyListeners();
+    if (positionLabel != shown) notifyListeners();
     _scheduleSave();
   }
 

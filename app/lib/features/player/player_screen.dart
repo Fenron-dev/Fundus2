@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:flutter/services.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/fundus_scope.dart';
@@ -492,6 +493,27 @@ class _Controls extends StatelessWidget {
               onPressed: player.cycleRate,
               child: Text('${player.rate}×'),
             ),
+            if (player.hasQueueControls) ...[
+              IconButton(
+                onPressed: () => player.setShuffle(!player.isShuffling),
+                isSelected: player.isShuffling,
+                icon: Icon(FundusIcons.shuffle, size: FundusIcons.sizeLg),
+                tooltip: player.isShuffling
+                    ? 'Zufällige Reihenfolge — aus'
+                    : 'Zufällige Reihenfolge',
+              ),
+              IconButton(
+                onPressed: player.cycleRepeat,
+                isSelected: player.repeatMode != RepeatMode.none,
+                icon: Icon(
+                  player.repeatMode == RepeatMode.one
+                      ? FundusIcons.repeatOne
+                      : FundusIcons.repeat,
+                  size: FundusIcons.sizeLg,
+                ),
+                tooltip: player.repeatMode.label,
+              ),
+            ],
             const _SleepButton(),
           ],
         ),

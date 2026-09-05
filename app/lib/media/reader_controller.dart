@@ -253,6 +253,14 @@ class ReaderController extends ChangeNotifier {
     _open = true;
     _chrome = true;
     _busy = true;
+    // The last volume's pages are not this one's. Left standing they are what
+    // the reader shows — and answers page turns from — until the new archive
+    // has been opened.
+    _pages = const [];
+    _pageIndex = 0;
+    _volumes = const [];
+    _volumeIndex = 0;
+    _bookmarks = const [];
     notifyListeners();
 
     try {
@@ -292,6 +300,7 @@ class ReaderController extends ChangeNotifier {
   Future<void> _openVolume(int index, {int page = 0}) async {
     _busy = true;
     _failure = null;
+    _pages = const [];
     notifyListeners();
     try {
       await _source?.dispose();

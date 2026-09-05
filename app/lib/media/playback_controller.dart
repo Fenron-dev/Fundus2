@@ -1,7 +1,8 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/widgets.dart' hide RepeatMode;
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 
@@ -69,6 +70,13 @@ class PlaybackController extends ChangeNotifier {
   List<MediaByteSource> _sources = const [];
   List<LibraryPlaybackChapter> _chapters = const [];
   int _index = 0;
+
+  /// The order the tracks are played in — the indices of [_sources], drawn
+  /// once when shuffle is switched on and kept until it is switched off or
+  /// the queue starts over. Without a kept order, „previous" cannot say what
+  /// was actually played and the same track turns up twice in a row.
+  List<int> _order = const [];
+  final _random = Random();
 
   MediaTracks _tracks = const MediaTracks();
 
@@ -218,6 +226,7 @@ class PlaybackController extends ChangeNotifier {
   void reject(WorkView work, String message) {
     _work = work;
     _sources = const [];
+    _order = const [];
     _chapters = const [];
     _position = Duration.zero;
     _duration = null;
@@ -255,6 +264,7 @@ class PlaybackController extends ChangeNotifier {
           ),
       ];
       _chapters = await library.playbackChapters(work.id);
+      _buildOrder();
       _attachStreams();
 
       final saved = library.loadProgress(work.id);
@@ -358,13 +368,18 @@ class PlaybackController extends ChangeNotifier {
     _position + delta < Duration.zero ? Duration.zero : _position + delta,
   );
 
+  /// Pressing „weiter" always moves on.
+  ///
+  /// „Titel wiederholen" is about what happens when a track *ends*; someone
+  /// who asks for the next one is not asking for this one again.
   Future<void> next() async {
-    if (_index + 1 >= _sources.length) {
+    final target = _nextIndex(manual: true);
+    if (target == null) {
       await _engine.pause();
       _markFinished();
       return;
     }
-    _index++;
+    _index = target;
     await _openCurrent();
     await _engine.play();
     notifyListeners();
@@ -372,15 +387,74 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> previous() async {
     // Like every player: back jumps to the start of the track first.
-    if (_position > const Duration(seconds: 3) || _index == 0) {
+    final at = _orderPosition;
+    if (_position > const Duration(seconds: 3) || at <= 0) {
       await seek(Duration.zero);
       return;
     }
-    _index--;
+    _index = _order[at - 1];
     await _openCurrent();
     await _engine.play();
     notifyListeners();
   }
+
+  /// Where the current track sits in the playing order.
+  int get _orderPosition {
+    final at = _order.indexOf(_index);
+    return at < 0 ? 0 : at;
+  }
+
+  /// What plays after this one, or null when nothing does.
+  int? _nextIndex({bool manual = false}) {
+    if (_sources.isEmpty) return null;
+    if (!manual && habits.repeat == RepeatMode.one) return _index;
+    final at = _orderPosition;
+    if (at + 1 < _order.length) return _order[at + 1];
+    if (habits.repeat == RepeatMode.none) return null;
+    // Round again. A fresh draw, or the same album would repeat in the same
+    // „random" order every time.
+    if (habits.shuffle) _drawOrder(startingWith: null);
+    return _order.isEmpty ? null : _order.first;
+  }
+
+  /// Builds the playing order for the tracks now loaded.
+  void _buildOrder() {
+    if (habits.shuffle) {
+      _drawOrder(startingWith: _index);
+    } else {
+      _order = [for (var index = 0; index < _sources.length; index++) index];
+    }
+  }
+
+  void _drawOrder({required int? startingWith}) {
+    final rest = [
+      for (var index = 0; index < _sources.length; index++)
+        if (index != startingWith) index,
+    ]..shuffle(_random);
+    _order = [?startingWith, ...rest];
+  }
+
+  /// Draws a new order, or puts the tracks back in the order they are in.
+  Future<void> setShuffle(bool value) async {
+    habits = habits.copyWith(shuffle: value);
+    _buildOrder();
+    await onHabitsChanged?.call(habits);
+    notifyListeners();
+  }
+
+  Future<void> cycleRepeat() async {
+    habits = habits.copyWith(repeat: habits.repeat.next);
+    await onHabitsChanged?.call(habits);
+    notifyListeners();
+  }
+
+  bool get isShuffling => habits.shuffle;
+  RepeatMode get repeatMode => habits.repeat;
+
+  /// Whether shuffle and repeat mean anything here.
+  ///
+  /// One file has nothing to shuffle, and a film is not a queue.
+  bool get hasQueueControls => _sources.length > 1 && !showsVideo;
 
   Future<void> jumpToTrack(int index) async {
     if (index < 0 || index >= _sources.length) return;
@@ -429,14 +503,14 @@ class PlaybackController extends ChangeNotifier {
   /// next file, a single film — behaves as it always did, because there is
   /// nothing to decide.
   void _finished() {
-    final hasNext = _index + 1 < _sources.length;
-    if (!hasNext) {
+    final target = _nextIndex();
+    if (target == null) {
       saveProgress();
       notifyListeners();
       return;
     }
     if (!showsVideo) {
-      next();
+      unawaited(_playIndex(target));
       return;
     }
     _nextIn = habits.autoplayNext ? habits.autoplayDelay : null;
@@ -466,8 +540,18 @@ class PlaybackController extends ChangeNotifier {
   Duration? get nextEpisodeIn => _nextIn;
 
   /// The title of what comes next, for the card to name.
-  String? get nextEpisodeTitle =>
-      _index + 1 < _sources.length ? _sources[_index + 1].title : null;
+  String? get nextEpisodeTitle {
+    final at = _orderPosition;
+    if (at + 1 >= _order.length) return null;
+    return _sources[_order[at + 1]].title;
+  }
+
+  Future<void> _playIndex(int index) async {
+    _index = index;
+    await _openCurrent();
+    await _engine.play();
+    notifyListeners();
+  }
 
   void playNextNow() {
     _clearBetweenEpisodes();
@@ -564,6 +648,7 @@ class PlaybackController extends ChangeNotifier {
     _saveTimer?.cancel();
     _work = null;
     _sources = const [];
+    _order = const [];
     _chapters = const [];
     _position = Duration.zero;
     _duration = null;

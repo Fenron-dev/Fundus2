@@ -65,6 +65,8 @@ abstract final class FundusIcons {
   static final expand = PhosphorIcons.caretUp();
   static final collapse = PhosphorIcons.caretDown();
   static final shuffle = PhosphorIcons.shuffle();
+  static final repeat = PhosphorIcons.repeat();
+  static final repeatOne = PhosphorIcons.repeatOnce();
   static final audioTrack = PhosphorIcons.speakerHigh();
   static final subtitles = PhosphorIcons.closedCaptioning();
   static final fullscreen = PhosphorIcons.cornersOut();

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -739,6 +739,48 @@ class _Playback extends StatelessWidget {
                   ],
                 ),
               ],
+            ],
+          ),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Reihenfolge', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Gilt für Werke mit mehreren Titeln — ein Album, ein '
+                'Hörbuch in Dateien. Die zufällige Reihenfolge wird einmal '
+                'gezogen und behalten, damit „zurück" sagen kann, was lief.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: habits.shuffle,
+                onChanged: (value) =>
+                    scope.setPlaybackHabits(habits.copyWith(shuffle: value)),
+                title: const Text('Zufällige Reihenfolge'),
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              Text('Wiederholen', style: theme.textTheme.labelLarge),
+              const SizedBox(height: FundusSpace.x2),
+              Wrap(
+                spacing: FundusSpace.x2,
+                runSpacing: FundusSpace.x2,
+                children: [
+                  for (final mode in RepeatMode.values)
+                    ChoiceChip(
+                      selected: habits.repeat == mode,
+                      onSelected: (_) => scope.setPlaybackHabits(
+                        habits.copyWith(repeat: mode),
+                      ),
+                      label: Text(mode.label),
+                    ),
+                ],
+              ),
             ],
           ),
         ),
