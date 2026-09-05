@@ -132,7 +132,9 @@ class SyncController extends ChangeNotifier {
         client: client,
         libraryId: libraryId,
         deviceId: settings.deviceKey,
+        baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
       ).run();
+      await _record(vault, peer, report);
 
       await settings.savePeer(
         peer.copyWith(
@@ -174,12 +176,14 @@ class SyncController extends ChangeNotifier {
       try {
         final libraryId = await _libraryIdFor(peer, client, vault);
         if (libraryId == null) continue;
-        await FundusSync(
+        final report = await FundusSync(
           library: vault,
           client: client,
           libraryId: libraryId,
           deviceId: settings.deviceKey,
+          baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
         ).run(workIds: [workId]);
+        await _record(vault, peer, report);
       } on Object {
         // Silence is the right answer here. This runs on the way out of a
         // player; a machine that is switched off is not news, and the manual
@@ -196,6 +200,95 @@ class SyncController extends ChangeNotifier {
       last = await syncWith(peer) ?? last;
     }
     return last;
+  }
+
+  /// Writes down what was agreed and what was decided.
+  ///
+  /// The baseline is the point the next run measures from; the journal is
+  /// what a person reads when a position turns up where they did not leave
+  /// it. Both belong to the library, not to this installation.
+  Future<void> _record(
+    FundusLibrary vault,
+    PeerConnection peer,
+    SyncReport report,
+  ) async {
+    if (vault.isReadOnly) return;
+    await vault.saveSyncBaseline(peer.serverId, report.agreedMarks);
+    if (report.entries.isEmpty) return;
+    final previous = await vault.loadSyncJournal(peer.serverId);
+    await vault.saveSyncJournal(peer.serverId, [
+      for (final entry in report.entries.reversed) entry.toJson(),
+      ...previous,
+    ]);
+    _journal = null;
+  }
+
+  /// The journal of the peer last synced with, newest first.
+  List<SyncEntry>? _journal;
+
+  List<SyncEntry> get journal => _journal ?? const [];
+
+  /// Reads the journal for a peer. Held until the next sync writes to it.
+  Future<List<SyncEntry>> loadJournal(PeerConnection peer) async {
+    final vault = library.library;
+    if (vault == null) return const [];
+    final raw = await vault.loadSyncJournal(peer.serverId);
+    final entries = [for (final entry in raw) SyncEntry.fromJson(entry)];
+    _journal = entries;
+    notifyListeners();
+    return entries;
+  }
+
+  /// Turns a decision around: takes the other side's value after all.
+  ///
+  /// This is what makes „der neuere Stand gewinnt" bearable — the rule
+  /// decides in the moment, and a person who disagrees can say so afterwards
+  /// without hunting for the position by hand.
+  Future<bool> revert(PeerConnection peer, SyncEntry entry) async {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return false;
+    _busy = true;
+    _failure = null;
+    notifyListeners();
+    final client = _connect(peer);
+    try {
+      final libraryId = await _libraryIdFor(peer, client, vault);
+      if (libraryId == null) return _finish(false);
+      final theirs = await client.progress(libraryId, entry.workId);
+      if (theirs == null) {
+        _failure = 'Auf der Gegenstelle steht für dieses Werk nichts mehr.';
+        return _finish(false);
+      }
+      vault.saveMediaProgress(
+        workId: entry.workId,
+        fileId: theirs.fileId ?? '',
+        position: theirs.position,
+        finished: theirs.finished,
+        deviceId: theirs.deviceId.isEmpty
+            ? settings.deviceKey
+            : theirs.deviceId,
+      );
+      // The baseline must forget this work, or the next run would call the
+      // change a conflict with itself.
+      final baseline = await vault.loadSyncBaseline(peer.serverId)
+        ..remove(entry.workId);
+      await vault.saveSyncBaseline(peer.serverId, baseline);
+      library.refresh();
+      return _finish(true);
+    } on FundusRemoteException catch (error) {
+      _failure = error.message;
+    } on Object catch (error) {
+      _failure = 'Das ließ sich nicht zurücknehmen: $error';
+    } finally {
+      client.close();
+    }
+    return _finish(false);
+  }
+
+  bool _finish(bool value) {
+    _busy = false;
+    notifyListeners();
+    return value;
   }
 
   static String _naming(List<RemoteLibrary> libraries) => libraries.length == 1

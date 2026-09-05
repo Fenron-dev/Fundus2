@@ -279,6 +279,74 @@ final class FundusLibrary {
     );
   }
 
+  /// The last common state per work, for a peer, and the journal beside it.
+  ///
+  /// In the vault rather than with the app: it describes agreements this
+  /// *library* reached with another one, so a folder carried to another
+  /// device brings them along and does not start over.
+  Future<Map<String, String>> loadSyncBaseline(String peerId) =>
+      _readJsonMap(_syncFile(peerId, 'baseline'));
+
+  Future<void> saveSyncBaseline(String peerId, Map<String, String> marks) {
+    _ensureWritable();
+    return _writeSidecar(_syncFile(peerId, 'baseline'), jsonEncode(marks));
+  }
+
+  /// What the last few syncs decided, newest first.
+  Future<List<Map<String, Object?>>> loadSyncJournal(String peerId) async {
+    final file = _syncFile(peerId, 'journal');
+    if (!await file.exists()) return const [];
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! List) return const [];
+      return [
+        for (final entry in decoded)
+          if (entry is Map) Map<String, Object?>.from(entry.cast()),
+      ];
+    } on FormatException {
+      return const [];
+    } on FileSystemException {
+      return const [];
+    }
+  }
+
+  /// Keeps the newest [limit] entries and forgets the rest — a journal that
+  /// grows without bound is a file nobody ever reads the end of.
+  Future<void> saveSyncJournal(
+    String peerId,
+    List<Map<String, Object?>> entries, {
+    int limit = 200,
+  }) {
+    _ensureWritable();
+    return _writeSidecar(
+      _syncFile(peerId, 'journal'),
+      jsonEncode(entries.take(limit).toList()),
+    );
+  }
+
+  Future<Map<String, String>> _readJsonMap(File file) async {
+    if (!await file.exists()) return const {};
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map) return const {};
+      return {
+        for (final entry in decoded.entries)
+          if (entry.value is String) '${entry.key}': entry.value as String,
+      };
+    } on FormatException {
+      return const {};
+    } on FileSystemException {
+      return const {};
+    }
+  }
+
+  File _syncFile(String peerId, String what) {
+    final safe = peerId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    return File(
+      p.join(root.path, metadataDirectoryName, 'sync', '$safe.$what.json'),
+    );
+  }
+
   /// Whether a source is answering right now.
   ///
   /// Works of an unreachable source stay in the index and stay visible; only

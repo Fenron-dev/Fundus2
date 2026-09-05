@@ -8,3 +8,4 @@ export 'src/catalogue_mirror.dart';
 export 'src/remote_client.dart';
 export 'src/stream_proxy.dart';
 export 'src/sync.dart';
+export 'src/sync_journal.dart';

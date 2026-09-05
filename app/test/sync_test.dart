@@ -196,6 +196,38 @@ void main() {
     expect(sync.isBusy, isFalse);
   });
 
+  test(
+    'das Journal überlebt den Abgleich und liegt bei der Bibliothek',
+    () async {
+      final sync = controller();
+      // Ein Stand hier, keiner drüben: der geht hinüber.
+      library.library!.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 12),
+        deviceId: 'hier',
+      );
+
+      final report = await sync.syncWith(
+        peer(libraryId: theirs.manifest.libraryId),
+      );
+      expect(report, isNotNull, reason: sync.failure ?? '');
+      expect(report!.entries, hasLength(1));
+
+      // Und es steht danach in der Bibliothek, nicht nur im Speicher.
+      final journal = await sync.loadJournal(
+        peer(libraryId: theirs.manifest.libraryId),
+      );
+      expect(journal, hasLength(1));
+      expect(journal.single.title, 'Der Schacht');
+      expect(journal.single.decision, SyncDecision.pushed);
+
+      // Die Grundlinie ist gesetzt, also hat der nächste Lauf nichts zu tun.
+      final baseline = await library.library!.loadSyncBaseline('server-test');
+      expect(baseline, contains(workId));
+    },
+  );
+
   testWidgets('die Einstellungen zeigen, was gekoppelt ist', (tester) async {
     final sync = controller();
     await settings.savePeer(
@@ -225,7 +257,14 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    // Das Journal wird von der Platte gelesen; in der Scheinzeit von
+    // `testWidgets` wird daraus nie etwas, und `pumpAndSettle` wartete
+    // sonst auf einen Fortschrittsbalken, der sich für immer dreht.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 120)),
+    );
+    await tester.pump();
+    await tester.pump();
 
     expect(find.text('Der andere Rechner'), findsOneWidget);
     expect(find.textContaining('14.03. 09:05'), findsOneWidget);
@@ -234,7 +273,8 @@ void main() {
 
     // Und eine getrennte Verbindung verschwindet auch aus der Ansicht.
     await tester.tap(find.byTooltip('Verbindung entfernen'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
     expect(find.text('Der andere Rechner'), findsNothing);
   });
 }

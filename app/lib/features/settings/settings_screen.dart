@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -14,6 +15,7 @@ import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../app/pairing_scanner.dart';
 import '../../data/media_type.dart';
+import '../../data/peer_connection.dart';
 import '../../media/comic_layout.dart';
 import '../../data/protection.dart';
 import '../../data/work_filter.dart';
@@ -1700,6 +1702,7 @@ class _SyncState extends State<_Sync> {
           ),
         ),
         if (scope.peerLibrary.isOpen) _peerLibraryCard(context),
+        if (sync.peers.isNotEmpty) _Journal(peer: sync.peers.first),
         _adoption(context),
       ],
     );
@@ -1851,6 +1854,152 @@ class _SyncState extends State<_Sync> {
   }
 
   static String _when(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.day)}.${two(local.month)}. ${two(local.hour)}:'
+        '${two(local.minute)}';
+  }
+}
+
+/// What the last syncs decided.
+///
+/// „Der neuere Stand gewinnt" is a defensible rule and an invisible one. This
+/// is where it becomes visible: what was decided, for which work, with both
+/// values side by side — and, for the ones where both sides had moved, a way
+/// to say „nimm doch den anderen".
+class _Journal extends StatefulWidget {
+  const _Journal({required this.peer});
+
+  final PeerConnection peer;
+
+  @override
+  State<_Journal> createState() => _JournalState();
+}
+
+class _JournalState extends State<_Journal> {
+  List<SyncEntry>? _entries;
+  bool _showAll = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_entries == null) unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final entries = await FundusScope.of(context).sync.loadJournal(widget.peer);
+    if (!mounted) return;
+    setState(() => _entries = entries);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final all = _entries ?? const <SyncEntry>[];
+    final conflicts = all.where((entry) => entry.isConflict).toList();
+    final shown = _showAll
+        ? all.take(30).toList()
+        : conflicts.take(10).toList();
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Was abgeglichen wurde',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              if (all.isNotEmpty)
+                TextButton(
+                  onPressed: () => setState(() => _showAll = !_showAll),
+                  child: Text(_showAll ? 'Nur Konflikte' : 'Alles zeigen'),
+                ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            conflicts.isEmpty
+                ? 'Bei Konflikten — beide Seiten haben sich bewegt — gewinnt '
+                      'der spätere Stand. Solche Fälle stehen hier, damit man '
+                      'sie umkehren kann.'
+                : '${conflicts.length} Werke, bei denen beide Seiten sich '
+                      'bewegt hatten. Entschieden wurde nach dem späteren '
+                      'Stand.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x4),
+          if (_entries == null)
+            const LinearProgressIndicator()
+          else if (shown.isEmpty)
+            Text(
+              all.isEmpty
+                  ? 'Noch nichts abgeglichen.'
+                  : 'Keine Konflikte — alles war eindeutig.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: tokens.textFaint,
+              ),
+            )
+          else
+            for (final entry in shown)
+              Padding(
+                padding: const EdgeInsets.only(bottom: FundusSpace.x3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(entry.title, style: theme.textTheme.bodyMedium),
+                          Text(
+                            _line(entry),
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: entry.isConflict
+                                  ? tokens.accentRamp.s400
+                                  : tokens.textFaint,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (entry.isConflict &&
+                        (entry.note?.contains('von hier') ?? false))
+                      TextButton(
+                        onPressed: scope.sync.isBusy
+                            ? null
+                            : () async {
+                                await scope.sync.revert(widget.peer, entry);
+                                await _load();
+                              },
+                        child: const Text('Doch den anderen'),
+                      ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  /// One line that says what happened without needing the one above it.
+  static String _line(SyncEntry entry) {
+    final when = _moment(entry.at);
+    if (!entry.isConflict) {
+      return '${entry.decision.label} · $when';
+    }
+    return 'hier ${entry.mine ?? '—'}, dort ${entry.theirs ?? '—'} · '
+        '${entry.note ?? ''} · $when';
+  }
+
+  static String _moment(DateTime value) {
     final local = value.toLocal();
     String two(int number) => number.toString().padLeft(2, '0');
     return '${two(local.day)}.${two(local.month)}. ${two(local.hour)}:'
