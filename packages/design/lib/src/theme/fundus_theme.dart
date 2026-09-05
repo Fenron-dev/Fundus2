@@ -10,16 +10,32 @@ import 'fundus_tokens.dart';
 /// primaries become accent outlines, the focus ring is the accent's own, and
 /// every surface comes from the ramps rather than from a seed colour.
 abstract final class FundusTheme {
-  static ThemeData dark({FundusDensity density = FundusDensity.comfortable}) =>
-      _build(FundusTokens.dark(density: density), Brightness.dark);
+  /// [accent] recolours the interface without redesigning it: the ramp keeps
+  /// its lightness curve and moves to the chosen hue, so contrast survives
+  /// whatever somebody picks.
+  static ThemeData dark({
+    FundusDensity density = FundusDensity.comfortable,
+    Color? accent,
+  }) => _build(
+    FundusTokens.dark(density: density, accent: accent),
+    Brightness.dark,
+  );
 
-  static ThemeData light({FundusDensity density = FundusDensity.comfortable}) =>
-      _build(FundusTokens.light(density: density), Brightness.light);
+  static ThemeData light({
+    FundusDensity density = FundusDensity.comfortable,
+    Color? accent,
+  }) => _build(
+    FundusTokens.light(density: density, accent: accent),
+    Brightness.light,
+  );
 
-  static ThemeData of(Brightness brightness, FundusDensity density) =>
-      brightness == Brightness.dark
-      ? dark(density: density)
-      : light(density: density);
+  static ThemeData of(
+    Brightness brightness,
+    FundusDensity density, {
+    Color? accent,
+  }) => brightness == Brightness.dark
+      ? dark(density: density, accent: accent)
+      : light(density: density, accent: accent);
 
   static ThemeData _build(FundusTokens tokens, Brightness brightness) {
     final textTheme = FundusType.textTheme(

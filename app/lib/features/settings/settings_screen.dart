@@ -56,6 +56,117 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+/// The colour the interface is drawn in.
+///
+/// One value, not a palette: the ramp keeps its lightness curve and moves to
+/// the chosen hue, so a different colour cannot quietly make text unreadable.
+class _ColourCard extends StatelessWidget {
+  const _ColourCard();
+
+  static const _choices = <(String, Color?)>[
+    ('Wie geliefert', null),
+    ('Blau', Color(0xff4f7ddb)),
+    ('Türkis', Color(0xff2fa4a0)),
+    ('Grün', Color(0xff4c9a5b)),
+    ('Bernstein', Color(0xffc08a3e)),
+    ('Rot', Color(0xffc0574f)),
+    ('Magenta', Color(0xffb4519c)),
+    ('Grau', Color(0xff7c8091)),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final chosen = scope.settings.accentColor;
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Farbe', style: theme.textTheme.titleSmall),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Gilt für Knöpfe, Fortschritt und alles, was hervorgehoben ist. '
+            'Hell und Dunkel bleiben, wie sie sind.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x3),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            children: [
+              for (final (label, colour) in _choices)
+                ChoiceChip(
+                  selected: chosen?.toARGB32() == colour?.toARGB32(),
+                  onSelected: (_) =>
+                      unawaited(scope.settings.setAccentColor(colour)),
+                  avatar: colour == null
+                      ? null
+                      : CircleAvatar(backgroundColor: colour, radius: 8),
+                  label: Text(label),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// How large the type is.
+///
+/// On top of what the system already asks for, never instead of it: somebody
+/// who set their phone to large type meant it, and this shifts from there.
+class _TextSizeCard extends StatelessWidget {
+  const _TextSizeCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final scale = scope.settings.textScale;
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('Schriftgröße', style: theme.textTheme.titleSmall),
+              ),
+              Text(
+                '${(scale * 100).round()} %',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          Slider(
+            value: scale,
+            min: 0.8,
+            max: 1.6,
+            divisions: 8,
+            label: '${(scale * 100).round()} %',
+            onChanged: (value) => unawaited(scope.settings.setTextScale(value)),
+          ),
+          Text(
+            'Ein Beispielsatz in dieser Größe.',
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// The order the shelves stand in.
 ///
 /// It used to be the order they were written down in, with a rule drawn
@@ -286,6 +397,8 @@ class _Appearance extends StatelessWidget {
             ],
           ),
         ),
+        const _ColourCard(),
+        const _TextSizeCard(),
         const _ShelfOrderCard(),
         _Card(
           child: Column(

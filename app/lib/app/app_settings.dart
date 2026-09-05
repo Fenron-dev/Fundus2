@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart' show ThemeMode;
+import 'package:flutter/material.dart' show Color, ThemeMode;
 import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -191,6 +191,28 @@ class AppSettings extends ChangeNotifier {
     if (name.isEmpty || name == deviceName) return;
     await _set('device_name', name);
   }
+
+  /// The colour the interface is drawn in, or null for the one it ships with.
+  ///
+  /// One value, not a palette: the ramp is derived from it, so contrast is
+  /// never somebody's problem to get right.
+  Color? get accentColor {
+    final value = _values['accent_color'];
+    return value is int ? Color(value) : null;
+  }
+
+  Future<void> setAccentColor(Color? value) =>
+      _set('accent_color', value?.toARGB32());
+
+  /// How large the type is, as a factor. 1 is the designed size.
+  double get textScale {
+    final value = _values['text_scale'];
+    if (value is! num) return 1;
+    return value.toDouble().clamp(0.8, 1.6);
+  }
+
+  Future<void> setTextScale(double value) =>
+      _set('text_scale', value.clamp(0.8, 1.6));
 
   Future<void> setThemeMode(ThemeMode mode) => _set('theme_mode', mode.name);
 

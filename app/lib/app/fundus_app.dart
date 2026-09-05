@@ -31,9 +31,23 @@ class FundusApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         // Dark and light are equal citizens; the density rides along so tiles
         // and rows resize with the theme rather than through a second lookup.
-        theme: FundusTheme.light(density: settings.density),
-        darkTheme: FundusTheme.dark(density: settings.density),
+        theme: FundusTheme.light(
+          density: settings.density,
+          accent: settings.accentColor,
+        ),
+        darkTheme: FundusTheme.dark(
+          density: settings.density,
+          accent: settings.accentColor,
+        ),
         themeMode: settings.themeMode,
+        // Die Schriftgröße gehört zum Thema, nicht zu jedem einzelnen Text:
+        // sie wird hier einmal auf das gelegt, was das System ohnehin schon
+        // vorgibt, statt sie zu ersetzen.
+        builder: (context, child) => MediaQuery.withClampedTextScaling(
+          minScaleFactor: settings.textScale,
+          maxScaleFactor: settings.textScale * 1.4,
+          child: child ?? const SizedBox.shrink(),
+        ),
         home: FundusScope(
           settings: settings,
           library: library,

@@ -45,6 +45,14 @@ jobs:
         working-directory: packages/server
         run: dart test
 
+      - name: Test client
+        working-directory: packages/client
+        run: dart test
+
+      - name: Test design
+        working-directory: packages/design
+        run: flutter test
+
       - name: Test Flutter app
         working-directory: app
         run: flutter test

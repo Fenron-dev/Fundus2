@@ -1,4 +1,4 @@
-import 'dart:ui';
+import 'package:flutter/painting.dart';
 
 /// A 100–900 tonal ramp generated in OKLCH on one shared lightness scale, so
 /// the same step of any role carries the same visual weight.
@@ -30,6 +30,39 @@ final class FundusRamp {
   final Color s700;
   final Color s800;
   final Color s900;
+
+  /// The same ramp in another hue.
+  ///
+  /// A ramp is not nine arbitrary colours: it is one hue at nine carefully
+  /// chosen lightnesses, and that curve is what makes text on it readable in
+  /// both themes. Recolouring therefore keeps the curve and moves the hue —
+  /// the saturation is nudged towards the chosen colour so a grey choice
+  /// really goes grey, but never so far that a step loses its contrast.
+  FundusRamp shiftedTo(Color seed) {
+    final target = HSLColor.fromColor(seed);
+    Color recolour(Color step) {
+      final hsl = HSLColor.fromColor(step);
+      final saturation = target.saturation < 0.08
+          ? target.saturation
+          : (hsl.saturation * 0.65 + target.saturation * 0.35).clamp(0.0, 1.0);
+      return hsl
+          .withHue(target.hue)
+          .withSaturation(saturation.toDouble())
+          .toColor();
+    }
+
+    return FundusRamp(
+      s100: recolour(s100),
+      s200: recolour(s200),
+      s300: recolour(s300),
+      s400: recolour(s400),
+      s500: recolour(s500),
+      s600: recolour(s600),
+      s700: recolour(s700),
+      s800: recolour(s800),
+      s900: recolour(s900),
+    );
+  }
 
   /// The ramp read from the other end — the light theme's assignment.
   FundusRamp get reversed => FundusRamp(

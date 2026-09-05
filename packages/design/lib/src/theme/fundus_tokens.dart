@@ -33,8 +33,15 @@ final class FundusTokens extends ThemeExtension<FundusTokens> {
 
   factory FundusTokens.dark({
     FundusDensity density = FundusDensity.comfortable,
+    Color? accent,
   }) {
     const neutral = FundusPalette.neutral;
+    final ramp = accent == null
+        ? FundusPalette.accent
+        : FundusPalette.accent.shiftedTo(accent);
+    final secondary = accent == null
+        ? FundusPalette.accentSecondary
+        : FundusPalette.accentSecondary.shiftedTo(accent);
     return FundusTokens(
       background: FundusPalette.darkBackground,
       surface: FundusPalette.darkSurface,
@@ -42,11 +49,11 @@ final class FundusTokens extends ThemeExtension<FundusTokens> {
       text: FundusPalette.darkText,
       textMuted: neutral.s500,
       textFaint: neutral.s600,
-      accent: FundusPalette.darkAccent,
+      accent: accent == null ? FundusPalette.darkAccent : ramp.s400,
       divider: FundusPalette.darkText.withValues(alpha: 0.16),
       neutral: neutral,
-      accentRamp: FundusPalette.accent,
-      accentSecondaryRamp: FundusPalette.accentSecondary,
+      accentRamp: ramp,
+      accentSecondaryRamp: secondary,
       success: FundusPalette.darkSuccess,
       successGround: FundusPalette.darkSuccessGround,
       warning: FundusPalette.darkWarning,
@@ -59,8 +66,19 @@ final class FundusTokens extends ThemeExtension<FundusTokens> {
 
   factory FundusTokens.light({
     FundusDensity density = FundusDensity.comfortable,
+    Color? accent,
   }) {
     final neutral = FundusPalette.neutral.reversed;
+    final ramp =
+        (accent == null
+                ? FundusPalette.accent
+                : FundusPalette.accent.shiftedTo(accent))
+            .reversed;
+    final secondary =
+        (accent == null
+                ? FundusPalette.accentSecondary
+                : FundusPalette.accentSecondary.shiftedTo(accent))
+            .reversed;
     return FundusTokens(
       background: FundusPalette.lightBackground,
       surface: FundusPalette.lightSurface,
@@ -68,11 +86,11 @@ final class FundusTokens extends ThemeExtension<FundusTokens> {
       text: FundusPalette.lightText,
       textMuted: neutral.s500,
       textFaint: neutral.s400,
-      accent: FundusPalette.lightAccent,
+      accent: accent == null ? FundusPalette.lightAccent : ramp.s600,
       divider: FundusPalette.lightText.withValues(alpha: 0.14),
       neutral: neutral,
-      accentRamp: FundusPalette.accent.reversed,
-      accentSecondaryRamp: FundusPalette.accentSecondary.reversed,
+      accentRamp: ramp,
+      accentSecondaryRamp: secondary,
       success: FundusPalette.lightSuccess,
       successGround: FundusPalette.lightSuccessGround,
       warning: FundusPalette.lightWarning,
