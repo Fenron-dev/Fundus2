@@ -163,11 +163,13 @@ abstract final class MediaTypes {
     icon: FundusIcons.film,
     workKinds: const {'movie'},
     progressKind: ProgressKind.seconds,
+    // Ein Film ist eine Datei. Wer ihn aufschlägt, will wissen, worum es
+    // geht — nicht als Erstes eine Liste mit einem Eintrag darin.
     tabs: const [
-      WorkTab.files,
+      WorkTab.properties,
       WorkTab.cast,
       WorkTab.related,
-      WorkTab.properties,
+      WorkTab.files,
       WorkTab.devices,
     ],
   );

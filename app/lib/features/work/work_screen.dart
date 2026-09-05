@@ -19,6 +19,12 @@ import 'metadata_editor.dart';
 /// A hero plus building blocks — list, key-value, notes, devices — filled
 /// differently per type. A new media type is a field and tab definition; if it
 /// needed a new screen, the abstraction would be wrong.
+///
+/// The page is one scroll, not two. It used to be a fixed header with the
+/// tabs' contents squeezed into whatever was left, which on a phone was a
+/// header filling the screen and tab headings with nothing reachable under
+/// them. Now the header scrolls away, the tab bar sticks to the top, and the
+/// content below it has the whole screen to itself.
 class WorkScreen extends StatelessWidget {
   const WorkScreen({super.key, required this.workId});
 
@@ -39,132 +45,354 @@ class WorkScreen extends StatelessWidget {
 
     final tabs =
         work.mediaType?.tabs ?? const [WorkTab.files, WorkTab.properties];
+    final stage = FundusStageSize.of(context);
     return DefaultTabController(
       length: tabs.length,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _Hero(work: work),
-          _TabBar(tabs: tabs),
-          Expanded(
-            child: TabBarView(
-              children: [
-                for (final tab in tabs) _TabContent(work: work, tab: tab),
-              ],
-            ),
+      child: NestedScrollView(
+        headerSliverBuilder: (context, _) => [
+          SliverToBoxAdapter(
+            child: _Hero(work: work, stage: stage),
+          ),
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _PinnedTabBar(tabs: tabs, tokens: context.fundus),
           ),
         ],
+        body: TabBarView(
+          children: [for (final tab in tabs) _TabContent(work: work, tab: tab)],
+        ),
       ),
     );
   }
 }
 
+/// The head of the page: the artwork, the name, and what can be done with it.
+///
+/// On a phone everything stands in one column and the name gets the full
+/// width — squeezed into a column beside the cover it broke into four lines
+/// and was barely readable. From a tablet up the cover stands beside the
+/// text, the way a shelf shows a spine.
 class _Hero extends StatelessWidget {
-  const _Hero({required this.work});
+  const _Hero({required this.work, required this.stage});
 
   final WorkView work;
+  final FundusStageSize stage;
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.fundus;
-    final theme = Theme.of(context);
+    final narrow = stage == FundusStageSize.handset;
+    final gutter = stage.gutter;
 
-    return Padding(
-      padding: const EdgeInsets.all(FundusSpace.x10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 132, child: WorkArtwork(work: work)),
-          const SizedBox(width: FundusSpace.x8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  (work.mediaType?.label ?? 'Nicht zugeordnet').toUpperCase(),
-                  style: theme.textTheme.labelSmall,
-                ),
-                const SizedBox(height: FundusSpace.x2),
-                Text(work.title, style: theme.textTheme.displayLarge),
-                if (work.subtitle.isNotEmpty) ...[
-                  const SizedBox(height: FundusSpace.x2),
-                  Text(
-                    work.subtitle,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: tokens.textMuted,
-                    ),
+    return Stack(
+      children: [
+        // The work's own picture is the ground, blurred out of legibility and
+        // faded into the page, so the head has depth without a second image
+        // to fetch.
+        Positioned.fill(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              WorkImage(work: work, blurred: true),
+              const DecoratedBox(
+                decoration: BoxDecoration(color: Color(0x66000000)),
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      tokens.background.withValues(alpha: .25),
+                      tokens.background.withValues(alpha: .82),
+                      tokens.background,
+                    ],
+                    stops: const [0, .7, 1],
                   ),
-                ],
-                const SizedBox(height: FundusSpace.x4),
-                Row(
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            gutter,
+            narrow ? FundusSpace.x8 : FundusSpace.x12,
+            gutter,
+            FundusSpace.x8,
+          ),
+          child: narrow
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    FundusOriginMark(work.origin, showLabel: true),
-                    const SizedBox(width: FundusSpace.x6),
-                    if (work.summary.fileCount > 0)
-                      Text(
-                        '${work.summary.fileCount} Dateien',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: tokens.textFaint,
-                        ),
-                      ),
+                    SizedBox(
+                      width: stage.posterWidth * 1.35,
+                      child: _Cover(work: work),
+                    ),
+                    const SizedBox(height: FundusSpace.x6),
+                    _Facts(work: work, stage: stage, centred: true),
+                    const SizedBox(height: FundusSpace.x6),
+                    _Actions(work: work, stretch: true),
                   ],
-                ),
-                if (work.hasProgress) ...[
-                  const SizedBox(height: FundusSpace.x4),
-                  SizedBox(
-                    width: 320,
-                    child: FundusProgress(
-                      fraction: work.progressFraction!,
-                      label: work.progressLabel,
-                      finished: work.finished,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: FundusSpace.x6),
-                Wrap(
-                  spacing: FundusSpace.x3,
-                  runSpacing: FundusSpace.x3,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    FilledButton.icon(
-                      // Only what can be reached offers to play; everything
-                      // else says why, rather than doing nothing.
-                      onPressed: work.origin == FundusOrigin.unreachable
-                          ? null
-                          : () => FundusScope.of(context).play(work),
-                      // Ein Abspielpfeil auf einem Manga verspricht das
-                      // Falsche; gelesen wird, nicht abgespielt.
-                      icon: Icon(
-                        ReaderController.handles(work)
-                            ? FundusIcons.manga
-                            : FundusIcons.play,
-                        size: FundusIcons.sizeSm,
-                      ),
-                      label: Text(
-                        ReaderController.handles(work)
-                            ? (work.hasProgress ? 'Weiterlesen' : 'Lesen')
-                            : (work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
-                      ),
+                    SizedBox(
+                      width: stage.posterWidth * 1.2,
+                      child: _Cover(work: work),
                     ),
-                    _OfflineButton(work: work),
-                    _MetadataButtons(work: work),
-                    if (work.summary.tags.isNotEmpty)
-                      Wrap(
-                        spacing: FundusSpace.x2,
+                    const SizedBox(width: FundusSpace.x8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (final tag in work.summary.tags.take(5))
-                            FundusTag(tag),
+                          _Facts(work: work, stage: stage, centred: false),
+                          const SizedBox(height: FundusSpace.x6),
+                          _Actions(work: work, stretch: false),
                         ],
                       ),
+                    ),
                   ],
                 ),
-              ],
+        ),
+      ],
+    );
+  }
+}
+
+class _Cover extends StatelessWidget {
+  const _Cover({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      borderRadius: FundusArtwork.cardRadius,
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: .45),
+          blurRadius: 24,
+          offset: const Offset(0, 10),
+        ),
+      ],
+    ),
+    child: WorkArtwork(
+      work: work,
+      borderRadius: FundusArtwork.cardRadius,
+      showOrigin: false,
+    ),
+  );
+}
+
+/// Everything the head says in words.
+class _Facts extends StatelessWidget {
+  const _Facts({
+    required this.work,
+    required this.stage,
+    required this.centred,
+  });
+
+  final WorkView work;
+  final FundusStageSize stage;
+  final bool centred;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final summary = work.summary;
+    final align = centred
+        ? CrossAxisAlignment.center
+        : CrossAxisAlignment.start;
+    final textAlign = centred ? TextAlign.center : TextAlign.start;
+    // One line of small print rather than a row of boxes: year, genre and
+    // where the work lives, in the order somebody reads them.
+    final meta = [
+      if (summary.publishedYear != null) '${summary.publishedYear}',
+      ...summary.genres.take(2),
+      if (summary.fileCount > 1) '${summary.fileCount} Dateien',
+    ].join(' · ');
+
+    return Column(
+      crossAxisAlignment: align,
+      children: [
+        Text(
+          (work.mediaType?.label ?? 'Nicht zugeordnet').toUpperCase(),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: tokens.accent,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: FundusSpace.x2),
+        Text(
+          work.title,
+          textAlign: textAlign,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.displayLarge?.copyWith(
+            fontSize: stage.titleSize,
+            height: 1.12,
+          ),
+        ),
+        if (work.subtitle.isNotEmpty) ...[
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            work.subtitle,
+            textAlign: textAlign,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodyLarge?.copyWith(color: tokens.textMuted),
+          ),
+        ],
+        if (meta.isNotEmpty) ...[
+          const SizedBox(height: FundusSpace.x3),
+          Text(
+            meta,
+            textAlign: textAlign,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: tokens.textFaint,
             ),
           ),
         ],
-      ),
+        const SizedBox(height: FundusSpace.x3),
+        FundusOriginMark(work.origin, showLabel: true),
+        if (work.hasProgress) ...[
+          const SizedBox(height: FundusSpace.x4),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: FundusProgress(
+              fraction: work.progressFraction!,
+              label: work.progressLabel,
+              finished: work.finished,
+            ),
+          ),
+        ],
+        if (summary.description case final description?
+            when description.trim().isNotEmpty) ...[
+          const SizedBox(height: FundusSpace.x4),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Text(
+              description,
+              textAlign: textAlign,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: tokens.textMuted,
+              ),
+            ),
+          ),
+        ],
+        if (summary.tags.isNotEmpty) ...[
+          const SizedBox(height: FundusSpace.x4),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            alignment: centred ? WrapAlignment.center : WrapAlignment.start,
+            children: [for (final tag in summary.tags.take(5)) FundusTag(tag)],
+          ),
+        ],
+      ],
     );
   }
+}
+
+/// What can be done with the work, in one place.
+class _Actions extends StatelessWidget {
+  const _Actions({required this.work, required this.stretch});
+
+  final WorkView work;
+
+  /// A phone gives the one obvious action the whole width; a desktop puts
+  /// the buttons in a row.
+  final bool stretch;
+
+  @override
+  Widget build(BuildContext context) {
+    final reads = ReaderController.handles(work);
+    final primary = FilledButton.icon(
+      // Only what can be reached offers to play; everything else says why,
+      // rather than doing nothing.
+      onPressed: work.origin == FundusOrigin.unreachable
+          ? null
+          : () => FundusScope.of(context).play(work),
+      // Ein Abspielpfeil auf einem Manga verspricht das Falsche; gelesen
+      // wird, nicht abgespielt.
+      icon: Icon(
+        reads ? FundusIcons.manga : FundusIcons.play,
+        size: FundusIcons.sizeSm,
+      ),
+      label: Text(
+        reads
+            ? (work.hasProgress ? 'Weiterlesen' : 'Lesen')
+            : (work.hasProgress ? 'Fortsetzen' : 'Öffnen'),
+      ),
+    );
+
+    if (!stretch) {
+      return Wrap(
+        spacing: FundusSpace.x3,
+        runSpacing: FundusSpace.x3,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          primary,
+          _OfflineButton(work: work),
+          _MetadataButtons(work: work),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        SizedBox(width: double.infinity, child: primary),
+        const SizedBox(height: FundusSpace.x3),
+        Wrap(
+          spacing: FundusSpace.x3,
+          runSpacing: FundusSpace.x3,
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _OfflineButton(work: work),
+            _MetadataButtons(work: work),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// The tab bar, stuck to the top once the head has scrolled past it.
+class _PinnedTabBar extends SliverPersistentHeaderDelegate {
+  _PinnedTabBar({required this.tabs, required this.tokens});
+
+  final List<WorkTab> tabs;
+  final FundusTokens tokens;
+
+  static const _height = 46.0;
+
+  @override
+  double get minExtent => _height;
+
+  @override
+  double get maxExtent => _height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) => Container(
+    height: _height,
+    color: tokens.background,
+    alignment: Alignment.centerLeft,
+    child: _TabBar(tabs: tabs),
+  );
+
+  @override
+  bool shouldRebuild(_PinnedTabBar old) =>
+      old.tabs != tabs || old.tokens != tokens;
 }
 
 /// Fetching a work's details, and correcting them by hand.
@@ -290,6 +518,15 @@ class _TabBar extends StatelessWidget {
   }
 }
 
+/// The page margin for a tab's content.
+///
+/// The head and the content below it line up on the same gutter, and a phone
+/// gets a narrower one than a desktop window.
+EdgeInsets _contentPadding(BuildContext context) {
+  final gutter = FundusStageSize.of(context).gutter;
+  return EdgeInsets.fromLTRB(gutter, FundusSpace.x6, gutter, FundusSpace.x12);
+}
+
 class _TabContent extends StatelessWidget {
   const _TabContent({required this.work, required this.tab});
 
@@ -342,15 +579,44 @@ class _Properties extends StatelessWidget {
       ('Aufgenommen', _formatDate(summary.addedAt)),
     ];
 
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final description = summary.description?.trim();
+
+    // Erst die Handlung, dann die Angaben. Eine Tabelle als Erstes zu zeigen
+    // ist die Ordnung eines Karteikastens, nicht die einer Mediathek — der
+    // Kopf zeigt nur die ersten Zeilen, hier steht der ganze Text.
     return ListView(
-      padding: const EdgeInsets.all(FundusSpace.x10),
+      padding: _contentPadding(context),
       children: [
-        for (final entry in entries) _KeyValueRow(entry.$1, entry.$2),
-        if (summary.description != null) ...[
+        if (description != null && description.isNotEmpty) ...[
+          Text('HANDLUNG', style: theme.textTheme.labelSmall),
+          const SizedBox(height: FundusSpace.x3),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Text(
+              description,
+              style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+            ),
+          ),
           const SizedBox(height: FundusSpace.x8),
+        ],
+        Text('ANGABEN', style: theme.textTheme.labelSmall),
+        const SizedBox(height: FundusSpace.x3),
+        for (final entry in entries) _KeyValueRow(entry.$1, entry.$2),
+        if (summary.tags.isNotEmpty) ...[
+          const SizedBox(height: FundusSpace.x6),
           Text(
-            summary.description!,
-            style: Theme.of(context).textTheme.bodyMedium,
+            'SCHLAGWORTE',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x3),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            children: [for (final tag in summary.tags) FundusTag(tag)],
           ),
         ],
       ],
@@ -371,23 +637,32 @@ class _KeyValueRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.fundus;
+    final theme = Theme.of(context);
+    final caption = theme.textTheme.bodySmall?.copyWith(
+      color: tokens.textFaint,
+    );
+    // Auf dem Handy steht die Bezeichnung über dem Wert: eine feste Spalte
+    // von 190 Pixeln lässt daneben nichts übrig, was sich lesen ließe.
+    if (FundusStageSize.of(context) == FundusStageSize.handset) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: FundusSpace.x4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: caption),
+            const SizedBox(height: FundusSpace.x1),
+            Text(value, style: theme.textTheme.bodyMedium),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(bottom: FundusSpace.x3),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 190,
-            child: Text(
-              label,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: tokens.textFaint),
-            ),
-          ),
-          Expanded(
-            child: Text(value, style: Theme.of(context).textTheme.bodyMedium),
-          ),
+          SizedBox(width: 190, child: Text(label, style: caption)),
+          Expanded(child: Text(value, style: theme.textTheme.bodyMedium)),
         ],
       ),
     );
@@ -456,7 +731,9 @@ class _FilesState extends State<_Files> {
         final track = tracks[index];
         return Container(
           height: tokens.density.rowHeight,
-          padding: const EdgeInsets.symmetric(horizontal: FundusSpace.x10),
+          padding: EdgeInsets.symmetric(
+            horizontal: FundusStageSize.of(context).gutter,
+          ),
           decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: tokens.divider)),
           ),
@@ -523,7 +800,7 @@ class _Notes extends StatelessWidget {
     }
 
     return ListView(
-      padding: const EdgeInsets.all(FundusSpace.x10),
+      padding: _contentPadding(context),
       children: [
         if (annotations.bookmarks.isNotEmpty) ...[
           Text('LESEZEICHEN', style: Theme.of(context).textTheme.labelSmall),
@@ -610,7 +887,7 @@ class _People extends StatelessWidget {
       );
     }
     return ListView(
-      padding: const EdgeInsets.all(FundusSpace.x10),
+      padding: _contentPadding(context),
       children: [
         for (final person in people)
           ListTile(
@@ -662,7 +939,7 @@ class _DevicesState extends State<_Devices> {
           );
         }
         return ListView(
-          padding: const EdgeInsets.all(FundusSpace.x10),
+          padding: _contentPadding(context),
           children: [
             for (final profile in profiles)
               ListTile(
