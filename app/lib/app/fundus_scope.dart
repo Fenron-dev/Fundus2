@@ -217,9 +217,26 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state != AppLifecycleState.resumed) return;
+    if (state != AppLifecycleState.resumed) {
+      // Weglegen ist das Ende einer Sitzung, auch wenn nichts geschlossen
+      // wurde. Auf dem Handy bleibt der Leser offen, wenn man zum Rechner
+      // wechselt — und ein Stand, der erst beim Schließen loszieht, ist
+      // genau dann nie losgezogen. Deshalb geht er hier.
+      _pushOpenWork();
+      return;
+    }
     if (!settings.watchesLibrary) return;
     unawaited(library.checkForChanges());
+  }
+
+  /// Sends out where the work that is open right now stands.
+  void _pushOpenWork() {
+    final open =
+        player.work?.id ??
+        (reader.isOpen ? reader.work?.id : null) ??
+        (textReader.isOpen ? textReader.work?.id : null) ??
+        _lastOpenWorkId;
+    if (open != null) _pushSoon(open);
   }
 
   /// Where this installation keeps its own things.
@@ -428,6 +445,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // Mac auf und nehme das Handy" is a pause and a walk away, and if the
       // position only leaves on closing, the phone finds nothing.
       if (playing != null && !player.isPlaying) _pushSoon(playing);
+      // Reading has no pause to listen for: a page is turned and then
+      // nothing happens for a while. Every settled page is worth sending —
+      // the debounce makes a burst of them one call.
+      if (playing == null) _pushSoon(open);
       return;
     }
     final closed = _lastOpenWorkId;
@@ -547,9 +568,12 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     // Somebody who has said „immer die weiteste Stelle" has answered this
     // question once and for all; asking again is not asking, it is nagging.
     if (settings.alwaysFurthestPosition) {
+      final order = [
+        for (final track in vault.playbackTracks(work.id)) track.fileId,
+      ];
       final furthest =
-          (other.position.numericValue ?? 0) >
-          (mine?.position.numericValue ?? 0);
+          mine == null ||
+          comparePositions(other.position, mine.position, fileOrder: order) > 0;
       if (furthest) {
         vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
       } else {
@@ -565,6 +589,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       other: other,
       mine: mine,
       thisDevice: settings.deviceName,
+      tracks: vault.playbackTracks(work.id),
     );
     // Dismissed without answering: stay here, and stop asking about this one.
     // A question that comes back every time is not a question.

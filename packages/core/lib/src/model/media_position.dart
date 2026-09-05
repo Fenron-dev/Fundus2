@@ -1,5 +1,40 @@
 enum MediaPositionKind { time, page, epubCfi, imageIndex }
 
+/// Which of two positions is further along in the same work.
+///
+/// A page number alone cannot answer this. A manga is a folder of chapters,
+/// each numbered from page one, so page 5 of chapter 1 looks bigger than page
+/// 1 of chapter 2 while being an hour behind it. What decides is first which
+/// file the position sits in and only then how far into it — and the order of
+/// the files is something only the work knows, which is why it has to be
+/// passed in.
+///
+/// [fileOrder] is the work's content files, in playing order. A position
+/// whose file is not in the list is treated as the first one: better to
+/// compare by page than to call it further than everything.
+///
+/// Returns a negative number when [left] is behind [right], zero when they
+/// are level, and a positive number when it is ahead.
+int comparePositions(
+  MediaPosition left,
+  MediaPosition right, {
+  List<String> fileOrder = const [],
+}) {
+  int place(MediaPosition position) {
+    final fileId = position.fileId;
+    if (fileId == null) return 0;
+    final index = fileOrder.indexOf(fileId);
+    return index < 0 ? 0 : index;
+  }
+
+  final byFile = place(left).compareTo(place(right));
+  if (byFile != 0) return byFile;
+  final byValue = (left.numericValue ?? 0).compareTo(right.numericValue ?? 0);
+  if (byValue != 0) return byValue;
+  // Two positions on the same page: whoever is further down it.
+  return (left.scrollOffset ?? 0).compareTo(right.scrollOffset ?? 0);
+}
+
 final class MediaPosition {
   const MediaPosition({
     required this.kind,

@@ -193,12 +193,23 @@ class SyncController extends ChangeNotifier {
     final asked = await Future.wait([
       for (final peer in peers) _askOne(peer, vault, workId),
     ]);
+    // Welche Stelle weiter ist, entscheidet nicht die Seitenzahl allein: bei
+    // einem Manga fängt jedes Kapitel wieder bei Seite eins an.
+    final order = [
+      for (final track in vault.playbackTracks(workId)) track.fileId,
+    ];
     ({RemoteProgress progress, String peerName})? best;
     for (final answer in asked) {
       if (answer == null) continue;
-      final theirs = answer.progress.position.numericValue ?? 0;
-      final bestSoFar = best?.progress.position.numericValue ?? -1;
-      if (theirs > bestSoFar) best = answer;
+      if (best == null ||
+          comparePositions(
+                answer.progress.position,
+                best.progress.position,
+                fileOrder: order,
+              ) >
+              0) {
+        best = answer;
+      }
     }
     return best;
   }

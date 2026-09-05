@@ -29,6 +29,7 @@ Future<ProgressChoiceAnswer?> showProgressChoiceSheet(
   required LibraryProgressChoice other,
   LibraryPlaybackProgress? mine,
   required String thisDevice,
+  List<LibraryPlaybackTrack> tracks = const [],
 }) => showModalBottomSheet<ProgressChoiceAnswer>(
   context: context,
   isScrollControlled: true,
@@ -42,6 +43,7 @@ Future<ProgressChoiceAnswer?> showProgressChoiceSheet(
     other: other,
     mine: mine,
     thisDevice: thisDevice,
+    tracks: tracks,
   ),
 );
 
@@ -51,12 +53,18 @@ class _ProgressChoiceSheet extends StatefulWidget {
     required this.other,
     required this.mine,
     required this.thisDevice,
+    required this.tracks,
   });
 
   final WorkView work;
   final LibraryProgressChoice other;
   final LibraryPlaybackProgress? mine;
   final String thisDevice;
+
+  /// The work's files in reading order. Two things need them: saying which
+  /// chapter a page belongs to, and knowing which of two pages is further —
+  /// „Seite 1" of chapter two is ahead of „Seite 12" of chapter one.
+  final List<LibraryPlaybackTrack> tracks;
 
   @override
   State<_ProgressChoiceSheet> createState() => _ProgressChoiceSheetState();
@@ -66,17 +74,35 @@ class _ProgressChoiceSheetState extends State<_ProgressChoiceSheet> {
   late bool _takeOther = _otherIsFurther;
   bool _always = false;
 
-  double get _minePosition => widget.mine?.position.numericValue ?? 0;
-  double get _otherPosition => widget.other.position.numericValue ?? 0;
-  bool get _otherIsFurther => _otherPosition > _minePosition;
+  List<String> get _order => [for (final track in widget.tracks) track.fileId];
+
+  bool get _otherIsFurther {
+    final mine = widget.mine?.position;
+    if (mine == null) return true;
+    return comparePositions(widget.other.position, mine, fileOrder: _order) > 0;
+  }
+
+  /// „Kapitel 2 · Seite 1" rather than „Seite 1", where the work is made of
+  /// files: a page number on its own says nothing about where it lies.
+  String _describe(MediaPosition? position) {
+    if (position == null) return 'Noch nicht geöffnet';
+    if (widget.tracks.length < 2) return position.displayValue;
+    final file = widget.tracks
+        .where((track) => track.fileId == position.fileId)
+        .firstOrNull;
+    if (file == null) return position.displayValue;
+    return '${file.title} · ${position.displayValue}';
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     final chosen = _takeOther
-        ? widget.other.position.displayValue
-        : widget.mine?.position.displayValue ?? 'Anfang';
+        ? _describe(widget.other.position)
+        : widget.mine == null
+        ? 'Anfang'
+        : _describe(widget.mine!.position);
 
     return SafeArea(
       top: false,
@@ -126,7 +152,7 @@ class _ProgressChoiceSheetState extends State<_ProgressChoiceSheet> {
             const SizedBox(height: FundusSpace.x4),
             _Side(
               where: widget.other.origin,
-              position: widget.other.position,
+              label: _describe(widget.other.position),
               at: widget.other.updatedAt,
               furthest: _otherIsFurther,
               selected: _takeOther,
@@ -135,7 +161,7 @@ class _ProgressChoiceSheetState extends State<_ProgressChoiceSheet> {
             const SizedBox(height: FundusSpace.x2),
             _Side(
               where: 'Dieses Gerät · ${widget.thisDevice}',
-              position: widget.mine?.position,
+              label: _describe(widget.mine?.position),
               at: widget.mine?.updatedAt,
               furthest: !_otherIsFurther && widget.mine != null,
               selected: !_takeOther,
@@ -189,7 +215,7 @@ class _ProgressChoiceSheetState extends State<_ProgressChoiceSheet> {
 class _Side extends StatelessWidget {
   const _Side({
     required this.where,
-    required this.position,
+    required this.label,
     required this.at,
     required this.furthest,
     required this.selected,
@@ -197,7 +223,7 @@ class _Side extends StatelessWidget {
   });
 
   final String where;
-  final MediaPosition? position;
+  final String label;
   final DateTime? at;
   final bool furthest;
   final bool selected;
@@ -207,10 +233,7 @@ class _Side extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tokens = context.fundus;
-    final line = [
-      position?.displayValue ?? 'Noch nicht geöffnet',
-      if (at case final moment?) _ago(moment),
-    ].join(' · ');
+    final line = [label, if (at case final moment?) _ago(moment)].join(' · ');
 
     return Material(
       color: selected ? tokens.accentTint(0.12) : tokens.surfaceRaised,
