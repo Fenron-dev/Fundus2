@@ -11,6 +11,7 @@ import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import '../../metadata/metadata_apply.dart';
 import '../library/work_poster.dart';
+import 'download_choice_sheet.dart';
 import 'metadata_dialog.dart';
 import 'metadata_editor.dart';
 
@@ -1199,9 +1200,45 @@ class _OfflineButton extends StatelessWidget {
     if (!downloads.canDownload(work)) return const SizedBox.shrink();
 
     return OutlinedButton.icon(
-      onPressed: () => downloads.download(work),
+      onPressed: () => unawaited(_take(context, scope, work)),
       icon: Icon(FundusIcons.downloads, size: FundusIcons.sizeSm),
       label: const Text('Mitnehmen'),
     );
+  }
+
+  /// A film comes along whole; a manga is asked about first.
+  ///
+  /// „Alles" on four hundred chapters is rarely what somebody means, and it
+  /// is the one download nobody can take back halfway.
+  static Future<void> _take(
+    BuildContext context,
+    FundusScopeState scope,
+    WorkView work,
+  ) async {
+    final vault = scope.library.library;
+    if (vault == null) return;
+    final tracks = vault.playbackTracks(work.id);
+    if (tracks.length < 4) {
+      await scope.downloads.download(work);
+      return;
+    }
+    final here = {
+      for (final file in vault.contentFiles(work.id))
+        if (file.availability == 'offline_copy') file.fileId,
+    };
+    final saved = vault.loadProgress(work.id);
+    final startAt = saved?.fileId == null
+        ? 0
+        : tracks.indexWhere((track) => track.fileId == saved!.fileId);
+    if (!context.mounted) return;
+    final chosen = await showDownloadChoice(
+      context,
+      title: work.title,
+      tracks: tracks,
+      alreadyHere: here,
+      startAt: startAt < 0 ? 0 : startAt,
+    );
+    if (chosen == null || chosen.isEmpty) return;
+    await scope.downloads.download(work, only: chosen);
   }
 }

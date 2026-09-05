@@ -212,13 +212,21 @@ class DownloadController extends ChangeNotifier {
   }
 
   /// Queues a work and starts working through the queue.
-  Future<void> download(WorkView work) async {
+  ///
+  /// [only] names the files to fetch — the chapters somebody picked. Without
+  /// it the whole work comes along, which is right for a film and wrong for
+  /// a manga with four hundred chapters.
+  Future<void> download(WorkView work, {Set<String>? only}) async {
     final vault = library.library;
     if (vault == null || _proxyFor(work.id) == null) return;
     if (_jobs.containsKey(work.id)) return;
-    final files = vault.contentFiles(work.id);
+    final files = [
+      for (final file in vault.contentFiles(work.id))
+        if (only == null || only.contains(file.fileId)) file,
+    ];
     if (files.isEmpty) return;
 
+    _wanted[work.id] = {for (final file in files) file.fileId};
     _jobs[work.id] = DownloadJob(
       workId: work.id,
       title: work.title,
@@ -228,6 +236,9 @@ class DownloadController extends ChangeNotifier {
     notifyListeners();
     unawaited(_drain());
   }
+
+  /// Which files each job was told to fetch.
+  final Map<String, Set<String>> _wanted = {};
 
   /// Throws a copy away and gives the work back to the network.
   Future<void> remove(String workId) async {
@@ -242,6 +253,7 @@ class DownloadController extends ChangeNotifier {
       vault.clearOfflineCopy(file.fileId);
     }
     _jobs.remove(workId);
+    _wanted.remove(workId);
     library.refreshWork(workId);
     notifyListeners();
     unawaited(measureStorage());
@@ -298,8 +310,10 @@ class DownloadController extends ChangeNotifier {
     final cache = PeerFileCache(proxy: proxy, directory: room);
     var done = 0;
 
+    final wanted = _wanted[job.workId];
     for (final file in vault.contentFiles(job.workId)) {
       if (!_jobs.containsKey(job.workId)) return;
+      if (wanted != null && !wanted.contains(file.fileId)) continue;
       if (file.availability == 'offline_copy' && file.offlinePath != null) {
         done++;
         continue;

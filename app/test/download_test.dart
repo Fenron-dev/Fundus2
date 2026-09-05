@@ -170,4 +170,21 @@ void main() {
     await downloads.measureStorage();
     expect(downloads.storedBytes, 0);
   });
+
+  test('nur die gewählten Dateien kommen mit', () async {
+    final files = library.library!.contentFiles(theWork().id);
+    expect(files, hasLength(2));
+
+    await downloads.download(theWork(), only: {files.first.fileId});
+    await settle();
+
+    // Eine ist da, die andere nicht — und damit gilt das Werk nicht als
+    // vollständig gesichert.
+    final after = library.library!.contentFiles(theWork().id);
+    expect(
+      after.where((file) => file.availability == 'offline_copy'),
+      hasLength(1),
+    );
+    expect(downloads.isSecured(theWork().id), isFalse);
+  });
 }
