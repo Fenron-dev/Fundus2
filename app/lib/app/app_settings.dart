@@ -95,6 +95,13 @@ class AppSettings extends ChangeNotifier {
   /// picture. Off by default: a film wants the screen, not a sidebar.
   bool get playerPanelVisible => _values['player_panel_visible'] == true;
 
+  /// Whether Fundus looks for new files by itself.
+  ///
+  /// On by default, because a check costs one walk of the folder and having
+  /// to press a button to learn that a series copied in an hour ago exists is
+  /// the kind of chore a library should not have.
+  bool get watchesLibrary => _values['watches_library'] != false;
+
   /// The Fundus installations this device has been paired with.
   ///
   /// Here rather than in the vault: each entry carries a bearer token, and a
@@ -170,6 +177,8 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setPlayerPanelVisible(bool value) =>
       _set('player_panel_visible', value);
+
+  Future<void> setWatchesLibrary(bool value) => _set('watches_library', value);
 
   Future<void> rememberVault(String path) async {
     final vaults = [path, ...recentVaults.where((entry) => entry != path)];

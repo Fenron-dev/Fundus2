@@ -12,6 +12,16 @@ void main() {
     mimeType: mimeType,
   );
 
+  test('findet einen Medienordner auch unterhalb der Wurzel', () {
+    final candidates = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    ).group([file('Funs/Manga/Berserk/001.cbz')]);
+
+    expect(candidates.single.kind, 'manga');
+    expect(candidates.single.title, 'Berserk');
+    expect(candidates.single.directory, 'Funs/Manga/Berserk');
+  });
+
   test('groups a TTRPG product with PDFs maps and handouts', () {
     final importer = DocumentImporter(
       mediaRoots: LibraryConfiguration.defaults,

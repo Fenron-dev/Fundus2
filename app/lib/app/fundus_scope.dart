@@ -116,7 +116,7 @@ class FundusScope extends StatefulWidget {
   State<FundusScope> createState() => FundusScopeState();
 }
 
-class FundusScopeState extends State<FundusScope> {
+class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   final navigation = AppNavigation();
   late final PlaybackController player =
       widget.player ?? PlaybackController(deviceId: widget.settings.deviceKey);
@@ -177,6 +177,21 @@ class FundusScopeState extends State<FundusScope> {
     reader.addListener(_syncWhenClosed);
     textReader.addListener(_syncWhenClosed);
     unawaited(_findSupportRoot());
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// Coming back to the app is the moment to look for what changed.
+  ///
+  /// Files arrive in a vault while Fundus is not in front of anyone — copied
+  /// over from another machine, dropped in by a download. A check is cheap
+  /// enough to make on every return, and it is the only way the library is
+  /// right without being told.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) return;
+    if (!settings.watchesLibrary) return;
+    unawaited(library.checkForChanges());
   }
 
   /// Where this installation keeps its own things.
@@ -254,6 +269,7 @@ class FundusScopeState extends State<FundusScope> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     navigation.removeListener(_bump);
     settings.removeListener(_bump);
     library.removeListener(_bump);

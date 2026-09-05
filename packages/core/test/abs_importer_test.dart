@@ -71,6 +71,63 @@ void main() {
     expect(candidates.single.audioFiles, hasLength(2));
   });
 
+  group('Der Ordner entscheidet, nicht die Dateiendung', () {
+    final areas = AbsImporter(
+      areas: MediaAreaMap(LibraryConfiguration.defaults),
+    );
+
+    test('Musik unter „Musik" wird ein Album und kein Hörbuch', () {
+      final candidates = areas.group([
+        _audioFile('Musik/Genesis/Invisible Touch/01 - Land of Confusion.mp3'),
+      ]);
+
+      expect(candidates.single.kind, 'album');
+      expect(candidates.single.identity.author, 'Genesis');
+      expect(candidates.single.identity.title, 'Invisible Touch');
+    });
+
+    test('ein Medienordner zählt auch eine Ebene tiefer', () {
+      final candidates = areas.group([
+        _audioFile('Funs/Musik/00s Pop Rock/01 - Irgendwas.mp3'),
+      ]);
+
+      expect(candidates.single.kind, 'album');
+      expect(candidates.single.identity.title, '00s Pop Rock');
+      expect(candidates.single.identity.series, isNull);
+    });
+
+    test('Podcasts bleiben Podcasts', () {
+      final candidates = areas.group([
+        _audioFile('Podcasts/OK COOL/042 - Folge.mp3'),
+      ]);
+
+      expect(candidates.single.kind, 'podcast');
+      expect(candidates.single.identity.title, 'OK COOL');
+    });
+
+    test('Ton in einem Filmordner wird kein eigenes Werk', () {
+      final candidates = areas.group([
+        _audioFile('Filme/Dune/Dune.Soundtrack.mp3'),
+      ]);
+
+      expect(candidates, isEmpty);
+    });
+
+    test('der äußere Ordner gewinnt', () {
+      final candidates = areas.group([
+        _audioFile('Hörbücher/Anime/Autor/Titel/01.mp3'),
+      ]);
+
+      expect(candidates.single.kind, 'audiobook');
+    });
+
+    test('loses Audio ohne Medienordner bleibt ein Hörbuch', () {
+      final candidates = areas.group([_audioFile('Irgendwo/Etwas.m4b')]);
+
+      expect(candidates.single.kind, 'audiobook');
+    });
+  });
+
   test('uses neighboring WebP artwork as audiobook cover', () {
     final candidates = importer.group([
       _audioFile('Audiobooks/Autor/Titel/Titel.m4b'),

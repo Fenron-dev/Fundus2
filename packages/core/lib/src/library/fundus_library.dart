@@ -10,6 +10,7 @@ import '../import/abs_importer.dart';
 import '../import/abs_metadata.dart';
 import '../import/document_importer.dart';
 import '../import/embedded_cover.dart';
+import '../import/media_areas.dart';
 import '../model/device_profile.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
@@ -34,6 +35,8 @@ final class LibraryIndexEvent {
     required this.phase,
     required this.fileCount,
     this.workCount = 0,
+    this.changedWorkCount = 0,
+    this.changedFileCount = 0,
     this.currentPath,
     this.rootCounts = const {},
     this.extensionCounts = const {},
@@ -42,6 +45,14 @@ final class LibraryIndexEvent {
   final LibraryIndexPhase phase;
   final int fileCount;
   final int workCount;
+
+  /// How many works this pass actually rewrote. In a full pass that is all of
+  /// them; in a check it is the ones something happened to.
+  final int changedWorkCount;
+
+  /// New, altered and vanished files — what the check found to do.
+  final int changedFileCount;
+
   final String? currentPath;
   final Map<String, int> rootCounts;
   final Map<String, int> extensionCounts;
@@ -427,6 +438,48 @@ final class FundusLibrary {
     _ensureWritable();
     await next.write(_configurationFile(root));
     _configuration = next;
+  }
+
+  /// A short stamp of the folder assignment the index was last built from.
+  ///
+  /// Which area a work belongs to is decided from its folder name, so
+  /// renaming an area or assigning a new folder changes the answer for files
+  /// nobody touched. A check compares file times and would find nothing to
+  /// do; the pass has to be a full one instead, and this is how it knows.
+  String get _configurationFingerprint {
+    final entries = [
+      for (final entry in configuration.mediaRoots.entries)
+        '${entry.key}=${([...entry.value]..sort()).join(',')}',
+    ]..sort();
+    return entries.join(';');
+  }
+
+  File get _indexStateFile =>
+      File(p.join(root.path, metadataDirectoryName, 'index-state.json'));
+
+  Future<bool> _folderAssignmentChanged() async {
+    try {
+      final file = _indexStateFile;
+      if (!await file.exists()) return true;
+      final decoded = jsonDecode(await file.readAsString());
+      return decoded is! Map ||
+          decoded['media_roots'] != _configurationFingerprint;
+    } on Object {
+      return true;
+    }
+  }
+
+  Future<void> _rememberFolderAssignment() async {
+    try {
+      final file = _indexStateFile;
+      await file.parent.create(recursive: true);
+      await file.writeAsString(
+        jsonEncode({'media_roots': _configurationFingerprint}),
+        flush: true,
+      );
+    } on FileSystemException {
+      // Losing the marker only costs one full pass more than needed.
+    }
   }
 
   /// The device profiles stored with this vault.
@@ -1163,18 +1216,49 @@ final class FundusLibrary {
     return loadAnnotations(workId);
   }
 
+  /// Reads the vault and brings the index up to date.
+  ///
+  /// By default this is a *check*, not a re-read: every file is stated, and
+  /// one whose size and time already match the index is never opened. Only
+  /// the works something happened to are imported again. A library where
+  /// nothing changed therefore costs one walk of the tree instead of reading
+  /// headers out of every audio file, opening every EPUB and rewriting every
+  /// row — which is the difference between seconds and the several minutes a
+  /// full pass takes.
+  ///
+  /// [full] forces the old behaviour, for when the index itself is suspect.
+  /// [subtree] limits the pass to one folder; deletions are then only judged
+  /// inside it, because nothing outside it was looked at.
   Stream<LibraryIndexEvent> index({
     LibraryScanner? scanner,
     AbsImporter? importer,
     ScanCancellationToken? cancellationToken,
+    bool full = false,
+    String? subtree,
   }) async* {
     if (isReadOnly) {
       throw StateError('Die Bibliothek ist schreibgeschützt.');
     }
+    final delta = !full && !await _folderAssignmentChanged();
+    final scope = subtree == null || subtree.trim().isEmpty
+        ? null
+        : p.posix.joinAll(MediaAreaMap.splitPath(subtree));
+    final stamps = delta
+        ? _database.indexedFileStamps()
+        : const <String, ({int size, int modifiedAt})>{};
     final files = <ScannedFile>[];
     await for (final event in (scanner ?? LibraryScanner()).scan(
       root,
       cancellationToken: cancellationToken,
+      subtree: scope,
+      isUnchanged: delta
+          ? (path, size, modifiedAt) {
+              final known = stamps[path];
+              return known != null &&
+                  known.size == size &&
+                  known.modifiedAt == modifiedAt.millisecondsSinceEpoch;
+            }
+          : null,
     )) {
       if (event.kind == ScanEventKind.file) files.add(event.file!);
       if (event.kind == ScanEventKind.cancelled) {
@@ -1194,30 +1278,63 @@ final class FundusLibrary {
       }
     }
 
+    final seenPaths = {for (final file in files) file.relativePath};
+    final changedPaths = {
+      for (final file in files)
+        if (!file.unchanged) file.relativePath,
+    };
+    final vanished = [
+      for (final path in stamps.keys)
+        if (!seenPaths.contains(path) &&
+            (scope == null || path == scope || path.startsWith('$scope/')))
+          path,
+    ];
+    // A work is imported again when one of its own files moved, or when
+    // something below its folder is gone — a work that lost a chapter has to
+    // be rewritten even though nothing it still holds changed.
+    bool touched(String directory, Iterable<ScannedFile> members) {
+      if (!delta) return true;
+      if (members.any((file) => changedPaths.contains(file.relativePath))) {
+        return true;
+      }
+      if (vanished.isEmpty) return false;
+      final prefix = directory == '.' ? '' : '$directory/';
+      return vanished.any(
+        (path) => path == directory || path.startsWith(prefix),
+      );
+    }
+
     final groupedCandidates =
         (importer ??
                 AbsImporter(
                   mediaRootNames: configuration.rootsFor('audiobook'),
+                  areas: MediaAreaMap(configuration.mediaRoots),
                 ))
             .group(files);
-    final rootCounts = _countScannedFiles(
-      files,
-      (file) => p.posix.split(file.relativePath).firstOrNull ?? '(root)',
-    );
-    final extensionCounts = _countScannedFiles(
-      files,
-      (file) => file.extension.isEmpty ? '(ohne Endung)' : file.extension,
-    );
     final groupedDocumentCandidates = DocumentImporter(
       mediaRoots: configuration.mediaRoots,
     ).group(files);
+    final rootCounts = scope != null
+        ? const <String, int>{}
+        : _countScannedFiles(
+            files,
+            (file) => p.posix.split(file.relativePath).firstOrNull ?? '(root)',
+          );
+    final extensionCounts = scope != null
+        ? const <String, int>{}
+        : _countScannedFiles(
+            files,
+            (file) => file.extension.isEmpty ? '(ohne Endung)' : file.extension,
+          );
     final documentCandidates = <DocumentImportCandidate>[];
     for (final candidate in groupedDocumentCandidates) {
+      if (!touched(candidate.directory, candidate.files)) continue;
       documentCandidates.add(await _withEpubMetadata(candidate));
     }
     final candidates = <AudiobookImportCandidate>[];
     final portableIdentities = <String, _PortableWorkIdentity>{};
     for (final grouped in groupedCandidates) {
+      if (!touched(grouped.directory, grouped.audioFiles)) continue;
       final portable = await _readPortableIdentity(grouped);
       portableIdentities[grouped.directory] = portable;
       final withAbsMetadata = await _withAbsMetadata(grouped);
@@ -1238,17 +1355,20 @@ final class FundusLibrary {
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.importing,
       fileCount: files.length,
-      workCount: candidates.length + documentCandidates.length,
+      workCount: groupedCandidates.length + groupedDocumentCandidates.length,
+      changedWorkCount: candidates.length + documentCandidates.length,
+      changedFileCount: changedPaths.length + vanished.length,
     );
     final indexedDocuments =
         <({DocumentImportCandidate candidate, String workId})>[];
     final indexedCandidates = _database.transaction(() {
-      final ids = <String, String>{};
+      final ids = delta ? _database.indexedFileIds() : <String, String>{};
       final indexed = <({AudiobookImportCandidate candidate, String workId})>[];
       for (final file in files) {
+        if (delta && file.unchanged) continue;
         ids[file.relativePath] = _database.upsertFile(file);
       }
-      _database.markUnseenFilesMissing(ids.keys.toSet());
+      _database.markUnseenFilesMissing(seenPaths, below: scope);
       for (final candidate in candidates) {
         final portableId = portableIdentities[candidate.directory]?.workId;
         indexed.add((
@@ -1303,10 +1423,13 @@ final class FundusLibrary {
         await _writeMetadataSidecar(indexed.workId);
       }
     }
+    if (scope == null) await _rememberFolderAssignment();
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
-      workCount: candidates.length + documentCandidates.length,
+      workCount: groupedCandidates.length + groupedDocumentCandidates.length,
+      changedWorkCount: candidates.length + documentCandidates.length,
+      changedFileCount: changedPaths.length + vanished.length,
       rootCounts: rootCounts,
       extensionCounts: extensionCounts,
     );

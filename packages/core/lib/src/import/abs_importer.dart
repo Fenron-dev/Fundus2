@@ -1,6 +1,7 @@
 import 'package:path/path.dart' as p;
 
 import 'abs_metadata.dart';
+import 'media_areas.dart';
 import '../scan/library_scanner.dart';
 
 enum WorkMetadataSource { filename, embedded, abs, sidecar, online, user }
@@ -25,10 +26,15 @@ final class AudiobookImportCandidate {
     required this.directory,
     required this.audioFiles,
     required this.coverFiles,
+    this.kind = 'audiobook',
     this.usesFallbackIdentity = false,
     this.absMetadata,
     this.metadataSource = WorkMetadataSource.filename,
   });
+
+  /// The `works.kind` this candidate becomes — `audiobook`, `album` or
+  /// `podcast`, decided by the media folder it lies under.
+  final String kind;
 
   final AbsBookIdentity identity;
   final String directory;
@@ -47,6 +53,7 @@ final class AudiobookImportCandidate {
     directory: directory,
     audioFiles: audioFiles,
     coverFiles: coverFiles,
+    kind: kind,
     usesFallbackIdentity: usesFallbackIdentity,
     absMetadata: absMetadata ?? this.absMetadata,
     metadataSource: metadataSource ?? this.metadataSource,
@@ -74,34 +81,38 @@ final class AbsImporter {
     'folder.webp',
   };
 
-  AbsImporter({this.mediaRootNames = const ['Audiobooks', 'Hörbücher']});
+  AbsImporter({
+    this.mediaRootNames = const ['Audiobooks', 'Hörbücher'],
+    MediaAreaMap? areas,
+  }) : _areas = areas ?? MediaAreaMap({'audiobook': mediaRootNames});
+
+  /// The work kind each audio-carrying media area produces.
+  ///
+  /// Audio is not automatically an audiobook. Everything with a sound file in
+  /// it used to become one, which is how an album under `Musik` and a feed
+  /// under `Podcasts` ended up on the Hörbücher shelf — with the folder they
+  /// came from showing as their series, which is exactly the evidence that
+  /// the folder was read and then ignored.
+  static const audioAreaKinds = {
+    'audiobook': 'audiobook',
+    'music': 'album',
+    'podcast': 'podcast',
+  };
 
   final List<String> mediaRootNames;
+  final MediaAreaMap _areas;
 
   AbsBookIdentity? parseBookDirectory(String relativeDirectory) {
-    var parts = p.posix
-        .split(p.posix.normalize(relativeDirectory))
-        .where((part) => part != '.' && part.isNotEmpty)
-        .toList(growable: false);
-    final matchingRoots =
-        mediaRootNames
-            .map(
-              (root) => p.posix
-                  .split(p.posix.normalize(root.replaceAll('\\', '/')))
-                  .where((part) => part != '.' && part.isNotEmpty)
-                  .toList(growable: false),
-            )
-            .where((root) => root.isNotEmpty && _startsWith(parts, root))
-            .toList()
-          ..sort((left, right) => right.length.compareTo(left.length));
-    if (matchingRoots.isNotEmpty) {
-      parts = parts.sublist(matchingRoots.first.length);
-    }
-    if (parts.length < 2) return null;
+    final parts = MediaAreaMap.splitPath(relativeDirectory);
+    final area = _areas.locate(parts);
+    return _identity(area == null ? parts : area.remainder);
+  }
 
+  /// `Autor/Serie/02 - Titel` below the area folder, in any of its lengths.
+  AbsBookIdentity? _identity(List<String> parts) {
+    if (parts.length < 2) return null;
     final author = parts.first;
-    final bookFolder = parts.last;
-    final parsedTitle = _parseSequence(bookFolder);
+    final parsedTitle = _parseSequence(parts.last);
     if (parts.length == 2) {
       return AbsBookIdentity(
         author: author,
@@ -115,16 +126,6 @@ final class AbsImporter {
       title: parsedTitle.title,
       sequence: parsedTitle.sequence,
     );
-  }
-
-  static bool _startsWith(List<String> path, List<String> prefix) {
-    if (prefix.length > path.length) return false;
-    for (var index = 0; index < prefix.length; index++) {
-      if (path[index].toLowerCase() != prefix[index].toLowerCase()) {
-        return false;
-      }
-    }
-    return true;
   }
 
   List<AudiobookImportCandidate> group(Iterable<ScannedFile> files) {
@@ -142,7 +143,14 @@ final class AbsImporter {
               .toList()
             ..sort(_compareTracks);
       if (audio.isEmpty) continue;
-      final parsedIdentity = parseBookDirectory(entry.key);
+      final parts = MediaAreaMap.splitPath(entry.key);
+      final area = _areas.locate(parts);
+      // A sound file in a comic or film folder belongs to what that folder
+      // holds; it is not a work of its own. Audio outside every declared area
+      // stays an audiobook, which is what a library with loose files expects.
+      final kind = area == null ? 'audiobook' : audioAreaKinds[area.kind];
+      if (kind == null) continue;
+      final parsedIdentity = _identity(area == null ? parts : area.remainder);
       final identity = parsedIdentity ?? _fallbackIdentity(entry.key, audio);
       final covers = entry.value
           .where((file) => coverNames.contains(file.filename.toLowerCase()))
@@ -153,6 +161,7 @@ final class AbsImporter {
           directory: entry.key,
           audioFiles: audio,
           coverFiles: covers,
+          kind: kind,
           usesFallbackIdentity: parsedIdentity == null,
         ),
       );

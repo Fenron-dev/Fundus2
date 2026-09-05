@@ -19,6 +19,7 @@ final class ScannedFile {
     required this.mimeType,
     this.audioMetadata,
     this.videoEpisode,
+    this.unchanged = false,
   });
 
   final String absolutePath;
@@ -30,7 +31,18 @@ final class ScannedFile {
   final String? mimeType;
   final AudioTechnicalMetadata? audioMetadata;
   final VideoEpisodeIdentity? videoEpisode;
+
+  /// The index already holds this file with this size and time.
+  ///
+  /// Nothing was read from it beyond what `stat` returned, so
+  /// [audioMetadata] and [videoEpisode] are absent even where the file has
+  /// them — the stored row is where they live.
+  final bool unchanged;
 }
+
+/// Answers whether the index already knows a file exactly as it is on disk.
+typedef ScannedFileStamp =
+    bool Function(String relativePath, int size, DateTime modifiedAt);
 
 final class ScanEvent {
   const ScanEvent({
@@ -81,9 +93,22 @@ final class LibraryScanner {
   final Set<String> ignoredDirectoryNames;
   final Set<String> ignoredFileNames;
 
+  /// Walks [root] and reports every file it finds.
+  ///
+  /// [isUnchanged] turns a scan into a check: a file the index already holds
+  /// with the same size and time is reported with [ScannedFile.unchanged] set
+  /// and is never opened. Reading headers out of every audio file is what
+  /// makes a full pass take minutes; skipping it for the files nobody touched
+  /// is what makes „ich habe eine Serie hinzugefügt" cost seconds.
+  ///
+  /// [subtree] limits the walk to one folder below [root]. Deletions can then
+  /// only be judged inside it, which is why the library scopes the missing
+  /// mark to the same path.
   Stream<ScanEvent> scan(
     Directory root, {
     ScanCancellationToken? cancellationToken,
+    ScannedFileStamp? isUnchanged,
+    String? subtree,
   }) async* {
     final rootPath = p.normalize(root.absolute.path);
     var visited = 0;
@@ -103,7 +128,16 @@ final class LibraryScanner {
       return;
     }
 
-    final pending = <Directory>[root.absolute];
+    final start = subtree == null || subtree.trim().isEmpty
+        ? root.absolute
+        : Directory(
+            p.normalize(p.join(rootPath, p.joinAll(p.posix.split(subtree)))),
+          );
+    if (start.path != rootPath && !await start.exists()) {
+      yield ScanEvent(kind: ScanEventKind.completed, visitedFiles: visited);
+      return;
+    }
+    final pending = <Directory>[start];
     final visitedDirectories = <String>{};
     final visitedFiles = <String>{};
     while (pending.isNotEmpty) {
@@ -155,6 +189,9 @@ final class LibraryScanner {
             // generated files are changing during a scan.
             if (!visitedFiles.add(portableRelative)) continue;
             visited++;
+            final known =
+                isUnchanged?.call(portableRelative, stat.size, stat.modified) ??
+                false;
             yield ScanEvent(
               kind: ScanEventKind.file,
               visitedFiles: visited,
@@ -166,14 +203,17 @@ final class LibraryScanner {
                 size: stat.size,
                 modifiedAt: stat.modified,
                 mimeType: _mimeTypes[extension],
-                videoEpisode: _videoExtensions.contains(extension)
-                    ? parseVideoEpisode(name)
-                    : null,
-                audioMetadata: await AudioTechnicalMetadataProbe.inspect(
-                  entity,
-                  extension,
-                  stat.size,
-                ),
+                unchanged: known,
+                videoEpisode: known || !_videoExtensions.contains(extension)
+                    ? null
+                    : parseVideoEpisode(name),
+                audioMetadata: known
+                    ? null
+                    : await AudioTechnicalMetadataProbe.inspect(
+                        entity,
+                        extension,
+                        stat.size,
+                      ),
               ),
             );
           } catch (error) {

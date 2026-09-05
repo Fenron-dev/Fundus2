@@ -14,6 +14,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../app/pairing_scanner.dart';
+import '../../data/library_controller.dart';
 import '../../data/media_type.dart';
 import '../../data/peer_connection.dart';
 import '../../media/comic_layout.dart';
@@ -337,36 +338,7 @@ class _Libraries extends StatelessWidget {
               ],
             ),
           ),
-        _Card(
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Neu einlesen',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    Text(
-                      'Der Scan ist unterbrechbar und läuft weiter, wenn man '
-                      'die Ansicht wechselt.',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: tokens.textMuted),
-                    ),
-                  ],
-                ),
-              ),
-              FilledButton(
-                onPressed: scope.library.isScanning
-                    ? scope.library.cancelScan
-                    : scope.library.scan,
-                child: Text(scope.library.isScanning ? 'Abbrechen' : 'Scannen'),
-              ),
-            ],
-          ),
-        ),
+        const _ScanCard(),
         _Card(
           child: Row(
             children: [
@@ -388,6 +360,149 @@ class _Libraries extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// Reading the vault again — as a check, as a whole, or one shelf at a time.
+///
+/// „Scannen" used to mean one thing, and that thing cost several minutes for
+/// a library with a handful of works in it, because every audio file was
+/// opened and every row rewritten to learn that one series had arrived. The
+/// ordinary case is a check: state every file, and touch only the works whose
+/// files moved. Reading everything again stays available for when the index
+/// itself is in doubt, and it is named as the exception it is.
+class _ScanCard extends StatefulWidget {
+  const _ScanCard();
+
+  @override
+  State<_ScanCard> createState() => _ScanCardState();
+}
+
+class _ScanCardState extends State<_ScanCard> {
+  String? _folder;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final library = scope.library;
+    final scanning = library.isScanning;
+    final folders = _scanFolders(scope);
+
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Neu einlesen', style: theme.textTheme.titleSmall),
+                    Text(
+                      'Die Prüfung sieht sich alle Dateien an und liest nur '
+                      'die Werke neu ein, an denen sich etwas geändert hat. '
+                      'Sie ist unterbrechbar und läuft weiter, wenn man die '
+                      'Ansicht wechselt.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: tokens.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: FundusSpace.x4),
+              FilledButton(
+                onPressed: scanning
+                    ? library.cancelScan
+                    : () => library.scan(subtree: _folder),
+                child: Text(scanning ? 'Abbrechen' : 'Prüfen'),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x3),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (folders.isNotEmpty)
+                DropdownMenu<String?>(
+                  initialSelection: _folder,
+                  enabled: !scanning,
+                  label: const Text('Ordner'),
+                  onSelected: (value) => setState(() => _folder = value),
+                  dropdownMenuEntries: [
+                    const DropdownMenuEntry(value: null, label: 'Alles'),
+                    for (final folder in folders)
+                      DropdownMenuEntry(value: folder, label: folder),
+                  ],
+                ),
+              OutlinedButton(
+                onPressed: scanning
+                    ? null
+                    : () => library.scan(full: true, subtree: _folder),
+                child: const Text('Alles neu einlesen'),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x3),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Beim Öffnen und bei jeder Rückkehr in die App selbst nach '
+                  'Neuem sehen.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textMuted,
+                  ),
+                ),
+              ),
+              Switch(
+                value: scope.settings.watchesLibrary,
+                onChanged: (value) =>
+                    unawaited(scope.settings.setWatchesLibrary(value)),
+              ),
+            ],
+          ),
+          if (_result(library) case final line?) ...[
+            const SizedBox(height: FundusSpace.x2),
+            Text(
+              line,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: tokens.textMuted,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// What the last pass did, in the terms someone asked in.
+  static String? _result(LibraryController library) {
+    if (library.isScanning) return null;
+    final last = library.lastResult;
+    if (last == null) return null;
+    if (last.changedWorkCount == 0) {
+      return '${last.fileCount} Dateien geprüft — nichts hat sich geändert.';
+    }
+    final works = last.changedWorkCount == 1
+        ? 'ein Werk'
+        : '${last.changedWorkCount} Werke';
+    return '${last.fileCount} Dateien geprüft, $works neu eingelesen.';
+  }
+
+  /// The media folders as they are actually named in this vault.
+  static List<String> _scanFolders(FundusScopeState scope) {
+    final library = scope.library.library;
+    if (library == null) return const [];
+    final folders = <String>{
+      for (final roots in library.configuration.mediaRoots.values) ...roots,
+    }.toList()..sort();
+    return folders;
   }
 }
 

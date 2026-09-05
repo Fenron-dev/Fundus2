@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'media_areas.dart';
 import '../scan/library_scanner.dart';
 
 final class DocumentImportCandidate {
@@ -50,12 +51,10 @@ final class DocumentImportCandidate {
 /// audiobook's neighboring cover from becoming a separate image work.
 final class DocumentImporter {
   DocumentImporter({required Map<String, Iterable<String>> mediaRoots})
-    : _roots = [
+    : _areas = MediaAreaMap({
         for (final entry in mediaRoots.entries)
-          for (final root in entry.value)
-            if (_supportedKinds.contains(entry.key))
-              (kind: _workKind(entry.key), parts: _parts(root)),
-      ]..sort((left, right) => right.parts.length.compareTo(left.parts.length));
+          if (_supportedKinds.contains(entry.key)) entry.key: entry.value,
+      });
 
   static const _supportedKinds = {
     'book',
@@ -123,17 +122,17 @@ final class DocumentImporter {
     'fanart.webp',
   };
 
-  final List<({String kind, List<String> parts})> _roots;
+  final MediaAreaMap _areas;
 
   List<DocumentImportCandidate> group(Iterable<ScannedFile> files) {
     final grouped = <String, _DocumentGroup>{};
     for (final file in files) {
       if (!_extensions.contains(file.extension)) continue;
-      final parts = _parts(file.relativePath);
-      final root = _matchingRoot(parts);
-      if (root == null || parts.length <= root.parts.length) continue;
-      final remainder = parts.sublist(root.parts.length);
-      final rootPath = p.posix.joinAll(root.parts);
+      final area = _areas.locateFile(file.relativePath);
+      if (area == null || area.remainder.isEmpty) continue;
+      final kind = _workKind(area.kind);
+      final remainder = area.remainder;
+      final rootPath = area.rootPath;
       final standalone = remainder.length == 1;
       final sourcePath = standalone
           ? file.relativePath
@@ -141,14 +140,10 @@ final class DocumentImporter {
       final title = standalone
           ? p.basenameWithoutExtension(file.filename)
           : remainder.first;
-      final key = '${root.kind}\u0000$sourcePath';
+      final key = '$kind\u0000$sourcePath';
       final group = grouped.putIfAbsent(
         key,
-        () => _DocumentGroup(
-          kind: root.kind,
-          sourcePath: sourcePath,
-          title: title,
-        ),
+        () => _DocumentGroup(kind: kind, sourcePath: sourcePath, title: title),
       );
       group.files.add(file);
     }
@@ -169,21 +164,6 @@ final class DocumentImporter {
           : left.title.toLowerCase().compareTo(right.title.toLowerCase());
     });
     return candidates;
-  }
-
-  ({String kind, List<String> parts})? _matchingRoot(List<String> path) {
-    for (final root in _roots) {
-      if (root.parts.length >= path.length) continue;
-      var matches = true;
-      for (var index = 0; index < root.parts.length; index++) {
-        if (root.parts[index].toLowerCase() != path[index].toLowerCase()) {
-          matches = false;
-          break;
-        }
-      }
-      if (matches) return root;
-    }
-    return null;
   }
 
   /// The picture that stands for a work.
@@ -268,11 +248,6 @@ final class DocumentImporter {
     }
     return leftParts.length.compareTo(rightParts.length);
   }
-
-  static List<String> _parts(String value) => p.posix
-      .split(p.posix.normalize(value.replaceAll('\\', '/')))
-      .where((part) => part.isNotEmpty && part != '.')
-      .toList(growable: false);
 
   static String _workKind(String configurationKind) =>
       switch (configurationKind) {

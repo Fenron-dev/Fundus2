@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -204,6 +205,12 @@ class VaultScreen extends StatelessWidget {
     // with a library open, because there is nothing to serve without one.
     await scope.host.restore();
     scope.navigation.reset(const DashboardRoute());
+    // Opening a vault is the other moment worth checking: whatever happened
+    // to the folder since it was last open happened while Fundus was not
+    // watching.
+    if (scope.settings.watchesLibrary) {
+      unawaited(scope.library.checkForChanges(force: true));
+    }
   }
 }
 

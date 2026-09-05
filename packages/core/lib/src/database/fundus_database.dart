@@ -296,7 +296,7 @@ final class FundusDatabase {
       );
     }
     final workId = _upsertWork(
-      kind: 'audiobook',
+      kind: candidate.kind,
       sourcePath: candidate.directory,
       title: identity.title,
       parentId: seriesId,
@@ -1691,21 +1691,70 @@ final class FundusDatabase {
 
   void deleteHighlight(String highlightId) => deleteBookmark(highlightId);
 
-  void markUnseenFilesMissing(Set<String> seenPaths) {
-    // Only this vault's own rows are affected — a mirrored peer catalogue is
-    // not evidence about the local disk.
-    _database.execute(
-      "UPDATE files SET status = 'missing', availability = 'unreachable' "
-      'WHERE source_id = ?',
+  /// Size and modification time of every file this vault has indexed.
+  ///
+  /// A scan compares against this to decide what it has to open at all.
+  Map<String, ({int size, int modifiedAt})> indexedFileStamps() {
+    final rows = _database.select(
+      "SELECT path, size, file_modified_at FROM files "
+      "WHERE source_id = ? AND status = 'available'",
       [localSourceId],
     );
-    for (final path in seenPaths) {
-      _database.execute(
-        "UPDATE files SET status = 'available', "
-        "availability = 'available' WHERE source_id = ? AND path = ?",
-        [localSourceId, path],
-      );
+    return {
+      for (final row in rows)
+        row['path'] as String: (
+          size: (row['size'] as num).toInt(),
+          modifiedAt: (row['file_modified_at'] as num).toInt(),
+        ),
+    };
+  }
+
+  /// The file ids this vault holds, by relative path.
+  Map<String, String> indexedFileIds() {
+    final rows = _database.select(
+      'SELECT path, id FROM files WHERE source_id = ?',
+      [localSourceId],
+    );
+    return {for (final row in rows) row['path'] as String: row['id'] as String};
+  }
+
+  /// Marks everything this vault holds and the walk did not meet as missing.
+  ///
+  /// [below] scopes the judgement: a check that only walked `Serien` has seen
+  /// nothing about `Filme` and must not claim those files are gone.
+  void markUnseenFilesMissing(Set<String> seenPaths, {String? below}) {
+    // Only this vault's own rows are affected — a mirrored peer catalogue is
+    // not evidence about the local disk.
+    final scope = below == null || below.isEmpty
+        ? null
+        : below.endsWith('/')
+        ? below
+        : '$below/';
+    _database.execute('CREATE TEMP TABLE IF NOT EXISTS seen_paths (path TEXT)');
+    _database.execute('DELETE FROM seen_paths');
+    final insert = _database.prepare(
+      'INSERT INTO seen_paths (path) VALUES (?)',
+    );
+    try {
+      for (final path in seenPaths) {
+        insert.execute([path]);
+      }
+    } finally {
+      insert.close();
     }
+    _database.execute(
+      "UPDATE files SET status = 'missing', availability = 'unreachable' "
+      'WHERE source_id = ? '
+      '${scope == null ? '' : 'AND path LIKE ? '}'
+      'AND path NOT IN (SELECT path FROM seen_paths)',
+      [localSourceId, if (scope != null) '$scope%'],
+    );
+    _database.execute(
+      "UPDATE files SET status = 'available', availability = 'available' "
+      'WHERE source_id = ? AND path IN (SELECT path FROM seen_paths)',
+      [localSourceId],
+    );
+    _database.execute('DELETE FROM seen_paths');
   }
 
   String? findMovedAudiobookWorkId(AudiobookImportCandidate candidate) {
@@ -1719,7 +1768,7 @@ final class FundusDatabase {
       '''
       SELECT w.id
       FROM works w
-      WHERE w.kind = 'audiobook' AND w.source_path != ?
+      WHERE w.kind = ? AND w.source_path != ?
         AND NOT EXISTS (
           SELECT 1 FROM work_files wf
           JOIN files f ON f.id = wf.file_id
@@ -1727,7 +1776,7 @@ final class FundusDatabase {
             AND f.status = 'available'
         )
     ''',
-      [candidate.directory],
+      [candidate.kind, candidate.directory],
     );
     final matches = <String>[];
     for (final row in staleWorks) {

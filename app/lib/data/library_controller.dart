@@ -25,6 +25,9 @@ class LibraryController extends ChangeNotifier {
   List<WorkView> _works = const [];
   List<LibrarySource> _sources = const [];
   LibraryIndexEvent? _scanProgress;
+  LibraryIndexEvent? _lastResult;
+  DateTime? _lastCheckedAt;
+  bool _lastScanWasFull = false;
   Map<String, int> _lastRootCounts = const {};
 
   /// Works this must not hand out at all.
@@ -40,6 +43,11 @@ class LibraryController extends ChangeNotifier {
   List<WorkView> get works => _works;
   List<LibrarySource> get sources => _sources;
   LibraryIndexEvent? get scanProgress => _scanProgress;
+
+  /// What the last finished pass found, for the one line that reports it.
+  LibraryIndexEvent? get lastResult => _lastResult;
+  DateTime? get lastCheckedAt => _lastCheckedAt;
+  bool get lastScanWasFull => _lastScanWasFull;
   FundusLibrary? get library => _library;
 
   /// Top-level folders the last scan walked past because no media area claims
@@ -179,25 +187,37 @@ class LibraryController extends ChangeNotifier {
 
   /// Indexes the vault. The scan is interruptible and resumable — with a
   /// hundred thousand files it has to be.
-  Future<void> scan() async {
+  ///
+  /// [full] re-reads everything; without it this is a check that only touches
+  /// what changed. [subtree] narrows it to one folder.
+  Future<void> scan({bool full = false, String? subtree}) async {
     final library = _library;
     if (library == null || _status == LibraryStatus.scanning) return;
     final token = ScanCancellationToken();
     _scanToken = token;
     _status = LibraryStatus.scanning;
     _scanProgress = null;
+    _lastScanWasFull = full;
     notifyListeners();
     try {
-      await for (final event in library.index(cancellationToken: token)) {
+      await for (final event in library.index(
+        cancellationToken: token,
+        full: full,
+        subtree: subtree,
+      )) {
         _scanProgress = event;
         if (event.rootCounts.isNotEmpty) _lastRootCounts = event.rootCounts;
         if (event.phase == LibraryIndexPhase.completed ||
             event.phase == LibraryIndexPhase.cancelled) {
+          _lastResult = event.phase == LibraryIndexPhase.completed
+              ? event
+              : null;
           _reload();
         }
         notifyListeners();
       }
       _status = LibraryStatus.ready;
+      _lastCheckedAt = DateTime.now();
     } on Object catch (failure) {
       _error = failure.toString();
       _status = LibraryStatus.failed;
@@ -206,6 +226,23 @@ class LibraryController extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// Looks for changes without being asked.
+  ///
+  /// A library nobody touched costs one walk of the tree; there is no reason
+  /// to make someone press a button to find out that a series they copied in
+  /// half an hour ago exists. It stays quiet when a scan is already running,
+  /// when the vault is a mirrored shell, or when the last check is recent.
+  Future<void> checkForChanges({bool force = false}) async {
+    if (_library == null || _status == LibraryStatus.scanning) return;
+    if (!force && _lastCheckedAt != null) {
+      if (DateTime.now().difference(_lastCheckedAt!) < recheckAfter) return;
+    }
+    await scan();
+  }
+
+  /// How long a check stays good enough that another one is not worth it.
+  static const recheckAfter = Duration(minutes: 5);
 
   void cancelScan() => _scanToken?.cancel();
 
