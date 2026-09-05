@@ -429,6 +429,11 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
       }
     }
     if (best != null && best != reader.pageIndex) {
+      // Der Sprungmerker wird *vorher* gesetzt. Sonst sieht der nächste
+      // Aufbau eine geänderte Seitenzahl, hält sie für einen Sprung von
+      // außen und zieht die Seite an die obere Kante — mitten im Scrollen.
+      // Genau das war das Springen.
+      _jumpedTo = best;
       reader.goToPage(best);
     }
   }
@@ -491,9 +496,12 @@ class _Page extends StatelessWidget {
 
     if (file == null) {
       // A placeholder with a page's proportions, so the strip does not jump
-      // about while pages arrive.
+      // about while pages arrive. Where a page has already been measured, or
+      // where its neighbours have, those proportions are used: a webtoon page
+      // is a strip, and a 2:3 gap in its place moves everything below it the
+      // moment the picture lands.
       return AspectRatio(
-        aspectRatio: continuous ? 2 / 3 : 1,
+        aspectRatio: continuous ? (reader.aspectOf(index) ?? 2 / 3) : 1,
         child: Center(
           child: SizedBox(
             width: 20,
@@ -527,12 +535,10 @@ class _Page extends StatelessWidget {
       return switch (reader.profile.pageScale) {
         PublicationPageScale.fitWidth ||
         // Nothing to fit a page into here — the strip has no page height.
-        PublicationPageScale.fitScreen => Image.file(
-          File(file),
-          width: double.infinity,
-          fit: BoxFit.fitWidth,
-          filterQuality: FilterQuality.medium,
-          errorBuilder: (context, error, stack) => const SizedBox.shrink(),
+        PublicationPageScale.fitScreen => _MeasuredPage(
+          file: file,
+          aspect: reader.aspectOf(index),
+          onMeasured: (value) => reader.rememberAspect(index, value),
         ),
         PublicationPageScale.fitHeight => SizedBox(
           height: MediaQuery.sizeOf(context).height,
@@ -1093,4 +1099,91 @@ class _CentredScroll extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// One page of a strip, at a height that is known before it is drawn.
+///
+/// An image reports its proportions only once it has been decoded. Until then
+/// it takes no room, so the strip grew under the reader's thumb every time a
+/// page arrived — the jumping this is about. The page is therefore laid out
+/// at the proportions the reader already knows, and what it measures on the
+/// way is handed back so the next page after it is right from the start.
+class _MeasuredPage extends StatefulWidget {
+  const _MeasuredPage({
+    required this.file,
+    required this.aspect,
+    required this.onMeasured,
+  });
+
+  final String file;
+  final double? aspect;
+  final ValueChanged<double> onMeasured;
+
+  @override
+  State<_MeasuredPage> createState() => _MeasuredPageState();
+}
+
+class _MeasuredPageState extends State<_MeasuredPage> {
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+  double? _measured;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _listen();
+  }
+
+  @override
+  void didUpdateWidget(_MeasuredPage old) {
+    super.didUpdateWidget(old);
+    if (old.file != widget.file) {
+      _measured = null;
+      _listen();
+    }
+  }
+
+  void _listen() {
+    _detach();
+    final provider = FileImage(File(widget.file));
+    final stream = provider.resolve(createLocalImageConfiguration(context));
+    final listener = ImageStreamListener((info, _) {
+      // Das Bild selbst gehört dem Cache; hier wird nur ausgemessen.
+      final aspect = info.image.width / info.image.height;
+      if (!mounted || !aspect.isFinite || aspect <= 0) return;
+      widget.onMeasured(aspect);
+      if (_measured != aspect) setState(() => _measured = aspect);
+    }, onError: (_, _) {});
+    stream.addListener(listener);
+    _stream = stream;
+    _listener = listener;
+  }
+
+  void _detach() {
+    if (_stream case final stream? when _listener != null) {
+      stream.removeListener(_listener!);
+    }
+    _stream = null;
+    _listener = null;
+  }
+
+  @override
+  void dispose() {
+    _detach();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final aspect = _measured ?? widget.aspect;
+    final image = Image.file(
+      File(widget.file),
+      width: double.infinity,
+      fit: BoxFit.fitWidth,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (context, error, stack) => const SizedBox.shrink(),
+    );
+    if (aspect == null) return image;
+    return AspectRatio(aspectRatio: aspect, child: image);
+  }
 }

@@ -112,6 +112,38 @@ class ReaderController extends ChangeNotifier {
 
   String? get currentPageFile => fileForPage(_pageIndex);
 
+  /// How tall a page is relative to its width, once something has measured
+  /// it.
+  ///
+  /// A webtoon page is a strip — sometimes five times as tall as it is wide.
+  /// A placeholder of the wrong shape means the strip changes length the
+  /// moment the picture arrives, and everything below it moves under the
+  /// reader's thumb. So each page's real proportions are kept as they become
+  /// known, and a page nobody has seen yet borrows the shape of the ones that
+  /// have: within one chapter they are almost always the same.
+  final Map<int, double> _aspects = {};
+  double? _typicalAspect;
+
+  double? aspectOf(int index) => _aspects[index] ?? _typicalAspect;
+
+  void rememberAspect(int index, double aspect) {
+    if (!aspect.isFinite || aspect <= 0) return;
+    if (_aspects[index] == aspect) return;
+    _aspects[index] = aspect;
+    // The first measured page sets the expectation for the rest; later ones
+    // only correct it when they are wildly different, so one banner page
+    // cannot make every other placeholder wrong.
+    final typical = _typicalAspect;
+    if (typical == null || (aspect / typical - 1).abs() > 0.5) {
+      _typicalAspect = aspect;
+    }
+  }
+
+  void _forgetAspects() {
+    _aspects.clear();
+    _typicalAspect = null;
+  }
+
   /// „Band 2 · Seiten 6–7 von 180" — the label the design asks for.
   String get positionLabel {
     if (_pages.isEmpty) return '';
@@ -302,6 +334,8 @@ class ReaderController extends ChangeNotifier {
     _busy = true;
     _failure = null;
     _pages = const [];
+    // Ein neuer Band hat eigene Maße; die des vorigen wären hier geraten.
+    _forgetAspects();
     notifyListeners();
     final span = FundusLog.instance.start('reader.volume', {
       'volume': index < _volumes.length ? _volumes[index].title : '?',
