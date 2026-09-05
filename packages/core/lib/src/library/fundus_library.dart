@@ -1113,6 +1113,20 @@ final class FundusLibrary {
     );
   }
 
+  /// Marks a work as a favourite, or takes the mark back.
+  void setFavourite({
+    required String workId,
+    required bool favourite,
+    String userId = 'default',
+  }) {
+    _ensureWritable();
+    _database.setFavourite(
+      workId: workId,
+      favourite: favourite,
+      userId: userId,
+    );
+  }
+
   /// The files of a work somebody has ticked off.
   ///
   /// Separate from the position, because they answer different questions: the

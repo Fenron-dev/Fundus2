@@ -27,6 +27,7 @@ final class WorkFilter {
     this.sort = WorkSort.recentlyAdded,
     this.grouping = GroupingMode.tiles,
     this.unassignedOnly = false,
+    this.favouritesOnly = false,
     this.sourceId,
   });
 
@@ -43,6 +44,9 @@ final class WorkFilter {
   /// silently dropped.
   final bool unassignedOnly;
 
+  /// Only what somebody marked as a favourite.
+  final bool favouritesOnly;
+
   /// One machine's shelf out of the several this device holds.
   ///
   /// The vault of a phone is a shell where several Fundus libraries come
@@ -55,10 +59,14 @@ final class WorkFilter {
       text.isNotEmpty ||
       origins.isNotEmpty ||
       unassignedOnly ||
+      favouritesOnly ||
       sourceId != null;
 
   int get activeFilterCount =>
-      (text.isEmpty ? 0 : 1) + origins.length + (unassignedOnly ? 1 : 0);
+      (text.isEmpty ? 0 : 1) +
+      origins.length +
+      (unassignedOnly ? 1 : 0) +
+      (favouritesOnly ? 1 : 0);
 
   WorkFilter copyWith({
     String? text,
@@ -68,6 +76,7 @@ final class WorkFilter {
     WorkSort? sort,
     GroupingMode? grouping,
     bool? unassignedOnly,
+    bool? favouritesOnly,
     String? sourceId,
     bool clearSource = false,
   }) => WorkFilter(
@@ -77,6 +86,7 @@ final class WorkFilter {
     sort: sort ?? this.sort,
     grouping: grouping ?? this.grouping,
     unassignedOnly: unassignedOnly ?? this.unassignedOnly,
+    favouritesOnly: favouritesOnly ?? this.favouritesOnly,
     sourceId: clearSource ? null : (sourceId ?? this.sourceId),
   );
 
@@ -85,6 +95,7 @@ final class WorkFilter {
   String emptyReason() {
     final reasons = <String>[];
     if (text.isNotEmpty) reasons.add('die Suche „$text"');
+    if (favouritesOnly) reasons.add('die Beschränkung auf Favoriten');
     if (sourceId != null) reasons.add('das gewählte Gerät');
     if (origins.isNotEmpty) {
       reasons.add(
@@ -108,6 +119,7 @@ final class WorkFilter {
 
     final matched = works.where((work) {
       if (unassignedOnly && work.mediaType != null) return false;
+      if (favouritesOnly && !work.summary.favourite) return false;
       if (type != null && work.mediaType?.id != type.id) return false;
       if (origins.isNotEmpty && !origins.contains(work.origin)) return false;
       if (sourceId != null && work.summary.sourceId != sourceId) return false;

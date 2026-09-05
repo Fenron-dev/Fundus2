@@ -43,6 +43,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
     final recent = works.toList(growable: false)
       ..sort((a, b) => b.summary.addedAt.compareTo(a.summary.addedAt));
+    final favourites = works
+        .where((work) => work.summary.favourite)
+        .toList(growable: false);
     // Was zuletzt lief, nicht was noch offen ist. Ein Film, den man zu Ende
     // gesehen hat, verschwindet aus „Fortsetzen" — und war damit nirgends
     // mehr zu finden, obwohl er das Letzte war, was man gesehen hat.
@@ -99,6 +102,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 key: ValueKey('fortsetzen-${continuing[index].id}'),
                 work: continuing[index],
                 width: stage == FundusStageSize.handset ? 268.0 : 320.0,
+              ),
+            ),
+          ),
+        ],
+        if (favourites.isNotEmpty) ...[
+          _Heading(
+            'Favoriten',
+            gutter: stage.gutter,
+            action: TextButton(
+              onPressed: () {
+                scope.setFilter(
+                  scope.filter.copyWith(
+                    favouritesOnly: true,
+                    clearMediaType: true,
+                  ),
+                );
+                scope.navigation.go(const LibraryRoute());
+              },
+              child: const Text('Alle'),
+            ),
+          ),
+          SizedBox(
+            height: workPosterExtent(
+              width: stage.posterWidth,
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+              itemCount: favourites.length.clamp(0, 20),
+              separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
+              itemBuilder: (context, index) => WorkPoster(
+                key: ValueKey('favorit-${favourites[index].id}'),
+                work: favourites[index],
+                width: stage.posterWidth,
+                onTap: () =>
+                    scope.navigation.go(WorkRoute(favourites[index].id)),
               ),
             ),
           ),

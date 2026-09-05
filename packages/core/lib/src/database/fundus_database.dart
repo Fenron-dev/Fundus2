@@ -29,6 +29,7 @@ final class LibraryWorkSummary {
     this.series,
     this.seriesSequence,
     this.sourcePath = '',
+    this.favourite = false,
     this.coverPath,
     this.hasFolderCover = false,
     this.backdropPath,
@@ -76,6 +77,9 @@ final class LibraryWorkSummary {
   /// `Podcasts/Auf ein Bier`. The folder view groups by it, and a folder is
   /// the one thing about a work that is never a matter of opinion.
   final String sourcePath;
+
+  /// Whether somebody marked this work as one they keep coming back to.
+  final bool favourite;
 
   final String? coverPath;
 
@@ -155,6 +159,7 @@ final class LibraryWorkSummary {
         series: series,
         seriesSequence: seriesSequence,
         sourcePath: sourcePath,
+        favourite: favourite,
         coverPath: coverPath,
         hasFolderCover: hasFolderCover,
         backdropPath: backdropPath,
@@ -210,7 +215,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 12;
+  static const schemaVersion = 13;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -579,6 +584,26 @@ final class FundusDatabase {
     );
   }
 
+  /// Whether a work is one of somebody's favourites.
+  void setFavourite({
+    required String workId,
+    required bool favourite,
+    String userId = 'default',
+  }) {
+    if (!favourite) {
+      _database.execute(
+        'DELETE FROM favourites WHERE work_id = ? AND user_id = ?',
+        [workId, userId],
+      );
+      return;
+    }
+    _database.execute(
+      'INSERT INTO favourites (work_id, user_id, added_at) VALUES (?, ?, ?) '
+      'ON CONFLICT(work_id, user_id) DO NOTHING',
+      [workId, userId, DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
   /// The files of a work somebody has marked as done.
   Set<String> finishedFiles(String workId, {String userId = 'default'}) {
     if (!tableExists('watched_files')) return const {};
@@ -867,6 +892,9 @@ final class FundusDatabase {
              COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
              cover.path AS folder_cover_path,
+             (SELECT 1 FROM favourites f
+               WHERE f.work_id = w.id AND f.user_id = 'default')
+               AS is_favourite,
              w.backdrop_path AS backdrop_path,
              progress.numeric_value AS progress_position,
              progress.position_kind AS progress_kind,
@@ -925,6 +953,7 @@ final class FundusDatabase {
               row['added_at'] as int,
             ),
             sourcePath: row['source_path'] as String? ?? '',
+            favourite: row['is_favourite'] != null,
             coverPath: row['cover_path'] as String?,
             hasFolderCover: row['folder_cover_path'] != null,
             backdropPath: row['backdrop_path'] as String?,
@@ -2830,6 +2859,7 @@ final class FundusDatabase {
     if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
     if (_database.userVersion == 10 && !readOnly) _migrateToVersion11();
     if (_database.userVersion == 11 && !readOnly) _migrateToVersion12();
+    if (_database.userVersion == 12 && !readOnly) _migrateToVersion13();
   }
 
   void _migrateToVersion1() {
@@ -3083,6 +3113,25 @@ final class FundusDatabase {
         _database.execute(statement);
       }
       _database.userVersion = 12;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  /// The works somebody keeps coming back to.
+  ///
+  /// A table rather than a flag in the metadata: a favourite is a statement
+  /// by a person about a work, and metadata is what the work says about
+  /// itself. It also leaves room for the second person on the same vault.
+  void _migrateToVersion13() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      for (final statement in _version13Statements) {
+        _database.execute(statement);
+      }
+      _database.userVersion = 13;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -3570,6 +3619,17 @@ const _version12Statements = <String>[
     description TEXT,
     published_at INTEGER,
     PRIMARY KEY (work_id, file_id)
+  )
+  ''',
+];
+
+const _version13Statements = <String>[
+  '''
+  CREATE TABLE IF NOT EXISTS favourites (
+    work_id TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (work_id, user_id)
   )
   ''',
 ];

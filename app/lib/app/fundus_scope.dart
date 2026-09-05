@@ -815,6 +815,18 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   Future<void> _saveTrackPreference(TrackPreference value) =>
       _writeProfileSection(videoProfileKind, value.toJson());
 
+  /// Marks a work as a favourite, or takes the mark back.
+  ///
+  /// It lives in the vault rather than on this device: „das mag ich" is a
+  /// statement about the work, and it should be true on the phone as well.
+  void toggleFavourite(WorkView work) {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return;
+    vault.setFavourite(workId: work.id, favourite: !work.summary.favourite);
+    library.refreshWork(work.id);
+    unawaited(sync.pushWork(work.id));
+  }
+
   /// Changes the standing language rules, and remembers them.
   Future<void> setTrackRules(TrackPreference value) async {
     player.preference = value;

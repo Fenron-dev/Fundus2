@@ -343,6 +343,7 @@ class _Actions extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           primary,
+          _FavouriteButton(work: work),
           _OfflineButton(work: work),
           _MetadataButtons(work: work),
         ],
@@ -1210,6 +1211,32 @@ class _DevicesState extends State<_Devices> {
           ],
         );
       },
+    );
+  }
+}
+
+/// „Das mag ich."
+///
+/// In the vault rather than on this device, because it is a statement about
+/// the work and should be true on the phone as well.
+class _FavouriteButton extends StatelessWidget {
+  const _FavouriteButton({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final tokens = context.fundus;
+    final on = work.summary.favourite;
+    return IconButton(
+      onPressed: () => scope.toggleFavourite(work),
+      tooltip: on ? 'Aus den Favoriten nehmen' : 'Zu den Favoriten',
+      icon: Icon(
+        on ? FundusIcons.favourite : FundusIcons.favourites,
+        size: FundusIcons.sizeLg,
+        color: on ? tokens.accent : tokens.textFaint,
+      ),
     );
   }
 }

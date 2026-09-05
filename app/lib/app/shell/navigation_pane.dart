@@ -101,6 +101,9 @@ class NavigationPane extends StatelessWidget {
     final activeType = route is LibraryRoute ? route.mediaTypeId : null;
     final counts = scope.library.worksPerMediaType;
     final unassigned = scope.library.unassignedWorkCount;
+    final favourites = scope.library.works
+        .where((work) => work.summary.favourite)
+        .length;
 
     final entries = <NavigationEntry>[
       NavigationEntry(
@@ -117,6 +120,20 @@ class NavigationPane extends StatelessWidget {
         ruleAfter: true,
         onTap: () => scope.openMediaType(null),
       ),
+      if (favourites > 0)
+        NavigationEntry(
+          label: 'Favoriten',
+          icon: FundusIcons.favourite,
+          count: _formatCount(favourites),
+          active: route is LibraryRoute && scope.filter.favouritesOnly,
+          ruleAfter: true,
+          onTap: () {
+            scope.setFilter(
+              scope.filter.copyWith(favouritesOnly: true, clearMediaType: true),
+            );
+            scope.navigation.go(const LibraryRoute());
+          },
+        ),
       // In der Reihenfolge, die der Nutzer gesetzt hat, und ohne Trennlinie
       // mitten in der Liste: was oben und was unten steht, entscheidet er.
       for (final type in MediaTypes.ordered(scope.settings.mediaTypeOrder))

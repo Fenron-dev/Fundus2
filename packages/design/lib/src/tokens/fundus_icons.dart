@@ -14,6 +14,7 @@ abstract final class FundusIcons {
   static final dashboard = PhosphorIcons.squaresFour();
   static final resume = PhosphorIcons.playCircle();
   static final favourites = PhosphorIcons.heart();
+  static final favourite = PhosphorIcons.heart(PhosphorIconsStyle.fill);
   static final lists = PhosphorIcons.queue();
   static final newMediaType = PhosphorIcons.plusCircle();
   static final downloads = PhosphorIcons.downloadSimple();
