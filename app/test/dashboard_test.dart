@@ -129,6 +129,31 @@ void main() {
     expect(find.text('TTRPG'), findsNothing);
   });
 
+  testWidgets('ein zu Ende gesehener Film bleibt auffindbar', (tester) async {
+    final work = library.works.firstWhere((entry) => entry.title == 'Arrival');
+    library.library!.saveProgress(
+      workId: work.id,
+      fileId: library.library!.playbackTracks(work.id).single.fileId,
+      position: const Duration(minutes: 116),
+      duration: const Duration(minutes: 116),
+      finished: true,
+      deviceId: 'test',
+    );
+    library.refreshWork(work.id);
+
+    await pump(tester);
+
+    // „Fortsetzen" ist er zu Recht los — offen ist da nichts mehr. Trotzdem
+    // war er das Letzte, was lief, und genau danach sucht man.
+    expect(find.text('FORTSETZEN'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('ZULETZT GESEHEN'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(ValueKey('gesehen-${work.id}')), findsOneWidget);
+  });
+
   testWidgets('ohne Fortsetzen keine leere Reihe', (tester) async {
     await pump(tester);
 

@@ -43,6 +43,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
     final recent = works.toList(growable: false)
       ..sort((a, b) => b.summary.addedAt.compareTo(a.summary.addedAt));
+    // Was zuletzt lief, nicht was noch offen ist. Ein Film, den man zu Ende
+    // gesehen hat, verschwindet aus „Fortsetzen" — und war damit nirgends
+    // mehr zu finden, obwohl er das Letzte war, was man gesehen hat.
+    final played =
+        works
+            .where((work) => work.summary.lastListenedAt != null)
+            .toList(growable: false)
+          ..sort(
+            (a, b) =>
+                b.summary.lastListenedAt!.compareTo(a.summary.lastListenedAt!),
+          );
     // Something to watch, drawn from the whole library rather than from one
     // shelf: a start screen that only ever offers what is already half
     // finished never shows anybody the rest of what they own.
@@ -88,6 +99,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 key: ValueKey('fortsetzen-${continuing[index].id}'),
                 work: continuing[index],
                 width: stage == FundusStageSize.handset ? 268.0 : 320.0,
+              ),
+            ),
+          ),
+        ],
+        if (played.isNotEmpty) ...[
+          _Heading('Zuletzt gesehen', gutter: stage.gutter),
+          SizedBox(
+            height: workPosterExtent(
+              width: stage.posterWidth,
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: stage.gutter),
+              itemCount: played.length.clamp(0, 20),
+              separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
+              itemBuilder: (context, index) => WorkPoster(
+                key: ValueKey('gesehen-${played[index].id}'),
+                work: played[index],
+                width: stage.posterWidth,
+                onTap: () => scope.navigation.go(WorkRoute(played[index].id)),
               ),
             ),
           ),
