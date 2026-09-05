@@ -4,6 +4,7 @@ import 'package:fundus_design/fundus_design.dart';
 import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/downloads/downloads_screen.dart';
 import '../../features/library/library_screen.dart';
+import '../../features/library/search_screen.dart';
 import '../../features/player/player_bar.dart';
 import '../../features/player/player_screen.dart';
 import '../../features/reader/reader_screen.dart';
@@ -153,14 +154,16 @@ class _CompactShell extends StatelessWidget {
     final destinations = <(String, IconData, FundusRoute)>[
       ('Start', FundusIcons.dashboard, const DashboardRoute()),
       ('Bibliothek', FundusIcons.lists, const LibraryRoute()),
-      ('Downloads', FundusIcons.downloads, const DownloadsRoute()),
+      ('Suche', FundusIcons.search, const SearchRoute()),
+      ('Offline', FundusIcons.downloads, const DownloadsRoute()),
       ('Mehr', FundusIcons.settings, const SettingsRoute()),
     ];
     final selected = switch (route) {
       DashboardRoute() => 0,
       LibraryRoute() || WorkRoute() => 1,
-      DownloadsRoute() => 2,
-      _ => 3,
+      SearchRoute() => 2,
+      DownloadsRoute() => 3,
+      _ => 4,
     };
 
     return Column(
@@ -269,7 +272,7 @@ class ShellContent extends StatelessWidget {
       WorkRoute(:final workId) => WorkScreen(workId: workId),
       SettingsRoute(:final category) => SettingsScreen(category: category),
       DownloadsRoute() => const DownloadsScreen(),
-      SearchRoute() => const LibraryScreen(route: LibraryRoute()),
+      SearchRoute() => const SearchScreen(),
     };
   }
 }
