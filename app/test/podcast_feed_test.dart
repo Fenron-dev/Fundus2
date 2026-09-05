@@ -45,26 +45,57 @@ void main() {
 
   test('die Datei aus dem Enclosure schlägt den Titel', () {
     final episodes = parseFeed(feed);
-    final files = {
-      normaliseEpisodeName('sf100.mp3'): 'file-a',
-      normaliseEpisodeName('SF 100 Monkey Island'): 'file-b',
-    };
+    final matched = matchEpisodes(episodes, const [
+      EpisodeFile(fileId: 'file-a', name: 'sf100.mp3'),
+      EpisodeFile(fileId: 'file-b', name: 'SF 100 Monkey Island.mp3'),
+    ]);
 
-    expect(matchEpisode(episodes.first, files), 'file-a');
+    expect(matched[0], 'file-a');
   });
 
-  test('sonst wird über den Titel zugeordnet', () {
-    final episodes = parseFeed(feed);
-    final files = {
-      normaliseEpisodeName('SF 101 - Zak McKracken.mp3'): 'file-c',
-    };
+  test('ein anders benannter Mitschnitt wird über die Nummer gefunden', () {
+    // Der Feed sagt „SF 100: Monkey Island", auf der Platte liegt
+    // „SF_100.mp3" — kein Wort davon stimmt überein, die Nummer schon.
+    final matched = matchEpisodes(parseFeed(feed), const [
+      EpisodeFile(fileId: 'a', name: 'SF_100.mp3'),
+      EpisodeFile(fileId: 'b', name: 'SF_101.mp3'),
+    ]);
 
-    expect(matchEpisode(episodes[1], files), 'file-c');
+    expect(matched[0], 'a');
+    expect(matched[1], 'b');
   });
 
-  test('was nirgends passt, bleibt ohne Text', () {
-    final episodes = parseFeed(feed);
+  test('ein enthaltener Titel reicht', () {
+    final matched = matchEpisodes(parseFeed(feed), const [
+      EpisodeFile(
+        fileId: 'a',
+        name: 'Stay Forever - SF 100 Monkey Island (2025).mp3',
+      ),
+    ]);
 
-    expect(matchEpisode(episodes.first, const {}), isNull);
+    expect(matched[0], 'a');
+  });
+
+  test('eine Nummer, die zweimal vorkommt, entscheidet nichts', () {
+    final matched = matchEpisodes(parseFeed(feed), const [
+      EpisodeFile(fileId: 'a', name: 'Teil 100 von A.mp3'),
+      EpisodeFile(fileId: 'b', name: 'Teil 100 von B.mp3'),
+    ]);
+
+    expect(matched, isEmpty);
+  });
+
+  test('eine Jahreszahl ist keine Folgennummer', () {
+    expect(episodeNumberIn('Rückblick 1999.mp3'), isNull);
+    expect(episodeNumberIn('SF 100.mp3'), 100);
+    expect(episodeNumberIn('Ohne Nummer.mp3'), isNull);
+  });
+
+  test('keine Datei bekommt zwei Folgen', () {
+    final matched = matchEpisodes(parseFeed(feed), const [
+      EpisodeFile(fileId: 'nur-eine', name: 'SF 100.mp3'),
+    ]);
+
+    expect(matched.values.toSet(), hasLength(matched.length));
   });
 }

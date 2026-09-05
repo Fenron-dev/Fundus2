@@ -1161,6 +1161,7 @@ final class FundusLibrary {
     bool finished = false,
     String deviceId = 'desktop-local',
     String? operationId,
+    DateTime? updatedAt,
   }) => _database.saveMediaProgress(
     workId: workId,
     fileId: fileId,
@@ -1168,6 +1169,7 @@ final class FundusLibrary {
     finished: finished,
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),
+    updatedAt: updatedAt,
   );
 
   Future<String> cacheGeneratedCover({

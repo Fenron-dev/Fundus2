@@ -415,6 +415,10 @@ final class FundusSync {
       // The write keeps the name of the device it came from, so the history
       // still shows where a jump came from.
       deviceId: theirs.deviceId.isEmpty ? deviceId : theirs.deviceId,
+      // Und mit dem Zeitpunkt, an dem der Stand entstanden ist. Sonst sieht
+      // jedes Gerät seine eigene Reihenfolge unter „Zuletzt gesehen": nicht
+      // wann etwas lief, sondern wann es hier ankam.
+      updatedAt: theirs.updatedAt,
     );
   }
 
@@ -426,6 +430,7 @@ final class FundusSync {
         position: mine.position,
         finished: mine.finished,
         deviceId: deviceId,
+        updatedAt: mine.updatedAt,
       );
 
   Future<SyncReport> _syncMarks(String workId, SyncReport report) async {

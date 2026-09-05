@@ -17,6 +17,7 @@ final class MetadataApplyResult {
     this.coverFailed = false,
     this.backdropFetched = false,
     this.episodesDescribed = 0,
+    this.feedRead = false,
   });
 
   final String workId;
@@ -30,6 +31,10 @@ final class MetadataApplyResult {
 
   /// How many episodes got their own text out of the show's feed.
   final int episodesDescribed;
+
+  /// Whether there was a feed to read at all. Without it, „keine Folge
+  /// zugeordnet" would be a complaint about something nobody attempted.
+  final bool feedRead;
 }
 
 /// Writes a chosen match onto a work.
@@ -119,11 +124,12 @@ Future<MetadataApplyResult> applyMetadata({
   // worum es in einer Folge geht. Ein Feed, der nicht antwortet, kostet die
   // Texte — nie den Abgleich.
   var described = 0;
-  if (candidate.externalIds['feed'] case final feed?) {
+  final feedUrl = candidate.externalIds['feed'];
+  if (feedUrl != null) {
     described = await describeEpisodes(
       library: library,
       workId: work.id,
-      feedUrl: feed,
+      feedUrl: feedUrl,
       client: client,
     );
   }
@@ -136,6 +142,7 @@ Future<MetadataApplyResult> applyMetadata({
     coverFailed: failed,
     backdropFetched: wide,
     episodesDescribed: described,
+    feedRead: feedUrl != null,
   );
 }
 
@@ -180,24 +187,21 @@ Future<int> describeEpisodes({
   try {
     final episodes = await feed.read(feedUrl);
     if (episodes.isEmpty) return 0;
-    final byName = <String, String>{
+    final matched = matchEpisodes(episodes, [
       for (final track in library.playbackTracks(workId))
-        normaliseEpisodeName(track.title): track.fileId,
-    };
-    var described = 0;
-    for (final episode in episodes) {
-      final fileId = matchEpisode(episode, byName);
-      if (fileId == null) continue;
+        EpisodeFile(fileId: track.fileId, name: track.title),
+    ]);
+    for (final entry in matched.entries) {
+      final episode = episodes[entry.key];
       library.setFileDetail(
         workId: workId,
-        fileId: fileId,
+        fileId: entry.value,
         title: episode.title,
         description: episode.description,
         publishedAt: episode.publishedAt,
       );
-      described++;
     }
-    return described;
+    return matched.length;
   } on Object {
     // A feed that will not answer costs the texts, never the match.
     return 0;

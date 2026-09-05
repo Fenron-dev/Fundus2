@@ -233,6 +233,29 @@ void main() {
     );
   });
 
+  test('der Zeitpunkt eines Standes überlebt die Reise', () async {
+    await peers.connect(peer());
+    final workId = _audiobook(library).id;
+    final fileId = library.library!.playbackTracks(workId).single.fileId;
+    library.library!.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 17),
+      deviceId: 'handy',
+    );
+    final mine = library.library!.loadProgress(workId)!.updatedAt;
+
+    final sync = SyncController(settings: settings, library: library);
+    await sync.syncWith(settings.peers.single);
+
+    // Drüben steht, wann gehört wurde — nicht, wann es dort ankam. Sonst
+    // sortiert jedes Gerät „Zuletzt gesehen" anders.
+    expect(
+      theirs.loadProgress(workId)!.updatedAt.difference(mine).abs(),
+      lessThan(const Duration(seconds: 2)),
+    );
+  });
+
   test('ein schlafender Mac leert die Bibliothek nicht', () async {
     await peers.connect(peer());
     final before = library.works.length;

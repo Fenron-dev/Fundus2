@@ -1326,6 +1326,7 @@ final class FundusDatabase {
     required bool finished,
     required String deviceId,
     required String operationId,
+    DateTime? updatedAt,
   }) {
     return transaction(() {
       final processed = _database.select(
@@ -1340,7 +1341,15 @@ final class FundusDatabase {
       }
       final stored = loadProgress(workId);
       final revision = (stored?.revision ?? 0) + 1;
-      final now = DateTime.now().millisecondsSinceEpoch;
+      // Wann jemand zuletzt an diesem Werk war, ist eine Eigenschaft des
+      // Standes, nicht des Schreibvorgangs. Kommt er von einem anderen Gerät,
+      // zählt dessen Zeitpunkt — sonst steht auf jedem Gerät eine andere
+      // Reihenfolge unter „Zuletzt gesehen". Eine Uhr, die in der Zukunft
+      // geht, wird auf jetzt zurückgeholt: sonst klebt ein Werk für immer
+      // oben.
+      final clock = DateTime.now().millisecondsSinceEpoch;
+      final claimed = updatedAt?.millisecondsSinceEpoch;
+      final now = claimed == null || claimed > clock ? clock : claimed;
       // How long the whole thing is does not change between two saves, and a
       // player that has not been told yet must not be able to unsay it: a
       // save without a total used to wipe the stored one, which left the work

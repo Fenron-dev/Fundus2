@@ -439,15 +439,25 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         SnackBar(
           content: Text(
-            result.coverFailed
-                ? '„${result.title}" übernommen — das Titelbild kam nicht an.'
-                : result.coverFetched && result.backdropFetched
-                ? '„${result.title}" übernommen, mit Titelbild und Breitbild.'
-                : result.backdropFetched
-                ? '„${result.title}" übernommen, mit Breitbild.'
-                : result.coverFetched
-                ? '„${result.title}" übernommen, mit Titelbild.'
-                : '„${result.title}" übernommen.',
+            [
+              result.coverFailed
+                  ? '„${result.title}" übernommen — das Titelbild kam '
+                        'nicht an.'
+                  : result.coverFetched && result.backdropFetched
+                  ? '„${result.title}" übernommen, mit Titelbild und '
+                        'Breitbild.'
+                  : result.backdropFetched
+                  ? '„${result.title}" übernommen, mit Breitbild.'
+                  : result.coverFetched
+                  ? '„${result.title}" übernommen, mit Titelbild.'
+                  : '„${result.title}" übernommen.',
+              // Bei einem Podcast ist genau das die Frage, die man sich
+              // stellt: hat er die Folgen wiedergefunden?
+              if (result.episodesDescribed > 0)
+                '${result.episodesDescribed} Folgen beschrieben.'
+              else if (result.feedRead)
+                'Keine Folge ließ sich einem Feed-Eintrag zuordnen.',
+            ].join(' '),
           ),
         ),
       );

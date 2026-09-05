@@ -1269,6 +1269,80 @@ void main() {
     expect(after.progressDuration, const Duration(minutes: 123));
   });
 
+  test(
+    'a position keeps the time it was made, not the time it arrived',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-when-');
+      addTearDown(() => root.delete(recursive: true));
+      final folder = Directory('${root.path}/Filme/About Time')
+        ..createSync(recursive: true);
+      File(
+        '${folder.path}/About Time.mkv',
+      ).writeAsBytesSync(List.filled(64, 1));
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final work = library.listWorks().single;
+      final fileId = library.playbackTracks(work.id).single.fileId;
+
+      // A position made on another device yesterday. Stamped with today's
+      // clock, every device would show a different order under "last watched".
+      final yesterday = DateTime.now().toUtc().subtract(
+        const Duration(days: 1),
+      );
+      library.saveMediaProgress(
+        workId: work.id,
+        fileId: fileId,
+        position: MediaPosition(
+          kind: MediaPositionKind.time,
+          numericValue: 120,
+          fileId: fileId,
+        ),
+        deviceId: 'handy',
+        updatedAt: yesterday,
+      );
+
+      expect(
+        library.listWorks().single.lastListenedAt!.difference(yesterday).abs(),
+        lessThan(const Duration(seconds: 2)),
+      );
+    },
+  );
+
+  test('a clock running ahead cannot pin a work to the top', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-clock-');
+    addTearDown(() => root.delete(recursive: true));
+    final folder = Directory('${root.path}/Filme/About Time')
+      ..createSync(recursive: true);
+    File('${folder.path}/About Time.mkv').writeAsBytesSync(List.filled(64, 1));
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+    final work = library.listWorks().single;
+    final fileId = library.playbackTracks(work.id).single.fileId;
+
+    library.saveMediaProgress(
+      workId: work.id,
+      fileId: fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.time,
+        numericValue: 120,
+        fileId: fileId,
+      ),
+      deviceId: 'handy',
+      updatedAt: DateTime.now().toUtc().add(const Duration(days: 400)),
+    );
+
+    expect(
+      library.listWorks().single.lastListenedAt!.isAfter(
+        DateTime.now().add(const Duration(minutes: 1)),
+      ),
+      isFalse,
+    );
+  });
+
   test('a single work carries the same cover path as the whole list', () async {
     final root = await Directory.systemTemp.createTemp('fundus-one-work-');
     addTearDown(() => root.delete(recursive: true));

@@ -216,6 +216,7 @@ final class FundusRemoteClient {
     required bool finished,
     required String deviceId,
     String? operationId,
+    DateTime? updatedAt,
   }) async {
     final decoded = await _put(
       '/v1/libraries/$libraryId/progress/$workId',
@@ -224,6 +225,10 @@ final class FundusRemoteClient {
         'position': position.toJson(),
         'finished': finished,
         'device_id': deviceId,
+        // Wann der Stand entstanden ist, nicht wann er ankam. Eine
+        // Gegenstelle, die das nicht kennt, ignoriert das Feld.
+        if (updatedAt != null)
+          'updated_at': updatedAt.toUtc().millisecondsSinceEpoch,
         // Die Gegenstelle verlangt einen Schlüssel je Schreibvorgang: derselbe
         // Stand zweimal gesendet soll einmal zählen, nicht zweimal in der
         // Historie stehen.

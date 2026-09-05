@@ -1233,6 +1233,18 @@ final class FundusServerHandler {
     final deviceId = decoded['device_id'] is String
         ? decoded['device_id'] as String
         : 'remote-peer';
+    // Wann der Stand entstanden ist. Eine Zahl, die vor dem Jahr 2000 oder in
+    // der Zukunft liegt, ist eine falsch gestellte Uhr und wird verworfen —
+    // der Katalog stempelt dann selbst.
+    final claimed = decoded['updated_at'];
+    final DateTime? updatedAt;
+    if (claimed is int &&
+        claimed > 946684800000 &&
+        claimed <= DateTime.now().millisecondsSinceEpoch + 60000) {
+      updatedAt = DateTime.fromMillisecondsSinceEpoch(claimed, isUtc: true);
+    } else {
+      updatedAt = null;
+    }
     final LibraryPlaybackProgress progress;
     if (encodedPosition is Map) {
       final MediaPosition mediaPosition;
@@ -1259,6 +1271,7 @@ final class FundusServerHandler {
         finished: decoded['finished'] == true,
         deviceId: deviceId,
         operationId: operationId,
+        updatedAt: updatedAt,
       );
     } else {
       final total = decoded['duration_seconds'];

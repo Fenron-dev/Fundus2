@@ -142,28 +142,132 @@ DateTime? _date(String? value) {
   );
 }
 
-/// Which local file an entry belongs to.
+/// One local file, as the matcher sees it.
+final class EpisodeFile {
+  const EpisodeFile({required this.fileId, required this.name});
+
+  final String fileId;
+
+  /// The file's name, extension and all.
+  final String name;
+}
+
+/// Which local file each feed entry belongs to.
 ///
-/// The file name from the enclosure first, because it survives everything
-/// else; then the title, compared without the punctuation and numbering that
-/// downloaders add and remove at will.
-String? matchEpisode(FeedEpisode episode, Map<String, String> filesByName) {
-  final fileName = episode.fileName;
-  if (fileName != null) {
-    final direct = filesByName[normaliseEpisodeName(fileName)];
-    if (direct != null) return direct;
+/// Nothing about this is exact. The feed calls an episode „Auf ein Bier 042 —
+/// Über Hefe", the file on disk is `AeB_042.mp3`, and neither knows about the
+/// other. So it is tried in order of how much a match would mean, a file is
+/// never given away twice, and what stays unmatched simply keeps no text:
+///
+/// 1. the file name the enclosure points at, which sometimes survives whole;
+/// 2. the title, letter for letter, once punctuation is gone;
+/// 3. one name contained in the other — a file named after the episode with
+///    the show's name in front of it, or the other way round;
+/// 4. the episode number, and only where it is unique on both sides. Two
+///    files claiming number 42 are worse than no answer.
+///
+/// Returns, per episode, the file id it belongs to.
+Map<int, String> matchEpisodes(
+  List<FeedEpisode> episodes,
+  List<EpisodeFile> files,
+) {
+  final matched = <int, String>{};
+  final taken = <String>{};
+
+  void assign(int episode, String fileId) {
+    if (matched.containsKey(episode) || taken.contains(fileId)) return;
+    matched[episode] = fileId;
+    taken.add(fileId);
   }
-  return filesByName[normaliseEpisodeName(episode.title)];
+
+  String? fileFor(bool Function(EpisodeFile file) test) {
+    EpisodeFile? found;
+    for (final file in files) {
+      if (taken.contains(file.fileId) || !test(file)) continue;
+      // Zwei Kandidaten sind keine Antwort.
+      if (found != null) return null;
+      found = file;
+    }
+    return found?.fileId;
+  }
+
+  for (var index = 0; index < episodes.length; index++) {
+    final wanted = episodes[index].fileName;
+    if (wanted == null) continue;
+    final needle = normaliseEpisodeName(wanted);
+    if (needle.isEmpty) continue;
+    final fileId = fileFor((file) => normaliseEpisodeName(file.name) == needle);
+    if (fileId != null) assign(index, fileId);
+  }
+
+  for (var index = 0; index < episodes.length; index++) {
+    final needle = normaliseEpisodeName(episodes[index].title);
+    if (needle.isEmpty) continue;
+    final fileId = fileFor((file) => normaliseEpisodeName(file.name) == needle);
+    if (fileId != null) assign(index, fileId);
+  }
+
+  for (var index = 0; index < episodes.length; index++) {
+    final needle = normaliseEpisodeName(episodes[index].title);
+    // Unter sechs Zeichen ist „enthalten" ein Zufall, keine Aussage.
+    if (needle.length < 6) continue;
+    final fileId = fileFor((file) {
+      final name = normaliseEpisodeName(file.name);
+      if (name.length < 6) return false;
+      return name.contains(needle) || needle.contains(name);
+    });
+    if (fileId != null) assign(index, fileId);
+  }
+
+  for (var index = 0; index < episodes.length; index++) {
+    final number = episodeNumberIn(episodes[index].title);
+    if (number == null) continue;
+    // Nur wenn die Nummer auch im Feed nur einmal vorkommt.
+    final twice = episodes.where((other) {
+      return episodeNumberIn(other.title) == number;
+    }).length;
+    if (twice != 1) continue;
+    final fileId = fileFor((file) => episodeNumberIn(file.name) == number);
+    if (fileId != null) assign(index, fileId);
+  }
+
+  return matched;
+}
+
+/// The episode number a name carries, if it carries one.
+///
+/// „SF 100", „AeB_042", „Folge 7" — the first run of digits that is not a
+/// year and not part of a longer number. A four-digit number between 1900 and
+/// 2100 is read as a year and skipped, because „Rückblick 1999" is not
+/// episode one thousand nine hundred and ninety-nine.
+int? episodeNumberIn(String value) {
+  final withoutExtension = value.replaceFirst(
+    RegExp(r'\.[a-z0-9]{2,4}$', caseSensitive: false),
+    '',
+  );
+  for (final match in RegExp(r'\d+').allMatches(withoutExtension)) {
+    final number = int.tryParse(match.group(0)!);
+    if (number == null || number == 0) continue;
+    if (match.group(0)!.length == 4 && number >= 1900 && number <= 2100) {
+      continue;
+    }
+    return number;
+  }
+  return null;
 }
 
 /// A name reduced to what two spellings of it have in common.
 String normaliseEpisodeName(String value) {
   final withoutExtension = value.replaceFirst(
-    RegExp(r'\.(mp3|m4a|aac|ogg|opus|flac|wav)$', caseSensitive: false),
+    RegExp(r'\.(mp3|m4a|m4b|aac|ogg|opus|flac|wav)$', caseSensitive: false),
     '',
   );
   return withoutExtension
       .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9äöüß]+'), '')
+      .replaceAll('ä', 'a')
+      .replaceAll('ö', 'o')
+      .replaceAll('ü', 'u')
+      .replaceAll('ß', 'ss')
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '')
       .trim();
 }
