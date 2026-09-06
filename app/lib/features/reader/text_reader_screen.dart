@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -29,6 +33,12 @@ class TextReaderScreen extends StatelessWidget {
           children: [
             if (reader.showsChrome) const _TextReaderBar(),
             const Expanded(child: _TextSurface()),
+            // Die Leiste unten ist der Daumenbereich, wie beim Manga-Leser:
+            // das Kapitel davor, wo man steht, das Kapitel danach. Am Fuß
+            // eines Kapitels steht dasselbe noch einmal — dort aber erst,
+            // wenn man unten angekommen ist.
+            if (reader.showsChrome && reader.chapters.length > 1)
+              const _TextChapterBar(),
           ],
         ),
       ),
@@ -130,17 +140,19 @@ class _TextReaderBar extends StatelessWidget {
             ),
             tooltip: 'Schrift und Satz',
           ),
-          IconButton(
-            onPressed: scope.toggleFullscreen,
-            icon: Icon(
-              FundusIcons.fullscreen,
-              size: FundusIcons.sizeLg,
-              color: ink,
+          // Kein Vollbild-Knopf mehr: der Leser geht ohnehin ins Vollbild,
+          // sobald die Leiste weg ist. An seiner Stelle das, was beim Lesen
+          // entsteht.
+          if (reader.highlights.isNotEmpty)
+            IconButton(
+              onPressed: () => _showHighlights(context),
+              icon: Icon(
+                FundusIcons.edit,
+                size: FundusIcons.sizeLg,
+                color: ink,
+              ),
+              tooltip: 'Markierungen',
             ),
-            tooltip: scope.fullscreen.isActive
-                ? 'Vollbild beenden'
-                : 'Vollbild',
-          ),
         ],
       ),
     );
@@ -402,8 +414,8 @@ class _TextSurfaceState extends State<_TextSurface> {
         }
         return KeyEventResult.ignored;
       },
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
+      child: _MenuGesture(
+        gesture: profile.menuGesture,
         onTap: reader.toggleChrome,
         child: Scrollbar(
           controller: _scroll,
@@ -723,6 +735,33 @@ Future<void> _showTextSettings(BuildContext context) {
                   ],
                 ),
                 const SizedBox(height: FundusSpace.x6),
+                Text(
+                  'Leiste öffnen mit',
+                  style: Theme.of(sheetContext).textTheme.labelSmall,
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                Wrap(
+                  spacing: FundusSpace.x2,
+                  runSpacing: FundusSpace.x2,
+                  children: [
+                    for (final gesture in ReaderMenuGesture.values)
+                      ChoiceChip(
+                        label: Text(gesture.label),
+                        selected: profile.menuGesture == gesture,
+                        onSelected: (_) =>
+                            update(profile.copyWith(menuGesture: gesture)),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                Text(
+                  'Ein einzelner Tipp trifft im Text meist ein Wort und '
+                  'markiert es. Zwei Finger meinen nie eine Textstelle.',
+                  style: Theme.of(sheetContext).textTheme.labelSmall?.copyWith(
+                    color: context.fundus.textFaint,
+                  ),
+                ),
+                const SizedBox(height: FundusSpace.x6),
                 _Measure(
                   label: 'Schriftgröße',
                   value: profile.fontSize,
@@ -851,4 +890,229 @@ Future<void> _showTextBookmarks(BuildContext context) {
       ),
     ),
   );
+}
+
+/// Was beim Lesen entstanden ist: die markierten Stellen.
+///
+/// Eine Markierung ohne Wiedersehen ist eine Notiz in einer Schublade. Hier
+/// stehen sie beisammen, führen zurück an ihre Stelle — und lassen sich als
+/// Textdatei mitnehmen, denn sie gehören dem, der sie gemacht hat, und nicht
+/// dieser Anwendung.
+Future<void> _showHighlights(BuildContext context) {
+  final reader = FundusScope.of(context).textReader;
+  return showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.all(FundusSpace.x6),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Markierungen',
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => unawaited(_exportHighlights(sheetContext)),
+                icon: Icon(FundusIcons.downloads, size: FundusIcons.sizeSm),
+                label: const Text('Sichern'),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x3),
+          for (final mark in reader.highlights)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(mark.quote),
+              subtitle: Text(
+                mark.note == null
+                    ? mark.mediaPosition.displayValue
+                    : '${mark.mediaPosition.displayValue} · ${mark.note}',
+              ),
+              trailing: IconButton(
+                onPressed: () {
+                  reader.deleteHighlight(mark.id);
+                  Navigator.of(sheetContext).pop();
+                },
+                icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
+                tooltip: 'Entfernen',
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Schreibt die Markierungen als Textdatei weg.
+Future<void> _exportHighlights(BuildContext context) async {
+  final reader = FundusScope.of(context).textReader;
+  final work = reader.work;
+  if (work == null || reader.highlights.isEmpty) return;
+  final lines = StringBuffer()
+    ..writeln('# ${work.title}')
+    ..writeln();
+  for (final mark in reader.highlights) {
+    lines
+      ..writeln('> ${mark.quote}')
+      ..writeln();
+    if (mark.note case final note? when note.isNotEmpty) {
+      lines
+        ..writeln(note)
+        ..writeln();
+    }
+    lines
+      ..writeln('— ${mark.mediaPosition.displayValue}')
+      ..writeln();
+  }
+  final safe = work.title.replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '').trim();
+  final target = await FilePicker.saveFile(
+    dialogTitle: 'Markierungen sichern',
+    fileName: '${safe.isEmpty ? 'Markierungen' : safe} — Markierungen.md',
+  );
+  if (target == null) return;
+  await File(target).writeAsString(lines.toString());
+  if (!context.mounted) return;
+  Navigator.of(context).pop();
+}
+
+/// Womit die Leiste kommt und geht.
+///
+/// Ein einfacher Tipp auf den Text geht unter: die Textauswahl greift zuerst,
+/// und dann steht ein Wort markiert da statt eines Menüs offen. Zwei Finger
+/// sind eindeutig — sie meinen nie eine Textstelle. Gehört wird über einen
+/// [Listener], nicht über eine Geste: der mischt sich nicht in den Streit um
+/// die Berührung ein, also bleibt das Markieren, wie es war.
+class _MenuGesture extends StatefulWidget {
+  const _MenuGesture({
+    required this.gesture,
+    required this.onTap,
+    required this.child,
+  });
+
+  final ReaderMenuGesture gesture;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_MenuGesture> createState() => _MenuGestureState();
+}
+
+class _MenuGestureState extends State<_MenuGesture> {
+  final _down = <int, Offset>{};
+  int _fingers = 0;
+  DateTime? _startedAt;
+  bool _moved = false;
+
+  /// Was noch als Tipp durchgeht: kurz genug und ohne zu wandern.
+  static const _window = Duration(milliseconds: 600);
+  static const _slop = 16.0;
+
+  void _reset() {
+    _fingers = 0;
+    _startedAt = null;
+    _moved = false;
+  }
+
+  void _onDown(PointerDownEvent event) {
+    if (_down.isEmpty) _reset();
+    _down[event.pointer] = event.position;
+    if (_down.length > _fingers) _fingers = _down.length;
+    _startedAt ??= DateTime.now();
+  }
+
+  void _onMove(PointerMoveEvent event) {
+    final start = _down[event.pointer];
+    if (start == null) return;
+    if ((event.position - start).distance > _slop) _moved = true;
+  }
+
+  void _onUp(PointerEvent event) {
+    _down.remove(event.pointer);
+    if (_down.isNotEmpty) return;
+    final started = _startedAt;
+    final short =
+        started != null && DateTime.now().difference(started) < _window;
+    if (short && !_moved && _fingers == 2) widget.onTap();
+    _reset();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.gesture == ReaderMenuGesture.tap) {
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: widget.onTap,
+        child: widget.child,
+      );
+    }
+    return Listener(
+      onPointerDown: _onDown,
+      onPointerMove: _onMove,
+      onPointerUp: _onUp,
+      onPointerCancel: _onUp,
+      child: widget.child,
+    );
+  }
+}
+
+/// Kapitel vor und zurück, im Daumenbereich.
+class _TextChapterBar extends StatelessWidget {
+  const _TextChapterBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = FundusScope.of(context).textReader;
+    final ink = _foreground(context, reader.profile.theme);
+    final first = reader.chapterIndex == 0 && reader.volumeIndex == 0;
+    final last =
+        reader.chapterIndex + 1 >= reader.chapters.length &&
+        reader.volumeIndex + 1 >= reader.volumes.length;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: FundusSpace.x4,
+          vertical: FundusSpace.x2,
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: first ? null : reader.previousChapter,
+              icon: Icon(
+                FundusIcons.back,
+                size: FundusIcons.sizeMd,
+                color: ink,
+              ),
+              tooltip: 'Vorheriges Kapitel',
+            ),
+            Expanded(
+              child: Text(
+                reader.positionLabel,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: ink.withValues(alpha: .7),
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: last ? null : reader.nextChapter,
+              icon: Icon(
+                FundusIcons.forward,
+                size: FundusIcons.sizeMd,
+                color: ink,
+              ),
+              tooltip: 'Nächstes Kapitel',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -186,6 +186,21 @@ enum ReflowFontFamily { system, serif, sansSerif, monospace }
 
 enum ReflowTheme { followApp, paper, sepia, night }
 
+/// Womit im Text die Leiste erscheint.
+///
+/// Ein einfacher Tipp geht im Text unter: die Auswahl greift zuerst, und
+/// dann steht ein Wort markiert da statt eines Menüs offen. Zwei Finger sind
+/// eindeutig — sie meinen nie eine Textstelle. Wer trotzdem lieber einmal
+/// tippt, stellt es um.
+enum ReaderMenuGesture {
+  tap('Ein Tipp'),
+  twoFingers('Tipp mit zwei Fingern');
+
+  const ReaderMenuGesture(this.label);
+
+  final String label;
+}
+
 /// How a text is set on the page.
 ///
 /// Kept apart from [PublicationReaderProfile] because a novel and a comic
@@ -198,6 +213,7 @@ final class ReflowReaderProfile {
     this.contentWidth = 760,
     this.paragraphSpacing = 18,
     this.theme = ReflowTheme.followApp,
+    this.menuGesture = ReaderMenuGesture.twoFingers,
   });
 
   static const schemaVersion = 1;
@@ -212,6 +228,9 @@ final class ReflowReaderProfile {
   final double paragraphSpacing;
   final ReflowTheme theme;
 
+  /// Womit die Leiste kommt und geht.
+  final ReaderMenuGesture menuGesture;
+
   ReflowReaderProfile copyWith({
     ReflowFontFamily? fontFamily,
     double? fontSize,
@@ -219,6 +238,7 @@ final class ReflowReaderProfile {
     double? contentWidth,
     double? paragraphSpacing,
     ReflowTheme? theme,
+    ReaderMenuGesture? menuGesture,
   }) => ReflowReaderProfile(
     fontFamily: fontFamily ?? this.fontFamily,
     fontSize: (fontSize ?? this.fontSize).clamp(12, 40),
@@ -226,6 +246,7 @@ final class ReflowReaderProfile {
     contentWidth: (contentWidth ?? this.contentWidth).clamp(320, 1400),
     paragraphSpacing: (paragraphSpacing ?? this.paragraphSpacing).clamp(0, 48),
     theme: theme ?? this.theme,
+    menuGesture: menuGesture ?? this.menuGesture,
   );
 
   Map<String, Object?> toJson() => {
@@ -236,6 +257,7 @@ final class ReflowReaderProfile {
     'content_width': contentWidth,
     'paragraph_spacing': paragraphSpacing,
     'theme': theme.name,
+    'menu_gesture': menuGesture.name,
   };
 
   factory ReflowReaderProfile.fromJson(Map<String, Object?> json) {
@@ -253,6 +275,9 @@ final class ReflowReaderProfile {
       paragraphSpacing: (json['paragraph_spacing'] as num?)?.toDouble(),
       theme: ReflowTheme.values
           .where((value) => value.name == json['theme'])
+          .firstOrNull,
+      menuGesture: ReaderMenuGesture.values
+          .where((value) => value.name == json['menu_gesture'])
           .firstOrNull,
     );
   }
