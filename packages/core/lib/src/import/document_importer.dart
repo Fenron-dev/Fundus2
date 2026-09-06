@@ -47,13 +47,21 @@ final class DocumentImportCandidate {
     return matching.isEmpty ? files : matching;
   }
 
+  // Die Schlüssel sind die Arten, unter denen ein Werk wirklich abgelegt
+  // wird. „ebook" stand hier, angelegt wird aber „book" — dadurch behielt
+  // jedes Buch sein Coverbild als Inhaltsdatei, und im Reiter „Dateien"
+  // stand neben dem EPUB ein JPG.
   static const _contentExtensions = <String, Set<String>>{
     'movie': _videoExtensions,
     'tv': _videoExtensions,
     'anime': _videoExtensions,
+    'book': _publicationExtensions,
     'ebook': _publicationExtensions,
     'webnovel': _publicationExtensions,
+    'light_novel': _publicationExtensions,
+    'novel': _publicationExtensions,
     'manga': _comicExtensions,
+    'comic': _comicExtensions,
   };
 
   static const _videoExtensions = {

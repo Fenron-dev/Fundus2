@@ -1273,8 +1273,10 @@ final class FundusDatabase {
              ${columnExists('files', 'video_episode_json') ? 'f.video_episode_json' : 'NULL'} AS video_episode_json
       FROM work_files wf
       JOIN files f ON f.id = wf.file_id
+      JOIN works w ON w.id = wf.work_id
       WHERE wf.work_id = ? AND wf.role = 'content' AND f.status = 'available'
         AND substr(f.filename, 1, 2) <> '._'
+        AND $_notTheCover
       ORDER BY wf.position, f.filename COLLATE NOCASE
       ''',
       [workId],
@@ -3041,6 +3043,28 @@ final class FundusDatabase {
     }
   }
 
+  /// Die Bedingung, die das Cover aus dem Inhalt heraushält.
+  ///
+  /// Ein Ordner mit einem Band und seinem Bild ist ein Werk mit einer Datei,
+  /// nicht mit zweien — das Bild ist, wie das Werk aussieht, nicht was es
+  /// ist. Neben dem EPUB stand deshalb ein JPG.
+  ///
+  /// Drei Ausnahmen. Eine Galerie besteht aus Bildern, dort *ist* das Cover
+  /// eine Seite. Ein Rollenspielprodukt besteht wirklich aus seinen Karten
+  /// und Handouts, und wo alles dazugehört, gehört auch das Titelbild dazu.
+  /// Und ein Werk, das nur aus seinem Bild besteht, behält es: nichts
+  /// anzuzeigen wäre schlechter als das Falsche.
+  static const _keepsEveryFile =
+      "('image', 'photo', 'ttrpg_product', 'document', 'archive')";
+
+  static const _notTheCover =
+      """
+      (w.kind IN $_keepsEveryFile
+       OR f.id <> COALESCE(w.cover_file_id, '')
+       OR (SELECT COUNT(*) FROM work_files x
+           WHERE x.work_id = wf.work_id AND x.role = 'content') = 1)
+      """;
+
   /// Every content file of a work, with where its bytes are.
   List<
     ({String fileId, String filename, String? offlinePath, String availability})
@@ -3049,7 +3073,9 @@ final class FundusDatabase {
       .select(
         'SELECT f.id, f.filename, f.offline_path, f.availability '
         'FROM work_files wf JOIN files f ON f.id = wf.file_id '
+        'JOIN works w ON w.id = wf.work_id '
         "WHERE wf.work_id = ? AND wf.role = 'content' "
+        'AND $_notTheCover '
         'ORDER BY wf.position',
         [workId],
       )

@@ -12,6 +12,7 @@ import '../../data/download_controller.dart';
 import '../../media/playback_controller.dart' show formatPlaybackTime;
 import '../../media/reader_controller.dart';
 import '../../data/media_type.dart';
+import '../../data/work_filter.dart';
 import '../../data/work_view.dart';
 import '../../metadata/metadata_apply.dart';
 import '../downloads/downloads_screen.dart' show formatBytes;
@@ -397,13 +398,21 @@ class _Facts extends StatelessWidget {
             ),
           ),
         ],
-        if (summary.tags.isNotEmpty) ...[
+        // Genres und Schlagwörter stehen hier zusammen, weil sie hier
+        // dasselbe sind: eine Frage danach, was es sonst noch damit gibt.
+        if (WorkFilter.labelsOf(work).isNotEmpty) ...[
           const SizedBox(height: FundusSpace.x4),
           Wrap(
             spacing: FundusSpace.x2,
             runSpacing: FundusSpace.x2,
             alignment: centred ? WrapAlignment.center : WrapAlignment.start,
-            children: [for (final tag in summary.tags.take(5)) FundusTag(tag)],
+            children: [
+              for (final label in WorkFilter.labelsOf(work).take(5))
+                FundusTag(
+                  label,
+                  onTap: () => FundusScope.of(context).showLabel(label),
+                ),
+            ],
           ),
         ],
         // Auf dem Handy nur, wenn es etwas zu zeigen gibt: dort zählt jede
@@ -881,7 +890,7 @@ class _Properties extends StatelessWidget {
         Text('ANGABEN', style: theme.textTheme.labelSmall),
         const SizedBox(height: FundusSpace.x3),
         for (final entry in entries) _KeyValueRow(entry.$1, entry.$2),
-        if (summary.tags.isNotEmpty) ...[
+        if (WorkFilter.labelsOf(work).isNotEmpty) ...[
           const SizedBox(height: FundusSpace.x6),
           Text(
             'SCHLAGWORTE',
@@ -893,7 +902,13 @@ class _Properties extends StatelessWidget {
           Wrap(
             spacing: FundusSpace.x2,
             runSpacing: FundusSpace.x2,
-            children: [for (final tag in summary.tags) FundusTag(tag)],
+            children: [
+              for (final label in WorkFilter.labelsOf(work))
+                FundusTag(
+                  label,
+                  onTap: () => FundusScope.of(context).showLabel(label),
+                ),
+            ],
           ),
         ],
       ],

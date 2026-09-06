@@ -423,6 +423,20 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
   }
 
+  /// Zeigt alles, was dieses Schlagwort trägt.
+  ///
+  /// „Leisure" auf einer Werkseite ist keine Beschriftung, sondern eine
+  /// Frage: was habe ich noch damit? Über alle Bibliotheken hinweg, denn ein
+  /// Schlagwort steht am Werk und nicht am Regal — wer „Video Games" antippt,
+  /// meint Podcasts, Bücher und Filme gleichermaßen.
+  void showLabel(String label) {
+    _bump(() {
+      _activeViews = const {};
+      _filter = WorkFilter(tags: {label}, sort: _filter.sort);
+    });
+    navigation.go(const LibraryRoute());
+  }
+
   /// Opens a saved view: the filter it stored, and the library showing it.
   void applySavedView(LibrarySavedView view) {
     _bump(() {
