@@ -7,6 +7,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/download_controller.dart';
 import '../../media/playback_controller.dart' show formatPlaybackTime;
@@ -17,6 +18,8 @@ import '../../data/work_view.dart';
 import '../../metadata/metadata_apply.dart';
 import '../downloads/downloads_screen.dart' show formatBytes;
 import '../library/work_poster.dart';
+import '../people/person_credits.dart';
+import '../people/person_screen.dart';
 import '../lists/add_to_list.dart';
 import 'download_choice_sheet.dart';
 import 'metadata_dialog.dart';
@@ -1650,11 +1653,8 @@ class _People extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final people = <(String, String)>[
-      for (final author in work.summary.authors) (author, 'Urheber'),
-      for (final narrator in work.summary.narrators) (narrator, 'Sprecher'),
-    ];
-    if (people.isEmpty) {
+    final credits = creditsOf(work);
+    if (credits.isEmpty) {
       return const FundusEmptyState(
         title: 'Keine Personen erfasst',
         reason:
@@ -1662,16 +1662,81 @@ class _People extends StatelessWidget {
             'Angaben bleiben bei späteren Scans geschützt.',
       );
     }
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    // Nach Rolle gruppiert, wie im Entwurf: erst wer es gemacht hat, dann wer
+    // es gelesen hat.
+    final byRole = <CreditRole, List<String>>{};
+    for (final credit in credits) {
+      final names = byRole.putIfAbsent(credit.role, () => []);
+      if (!names.contains(credit.name)) names.add(credit.name);
+    }
+
     return ListView(
       padding: _contentPadding(context),
       children: [
-        for (final person in people)
-          ListTile(
-            leading: Icon(FundusIcons.person, size: FundusIcons.sizeLg),
-            title: Text(person.$1),
-            subtitle: Text(person.$2),
+        for (final entry in byRole.entries) ...[
+          Text(
+            entry.key.label.toUpperCase(),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: tokens.textFaint,
+              letterSpacing: 1.2,
+            ),
           ),
+          const SizedBox(height: FundusSpace.x3),
+          Wrap(
+            spacing: FundusSpace.x4,
+            runSpacing: FundusSpace.x4,
+            children: [
+              for (final name in entry.value)
+                _PersonTile(name: name, role: entry.key.label),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x8),
+        ],
       ],
+    );
+  }
+}
+
+/// Eine Person als Kachel: Bild, Name, Rolle — und ein Weg zu ihr.
+class _PersonTile extends StatelessWidget {
+  const _PersonTile({required this.name, required this.role});
+
+  final String name;
+  final String role;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    return SizedBox(
+      width: 132,
+      child: InkWell(
+        borderRadius: FundusRadius.mdAll,
+        onTap: () => FundusScope.of(context).navigation.go(PersonRoute(name)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            PersonAvatar(name: name, size: 132),
+            const SizedBox(height: FundusSpace.x2),
+            Text(
+              name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium,
+            ),
+            Text(
+              role,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: tokens.textFaint,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

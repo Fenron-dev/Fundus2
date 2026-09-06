@@ -88,6 +88,18 @@ final class ListRoute extends FundusRoute {
   final String playlistId;
 }
 
+/// Eine Person, und alles von ihr.
+///
+/// Der Name ist die Kennung: Fundus führt keine Personentabelle, es kennt
+/// Namen an Werken. Zwei Menschen gleichen Namens fielen damit zusammen —
+/// das ist der Preis dafür, dass ein Name aus einer Datei sofort etwas wert
+/// ist, statt erst zugeordnet werden zu müssen.
+final class PersonRoute extends FundusRoute {
+  const PersonRoute(this.name);
+
+  final String name;
+}
+
 /// The navigation history, with the back and forward arrows the header shows.
 class AppNavigation extends ChangeNotifier {
   AppNavigation({FundusRoute initial = const VaultRoute()})

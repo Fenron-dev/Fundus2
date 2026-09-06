@@ -12,6 +12,7 @@ import '../../features/player/player_screen.dart';
 import '../../features/reader/reader_screen.dart';
 import '../../features/photos/photo_screen.dart';
 import '../../features/reader/text_reader_screen.dart';
+import '../../features/people/person_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/vault/vault_screen.dart';
 import '../../features/work/work_screen.dart';
@@ -276,6 +277,7 @@ class ShellContent extends StatelessWidget {
       DownloadsRoute() => const DownloadsScreen(),
       ListsRoute() => const ListsScreen(),
       ListRoute(:final playlistId) => ListScreen(playlistId: playlistId),
+      PersonRoute(:final name) => PersonScreen(name: name),
       SearchRoute() => const SearchScreen(),
     };
   }
