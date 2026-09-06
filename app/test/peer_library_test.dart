@@ -31,6 +31,10 @@ void main() {
   late AppSettings settings;
   late PeerLibraries peers;
 
+  /// Was der Server gefragt wurde — „wie oft" ist hier die eigentliche
+  /// Prüfung.
+  late List<String> requests;
+
   setUp(() async {
     temporary = await Directory.systemTemp.createTemp('fundus-peer-');
 
@@ -55,12 +59,15 @@ void main() {
     await for (final _ in theirs.index()) {}
 
     registry = FundusLibraryRegistry()..register(theirs, name: 'Hörbücher');
+    requests = [];
     socket = await shelf_io.serve(
       FundusServerHandler(
         token: 'geheim',
         serverId: 'server-test',
         serverName: 'Mac',
         registry: registry,
+        requestObserver: (event) =>
+            requests.add('${event.method} ${event.resource}'),
       ).handler,
       'localhost',
       0,
@@ -271,6 +278,71 @@ void main() {
       closeTo(31 * 60, 0.001),
     );
   });
+
+  test('ein Auffrischen ohne Neues kostet eine einzige Frage', () async {
+    // Der Fall aus dem Protokoll: acht Anfragen pro Sekunde über Minuten.
+    // Der Grund war, dass jeder Lauf alles holte *und* zurückschob — und
+    // jedes Zurückschieben drüben einen neuen Zeitstempel setzte.
+    await peers.connect(peer());
+    final workId = _audiobook(library).id;
+    final fileId = theirs.playbackTracks(workId).single.fileId;
+    theirs.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 12),
+      deviceId: 'mac',
+    );
+    final sync = SyncController(settings: settings, library: library);
+    addTearDown(sync.dispose);
+
+    expect(await sync.pullRecent(), contains(workId));
+    final afterFirst = requests.length;
+
+    // Zweite Runde: nichts hat sich bewegt.
+    expect(await sync.pullRecent(), isEmpty);
+    final second = requests.skip(afterFirst).toList();
+
+    // Genau eine Frage — „was hat sich geändert?" —, und keine einzige
+    // Notiz- oder Schreibanfrage.
+    expect(second, ['GET progress']);
+    expect(requests.where((entry) => entry.contains('annotations')), isEmpty);
+    expect(requests.where((entry) => entry.startsWith('PUT')), isEmpty);
+  });
+
+  test(
+    'was hier weiter ist, wird nicht überschrieben, sondern gefragt',
+    () async {
+      await peers.connect(peer());
+      final workId = _audiobook(library).id;
+      final fileId = theirs.playbackTracks(workId).single.fileId;
+      // Drüben neuer, hier weiter: das ist der einzige Fall, den niemand
+      // entscheiden kann, ohne zu fragen.
+      library.library!.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 40),
+        deviceId: 'handy',
+      );
+      theirs.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 5),
+        deviceId: 'mac',
+      );
+      final sync = SyncController(settings: settings, library: library);
+      addTearDown(sync.dispose);
+
+      await sync.pullRecent();
+
+      // Der eigene Stand bleibt stehen …
+      expect(
+        library.library!.loadProgress(workId)!.position.numericValue,
+        closeTo(40 * 60, 1),
+      );
+      // … und die Frage liegt für das nächste Öffnen bereit.
+      expect(library.library!.progressChoice(workId), isNotNull);
+    },
+  );
 
   test('der Zeitpunkt eines Standes überlebt die Reise', () async {
     await peers.connect(peer());

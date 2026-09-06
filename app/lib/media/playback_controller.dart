@@ -310,6 +310,10 @@ class PlaybackController extends ChangeNotifier {
     String? startAt,
     Duration? at,
   }) async {
+    // Ein neues Werk beginnt damit, dass das alte aufhört. Ohne das lief bei
+    // einer unerreichbaren Datei die vorige Datei einfach weiter — mit dem
+    // Namen und dem Bild der neuen darüber.
+    await _stopWhatIsPlaying();
     _failure = null;
     _library = library;
     _work = work;
@@ -376,7 +380,9 @@ class PlaybackController extends ChangeNotifier {
                       .round(),
                 ));
       await _openCurrent(at: resumeAt);
-      if (autoplay) await _engine.play();
+      // Nur spielen, wenn wirklich etwas geöffnet wurde: sonst hat mpv noch
+      // die vorige Datei geladen und „abspielen" hieße, sie fortzusetzen.
+      if (autoplay && _failure == null) await _engine.play();
       span.done();
     } on Object catch (error) {
       span.failed(error);
@@ -399,6 +405,7 @@ class PlaybackController extends ChangeNotifier {
     int startIndex = 0,
     bool autoplay = true,
   }) async {
+    await _stopWhatIsPlaying();
     _failure = null;
     _library = library;
     _queueName = name;
@@ -433,13 +440,31 @@ class PlaybackController extends ChangeNotifier {
       _buildOrder();
       _attachStreams();
       await _openCurrent(at: _startOf(_index));
-      if (autoplay) await _engine.play();
+      if (autoplay && _failure == null) await _engine.play();
       span.done();
     } on Object catch (error) {
       span.failed(error);
       _failure = error.toString();
     }
     notifyListeners();
+  }
+
+  /// Hält an, was gerade läuft, und schreibt dessen Stand weg.
+  ///
+  /// Vor jedem Öffnen: erst danach gehören Titel, Bild und Stand dem neuen
+  /// Werk. Die Reihenfolge ist der Punkt — den Stand des alten Werks unter
+  /// dem neuen Namen zu speichern wäre schlimmer als ihn zu verlieren.
+  Future<void> _stopWhatIsPlaying() async {
+    if (_work == null && _sources.isEmpty) return;
+    saveProgress();
+    _saveTimer?.cancel();
+    _clearBetweenEpisodes();
+    await _engineOrNull?.stop();
+    _playing = false;
+    _position = Duration.zero;
+    _duration = null;
+    _trackChapters = const [];
+    _tracks = const MediaTracks();
   }
 
   /// Wo eine Zeile anfängt.
@@ -500,7 +525,10 @@ class PlaybackController extends ChangeNotifier {
     }
     if (!reachable) {
       // A file that is gone is a state, not a crash: the work keeps its
-      // progress and the origin mark tells the story.
+      // progress and the origin mark tells the story. Angehalten wird
+      // trotzdem — sonst liefe die vorige Datei unter neuem Namen weiter.
+      await _engineOrNull?.stop();
+      _playing = false;
       _failure = 'Die Datei „${source.title}" ist nicht erreichbar.';
       notifyListeners();
       return;

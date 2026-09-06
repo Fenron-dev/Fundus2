@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart' hide RepeatMode;
@@ -515,11 +516,7 @@ class _Controls extends StatelessWidget {
               onPressed: player.skipForward,
               child: Text('+${player.habits.skipForward.inSeconds} s'),
             ),
-            if (!minimal)
-              OutlinedButton(
-                onPressed: player.cycleRate,
-                child: Text('${player.rate}×'),
-              ),
+            if (!minimal) const PlaybackRateButton(),
             if (!minimal && player.hasQueueControls) ...[
               IconButton(
                 onPressed: () => player.setShuffle(!player.isShuffling),
@@ -555,6 +552,58 @@ class _Controls extends StatelessWidget {
 /// starts folded away. A list of episodes across the bottom of the phone is
 /// in the way of the thing somebody opened — it is offered by name, and
 /// unfolds when it is wanted, the way chapters do in the reader.
+/// Die Abspielgeschwindigkeit, zum Auswählen.
+///
+/// Vorher klickte ein Knopf sich durch neun Stufen und fing dann wieder von
+/// vorn an — wer von 1× auf 1,5× wollte, tippte viermal und lief einmal
+/// durch das ganze Feld, wenn er sich vertippte. Ein Menü zeigt, was es
+/// gibt, und was gerade gilt.
+class PlaybackRateButton extends StatelessWidget {
+  const PlaybackRateButton({super.key, this.compact = false});
+
+  /// In der Randleiste ist Platz für eine Zahl, nicht für einen Knopf.
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = FundusScope.of(context).player;
+    final tokens = context.fundus;
+    final label = '${formatPlaybackRate(player.rate)}×';
+
+    return MenuAnchor(
+      menuChildren: [
+        for (final rate in PlaybackPreference.rates)
+          MenuItemButton(
+            onPressed: () => unawaited(player.setRate(rate)),
+            leadingIcon: Icon(
+              rate == player.rate
+                  ? FundusIcons.finished
+                  : FundusIcons.unfinished,
+              size: FundusIcons.sizeSm,
+              color: rate == player.rate ? tokens.accent : tokens.textFaint,
+            ),
+            child: Text('${formatPlaybackRate(rate)}×'),
+          ),
+      ],
+      builder: (context, controller, _) => compact
+          ? TextButton(
+              onPressed: controller.isOpen ? controller.close : controller.open,
+              child: Text(label),
+            )
+          : OutlinedButton(
+              onPressed: controller.isOpen ? controller.close : controller.open,
+              child: Text(label),
+            ),
+    );
+  }
+}
+
+/// „1,5" statt „1.5", und „1" statt „1.0".
+String formatPlaybackRate(double value) {
+  final rounded = value.round();
+  return value == rounded ? '$rounded' : '$value'.replaceAll('.', ',');
+}
+
 class _ContextPanel extends StatefulWidget {
   const _ContextPanel({this.shrinkWrap = false});
 

@@ -122,16 +122,21 @@ final class RemoteFileSource implements MediaByteSource {
 
   @override
   Future<bool> isReachable() async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
     try {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 4);
-      final request = await client.openUrl('HEAD', uri);
-      final response = await request.close();
+      // Eine Frist für die ganze Frage, nicht nur für das Verbinden: eine
+      // Gegenstelle, die die Verbindung annimmt und dann schweigt, hat die
+      // App sonst festgehalten, bis jemand sie abgeschossen hat.
+      final response = await () async {
+        final request = await client.openUrl('HEAD', uri);
+        return request.close();
+      }().timeout(const Duration(seconds: 6));
       await response.drain<void>();
-      client.close(force: true);
       return response.statusCode < 400;
     } on Object {
       return false;
+    } finally {
+      client.close(force: true);
     }
   }
 

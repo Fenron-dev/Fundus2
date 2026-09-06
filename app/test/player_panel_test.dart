@@ -83,6 +83,34 @@ void main() {
     expect(find.textContaining('S01E01'), findsWidgets);
   });
 
+  testWidgets('die Geschwindigkeit wird ausgewählt, nicht durchgeklickt', (
+    tester,
+  ) async {
+    final show = Directory('${root.path}/Hörbücher/Karl May/Der Schacht')
+      ..createSync(recursive: true);
+    File('${show.path}/01.mp3').writeAsBytesSync(List.filled(64, 3));
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+    });
+    await pumpPlayer(tester);
+
+    expect(find.text('1×'), findsOneWidget);
+    await tester.tap(find.text('1×'));
+    await tester.pumpAndSettle();
+
+    // Das Menü zeigt, was es gibt — und ein Tipp wählt genau das.
+    expect(find.text('1,5×'), findsOneWidget);
+    await tester.tap(find.text('1,5×'));
+    await tester.pumpAndSettle();
+
+    expect(player.rate, 1.5);
+    expect(engine.rate, 1.5);
+    expect(find.text('1,5×'), findsOneWidget);
+  });
+
   testWidgets('zweisprachiger Ton ist wählbar', (tester) async {
     final series = Directory('${root.path}/Anime/Chainsaw Man')
       ..createSync(recursive: true);

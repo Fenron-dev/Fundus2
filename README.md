@@ -111,3 +111,13 @@ Unter *Settings → Secrets and variables → Actions* anlegen:
 Die erste APK mit dem neuen Schlüssel muss noch einmal von Hand installiert
 werden (die alte deinstallieren); ab dann geht jedes Update in place, und die
 Kopplung bleibt.
+
+Dasselbe gilt für die heruntergeladenen Medien. Sie liegen im App-Speicher
+des Geräts — dort, wo auch die Kopplung liegt —, und Android räumt diesen
+Ordner beim Deinstallieren restlos ab. Solange jede Vorschau neu signiert
+wird, ist jede Installation eine Deinstallation, und die Offline-Kopien sind
+danach weg. Mit hinterlegtem Schlüssel ist ein Update ein Update: Kopplung
+und Offline-Kopien bleiben. Einen Ort, der eine Deinstallation überlebt, gibt
+es unter Android nur außerhalb des App-Speichers — in den geteilten
+Dokumenten, wo die Dateien für jede andere App sichtbar wären; das wäre für
+eine Mediathek der falsche Tausch.

@@ -4,6 +4,7 @@ import 'package:fundus_design/fundus_design.dart';
 import '../../app/fundus_scope.dart';
 import '../../media/playback_controller.dart';
 import '../library/work_poster.dart';
+import 'player_screen.dart' show PlaybackRateButton;
 
 /// The player strip below the content column.
 ///
@@ -108,10 +109,7 @@ class PlayerBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: FundusSpace.x2),
-          TextButton(
-            onPressed: player.cycleRate,
-            child: Text('${player.rate}×'),
-          ),
+          const PlaybackRateButton(compact: true),
           IconButton(
             onPressed: player.expand,
             icon: Icon(FundusIcons.expand, size: FundusIcons.sizeMd),

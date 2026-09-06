@@ -302,6 +302,22 @@ class SyncController extends ChangeNotifier {
   ///
   /// Gibt die Werke zurück, die sich geändert haben — die Oberfläche frischt
   /// genau diese Zeilen auf, statt die ganze Bibliothek neu zu lesen.
+  /// Wie viele Werke ein Auffrischen höchstens anfasst.
+  ///
+  /// Der Rest kommt in der nächsten Runde. Eine Bibliothek mit hunderten
+  /// angefangenen Werken darf beim ersten Blick nicht hunderte Anfragen
+  /// auslösen — genau das hat den Server zugeschüttet.
+  static const catchUpBatch = 25;
+
+  /// Holt nur, was sich drüben bewegt hat.
+  ///
+  /// Ausdrücklich nur *holen*: kein Zurückschieben, keine Notizen. Der
+  /// vollständige Abgleich schiebt auch — und weil jedes Schieben drüben
+  /// einen neuen Zeitstempel setzt, fand die nächste Runde dieselben Werke
+  /// wieder als „geändert" vor. Das war die Endlosschleife im Protokoll.
+  ///
+  /// Gibt die Werke zurück, die sich geändert haben — die Oberfläche frischt
+  /// genau diese Zeilen auf, statt die ganze Bibliothek neu zu lesen.
   Future<Set<String>> pullRecent() async {
     final vault = library.library;
     if (vault == null || peers.isEmpty || _busy) return const {};
@@ -311,32 +327,30 @@ class SyncController extends ChangeNotifier {
       try {
         final libraryId = await _libraryIdFor(peer, client, vault);
         if (libraryId == null) continue;
-        final since = _lastPull[peer.serverId];
         final changed = await client.progressChangedSince(
           libraryId,
-          since: since,
+          since: _lastPull[peer.serverId],
         );
-        // Der Zeitpunkt kommt von drüben: die Uhren zweier Geräte gehen
-        // verschieden, und ein „seit jetzt" nach der eigenen Uhr würde
-        // Stände überspringen.
-        final newest = changed.isEmpty
-            ? since
-            : changed
-                  .map((entry) => entry.updatedAt)
-                  .reduce((a, b) => a.isAfter(b) ? a : b);
         if (changed.isEmpty) continue;
-        final ids = [for (final entry in changed) entry.workId];
-        final report = await FundusSync(
-          library: vault,
-          client: client,
-          libraryId: libraryId,
-          deviceId: settings.deviceKey,
-          peerName: peer.name,
-          baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
-        ).run(workIds: ids);
-        await _record(vault, peer, report);
-        if (newest != null) _lastPull[peer.serverId] = newest;
-        touched.addAll(ids);
+        // Von hinten nach vorn: die ältesten zuerst, damit der Merkzeitpunkt
+        // lückenlos weiterwandert, wenn eine Runde nicht alles schafft.
+        final queue = changed.toList()
+          ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+        var done = 0;
+        for (final entry in queue) {
+          if (done >= catchUpBatch) break;
+          _lastPull[peer.serverId] = entry.updatedAt;
+          done++;
+          final mine = vault.loadProgress(entry.workId);
+          // Was hier schon genauso alt oder neuer ist, muss nicht geholt
+          // werden — das spart die Anfrage, nicht nur das Schreiben.
+          if (mine != null && !entry.updatedAt.isAfter(mine.updatedAt)) {
+            continue;
+          }
+          final theirs = await client.progress(libraryId, entry.workId);
+          if (theirs == null) continue;
+          if (_carryOver(vault, peer, mine, theirs)) touched.add(entry.workId);
+        }
       } on Object {
         // Ein Gerät, das gerade schläft, ist keine Meldung wert — dies läuft
         // im Hintergrund, und der Knopf sagt es richtig, wenn jemand fragt.
@@ -348,8 +362,52 @@ class SyncController extends ChangeNotifier {
     return touched;
   }
 
+  /// Schreibt einen Stand von drüben hierher — oder legt ihn als Frage ab.
+  ///
+  /// Weiter *und* älter ist der einzige Fall, der nicht zu entscheiden ist:
+  /// hier steht die weitere Stelle, drüben die neuere. Dann wird nichts
+  /// überschrieben, sondern beim nächsten Öffnen gefragt.
+  bool _carryOver(
+    FundusLibrary vault,
+    PeerConnection peer,
+    LibraryPlaybackProgress? mine,
+    RemoteProgress theirs,
+  ) {
+    if (vault.isReadOnly) return false;
+    final order = [
+      for (final track in vault.playbackTracks(theirs.workId)) track.fileId,
+    ];
+    final furtherHere =
+        mine != null &&
+        comparePositions(mine.position, theirs.position, fileOrder: order) > 0;
+    if (furtherHere) {
+      vault.recordProgressChoice(
+        LibraryProgressChoice(
+          workId: theirs.workId,
+          position: theirs.position,
+          fileId: theirs.fileId,
+          finished: theirs.finished,
+          deviceId: theirs.deviceId,
+          deviceName: peer.name,
+          updatedAt: theirs.updatedAt,
+          recordedAt: DateTime.now().toUtc(),
+        ),
+      );
+      return false;
+    }
+    vault.saveMediaProgress(
+      workId: theirs.workId,
+      fileId: theirs.fileId ?? theirs.position.fileId ?? '',
+      position: theirs.position,
+      finished: theirs.finished,
+      deviceId: settings.deviceKey,
+      updatedAt: theirs.updatedAt,
+    );
+    return true;
+  }
+
   /// Bis wann von jeder Gegenstelle schon geholt wurde. Nur für diese
-  /// Sitzung: beim Start einmal alles zu holen ist billiger, als sich zu
+  /// Sitzung: beim Start einmal alles zu prüfen ist billiger, als sich zu
   /// merken, was man verpasst haben könnte.
   final Map<String, DateTime> _lastPull = {};
 
