@@ -60,6 +60,7 @@ final class MetadataApplyResult {
     this.backdropFetched = false,
     this.episodesDescribed = 0,
     this.feedRead = false,
+    this.peopleFound = 0,
   });
 
   final String workId;
@@ -77,6 +78,9 @@ final class MetadataApplyResult {
   /// Whether there was a feed to read at all. Without it, „keine Folge
   /// zugeordnet" would be a complaint about something nobody attempted.
   final bool feedRead;
+
+  /// Wie viele Beteiligte der Abgleich mitgebracht hat.
+  final int peopleFound;
 }
 
 /// Writes a chosen match onto a work.
@@ -195,6 +199,32 @@ Future<MetadataApplyResult> applyMetadata({
     }
   }
 
+  // Wer daran beteiligt war, mit Gesicht.
+  //
+  // Die Bilder werden geholt und in der Bibliothek abgelegt wie ein Cover:
+  // ein Gesicht gehört zum Bestand, und ein Ordner, den man auf ein anderes
+  // Gerät trägt, nimmt ihn mit. Ein Bild, das nicht kommt, kostet die
+  // Besetzung nicht — dann steht dort ein Platzhalter.
+  final people = <({String name, String role, String? imagePath})>[];
+  if (candidate.credits.isNotEmpty && !library.isReadOnly) {
+    for (final person in candidate.credits) {
+      var path = library.personImage(person.name);
+      final url = person.imageUrl;
+      if (fetchCover && path == null && url != null) {
+        final bytes = await fetchCoverBytes(url, client: client);
+        if (bytes != null) {
+          path = await library.cachePersonImage(
+            name: person.name,
+            bytes: bytes,
+            extension: url.toLowerCase().endsWith('.png') ? 'png' : 'jpg',
+          );
+        }
+      }
+      people.add((name: person.name, role: person.role, imagePath: path));
+    }
+    library.replaceWorkPeople(work.id, people);
+  }
+
   // Ein Podcast bringt die Adresse seines Feeds mit, und nur dort steht,
   // worum es in einer Folge geht. Ein Feed, der nicht antwortet, kostet die
   // Texte — nie den Abgleich.
@@ -218,6 +248,7 @@ Future<MetadataApplyResult> applyMetadata({
     backdropFetched: wide,
     episodesDescribed: described,
     feedRead: feedUrl != null,
+    peopleFound: people.length,
   );
 }
 

@@ -56,6 +56,31 @@ void main() {
     await root.delete(recursive: true);
   });
 
+  test('eine gespeicherte Besetzung gewinnt über die Namen aus der Datei', () {
+    final vault = library.library!;
+    final schacht = library.works.firstWhere(
+      (work) => work.title == 'Der Schacht',
+    );
+    vault.replaceWorkPeople(schacht.id, [
+      (name: 'Marit Sölden', role: 'Regie', imagePath: null),
+      (name: 'Tobias Rehm', role: 'Sprecher · Kju', imagePath: 'bild.jpg'),
+    ]);
+
+    final credits = creditsOf(schacht, library: vault);
+
+    expect(credits.map((person) => person.name), [
+      'Marit Sölden',
+      'Tobias Rehm',
+    ]);
+    expect(credits.first.roleLabel, 'Regie');
+    expect(credits.last.imagePath, 'bild.jpg');
+    // Und über die Rolle findet man sie wieder.
+    expect(
+      worksOfPerson('Marit Sölden', library.works, library: vault).single.roles,
+      {'Regie'},
+    );
+  });
+
   test('die Werke einer Person kommen aus dem ganzen Katalog', () {
     final found = worksOfPerson('Karl May', library.works);
 
@@ -63,7 +88,7 @@ void main() {
       'Der Schacht',
       'Die Tiefe',
     ]);
-    expect(found.first.roles, contains(CreditRole.author));
+    expect(found.first.roles, contains(CreditRole.author.label));
     // Und Groß- und Kleinschreibung entscheidet nicht über Menschen.
     expect(worksOfPerson('karl may', library.works), hasLength(2));
   });

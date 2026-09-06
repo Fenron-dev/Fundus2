@@ -1,3 +1,35 @@
+/// Ein Mensch, der an einem Werk beteiligt ist.
+///
+/// Rolle heißt hier, was diese Person getan hat — „Regie", „Sprecher",
+/// „Hauptrolle". Das Bild ist eine Adresse bei der Quelle; ob es geholt wird,
+/// entscheidet, wer den Abgleich anwendet.
+final class MetadataPerson {
+  const MetadataPerson({required this.name, required this.role, this.imageUrl});
+
+  final String name;
+  final String role;
+  final String? imageUrl;
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'role': role,
+    if (imageUrl != null) 'image_url': imageUrl,
+  };
+
+  static MetadataPerson? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final name = value['name'];
+    if (name is! String || name.trim().isEmpty) return null;
+    return MetadataPerson(
+      name: name.trim(),
+      role: value['role'] is String ? value['role'] as String : 'Beteiligt',
+      imageUrl: value['image_url'] is String
+          ? value['image_url'] as String
+          : null,
+    );
+  }
+}
+
 /// Provider-neutral metadata for any kind of work.
 ///
 /// The core package deliberately contains no HTTP client and no credentials.
@@ -28,6 +60,7 @@ final class MetadataCandidate {
     this.genres = const [],
     this.posterUrl,
     this.backdropUrl,
+    this.credits = const [],
     this.externalIds = const {},
   });
 
@@ -59,7 +92,39 @@ final class MetadataCandidate {
   final List<String> genres;
   final String? posterUrl;
   final String? backdropUrl;
+
+  /// Wer daran beteiligt war, mit Rolle und — wo die Quelle eines hat —
+  /// einem Bild.
+  final List<MetadataPerson> credits;
+
   final Map<String, String> externalIds;
+
+  /// Dasselbe mit anderer Besetzung — für den Nachschlag, der sie erst holt.
+  MetadataCandidate copyWith({List<MetadataPerson>? credits}) =>
+      MetadataCandidate(
+        provider: provider,
+        providerId: providerId,
+        title: title,
+        alternateTitles: alternateTitles,
+        authors: authors,
+        workKind: workKind,
+        series: series,
+        seriesSequence: seriesSequence,
+        contentStyle: contentStyle,
+        contentSensitivity: contentSensitivity,
+        releaseYear: releaseYear,
+        season: season,
+        episodeCount: episodeCount,
+        isAdult: isAdult,
+        description: description,
+        publisher: publisher,
+        language: language,
+        genres: genres,
+        posterUrl: posterUrl,
+        backdropUrl: backdropUrl,
+        credits: credits ?? this.credits,
+        externalIds: externalIds,
+      );
 
   Map<String, Object?> toJson() => {
     'provider': provider,
@@ -82,6 +147,8 @@ final class MetadataCandidate {
     if (genres.isNotEmpty) 'genres': genres,
     if (posterUrl != null) 'poster_url': posterUrl,
     if (backdropUrl != null) 'backdrop_url': backdropUrl,
+    if (credits.isNotEmpty)
+      'credits': [for (final person in credits) person.toJson()],
     if (externalIds.isNotEmpty) 'external_ids': externalIds,
   };
 
@@ -117,6 +184,12 @@ final class MetadataCandidate {
       genres: strings(value['genres']),
       posterUrl: value['poster_url'] as String?,
       backdropUrl: value['backdrop_url'] as String?,
+      credits: value['credits'] is List
+          ? [
+              for (final person in value['credits']! as List)
+                ?MetadataPerson.fromJson(person),
+            ]
+          : const [],
       externalIds: externalIds is Map
           ? {
               for (final entry in externalIds.entries)

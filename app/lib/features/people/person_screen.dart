@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:path/path.dart' as p;
 
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
@@ -23,7 +26,11 @@ class PersonScreen extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     final stage = FundusStageSize.of(context);
-    final credits = worksOfPerson(name, scope.library.works);
+    final credits = worksOfPerson(
+      name,
+      scope.library.works,
+      library: scope.library.library,
+    );
 
     if (credits.isEmpty) {
       return FundusEmptyState(
@@ -35,7 +42,7 @@ class PersonScreen extends StatelessWidget {
       );
     }
 
-    final byRole = <CreditRole, List<WorkView>>{};
+    final byRole = <String, List<WorkView>>{};
     for (final entry in credits) {
       for (final role in entry.roles) {
         byRole.putIfAbsent(role, () => []).add(entry.work);
@@ -47,7 +54,12 @@ class PersonScreen extends StatelessWidget {
       children: [
         Row(
           children: [
-            PersonAvatar(name: name, size: 72),
+            PersonAvatar(
+              name: name,
+              size: 72,
+              imagePath: scope.library.library?.personImage(name),
+              root: scope.library.library?.root.path,
+            ),
             const SizedBox(width: FundusSpace.x4),
             Expanded(
               child: Column(
@@ -56,7 +68,7 @@ class PersonScreen extends StatelessWidget {
                   Text(name, style: theme.textTheme.displaySmall),
                   const SizedBox(height: FundusSpace.x1),
                   Text(
-                    [for (final role in byRole.keys) role.label].join(' · '),
+                    byRole.keys.join(' · '),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: tokens.textMuted,
                     ),
@@ -69,7 +81,7 @@ class PersonScreen extends StatelessWidget {
         const SizedBox(height: FundusSpace.x8),
         for (final entry in byRole.entries) ...[
           Text(
-            '${entry.key.label.toUpperCase()} · ${entry.value.length}',
+            '${entry.key.toUpperCase()} · ${entry.value.length}',
             style: theme.textTheme.labelSmall?.copyWith(
               color: tokens.textFaint,
               letterSpacing: 1.2,
@@ -102,7 +114,63 @@ class PersonScreen extends StatelessWidget {
 /// dieselbe Person überall gleich aussieht und zwei nebeneinander
 /// unterscheidbar sind.
 class PersonAvatar extends StatelessWidget {
-  const PersonAvatar({super.key, required this.name, this.size = 56});
+  const PersonAvatar({
+    super.key,
+    required this.name,
+    this.size = 56,
+    this.imagePath,
+    this.root,
+  });
+
+  final String name;
+  final double size;
+
+  /// Der Pfad des Bildes, relativ zur Bibliothek — wo der Abgleich eines
+  /// mitgebracht hat.
+  final String? imagePath;
+  final String? root;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final tint = tokens.accentTint(0.10 + (name.hashCode.abs() % 12) / 100);
+    final relative = imagePath;
+    final base = root;
+    final file = relative == null || base == null
+        ? null
+        : File(p.join(base, p.joinAll(p.posix.split(relative))));
+
+    return ClipRRect(
+      borderRadius: FundusRadius.mdAll,
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: tint,
+          border: Border.fromBorderSide(BorderSide(color: tokens.divider)),
+        ),
+        // Ein Gesicht, wo eines da ist; sonst ein Platzhalter. Erfunden wird
+        // keines — die Anfangsbuchstaben unter dem Zeichen sagen wenigstens,
+        // wer gemeint ist.
+        child: file != null && file.existsSync()
+            ? Image.file(
+                file,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stack) =>
+                    _Placeholder(name: name, size: size),
+              )
+            : _Placeholder(name: name, size: size),
+      ),
+    );
+  }
+}
+
+/// Das Platzhalterbild: ein Zeichen und zwei Buchstaben.
+class _Placeholder extends StatelessWidget {
+  const _Placeholder({required this.name, required this.size});
 
   final String name;
   final double size;
@@ -110,23 +178,25 @@ class PersonAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.fundus;
-    final tint = tokens.accentTint(0.10 + (name.hashCode.abs() % 12) / 100);
-    return Container(
-      width: size,
-      height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: tint,
-        borderRadius: FundusRadius.mdAll,
-        border: Border.fromBorderSide(BorderSide(color: tokens.divider)),
-      ),
-      child: Text(
-        initialsOf(name),
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-          color: tokens.textMuted,
-          fontSize: size / 2.8,
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          FundusIcons.person,
+          size: size / 2.6,
+          color: tokens.textFaint.withValues(alpha: 0.7),
         ),
-      ),
+        if (size >= 72) ...[
+          SizedBox(height: size / 20),
+          Text(
+            initialsOf(name),
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: tokens.textFaint,
+              letterSpacing: 1.5,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

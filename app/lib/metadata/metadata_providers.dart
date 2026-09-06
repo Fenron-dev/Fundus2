@@ -76,6 +76,15 @@ abstract interface class MetadataProvider {
     int limit = 10,
     String? language,
   });
+
+  /// Holt nach, was die Suche nicht mitliefert — heute die Besetzung.
+  ///
+  /// Getrennt von der Suche, weil es eine zweite Runde übers Netz ist: für
+  /// zehn Treffer zehn Anfragen zu stellen, von denen neun weggeworfen
+  /// werden, wäre die falsche Rechnung. Gefragt wird für den einen Treffer,
+  /// den jemand übernimmt. Quellen, die schon alles gesagt haben, geben ihn
+  /// unverändert zurück.
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate);
 }
 
 /// Builds the adapter for one choice.
@@ -169,8 +178,19 @@ query ($search: String!, $perPage: Int!, $type: MediaType!) {
       bannerImage
       genres
       synonyms
-      staff(perPage: 4) {
-        edges { role node { name { full } } }
+      staff(perPage: 8) {
+        edges { role node { name { full } image { large medium } } }
+      }
+      characters(perPage: 8, sort: ROLE) {
+        edges {
+          role
+          node { name { full } image { large medium } }
+          voiceActors(sort: RELEVANCE) {
+            name { full }
+            image { large medium }
+            languageV2
+          }
+        }
       }
     }
   }
@@ -185,6 +205,10 @@ query ($search: String!, $perPage: Int!, $type: MediaType!) {
 
   @override
   String get provider => 'anilist';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
 
   @override
   Future<List<MetadataCandidate>> search(
@@ -288,9 +312,69 @@ query ($search: String!, $perPage: Int!, $type: MediaType!) {
           _stringFromMap(value['coverImage'], 'large') ??
           _stringFromMap(value['coverImage'], 'medium'),
       backdropUrl: value['bannerImage'] as String?,
+      credits: _credits(value),
       externalIds: {'anilist': '${id.round()}'},
     );
   }
+
+  /// Wer daran gearbeitet hat und wer die Rollen spricht.
+  ///
+  /// AniList führt zu beiden ein Bild — genau das, was eine Besetzungsseite
+  /// braucht. Sprecher stehen mit ihrer Figur da („Sprecher · Denji"), denn
+  /// ohne die Figur ist ein Sprechername nur ein Name.
+  static List<MetadataPerson> _credits(Map value) {
+    final people = <MetadataPerson>[];
+    final seen = <String>{};
+
+    void add(String name, String role, String? image) {
+      final trimmed = name.trim();
+      if (trimmed.isEmpty) return;
+      final key = '${trimmed.toLowerCase()}|$role';
+      if (!seen.add(key)) return;
+      people.add(MetadataPerson(name: trimmed, role: role, imageUrl: image));
+    }
+
+    final staff = value['staff'];
+    final staffEdges = staff is Map ? staff['edges'] : null;
+    if (staffEdges is List) {
+      for (final edge in staffEdges) {
+        if (edge is! Map) continue;
+        final node = edge['node'];
+        if (node is! Map) continue;
+        final full = _stringFromMap(node['name'], 'full');
+        if (full == null) continue;
+        add(full, '${edge['role'] ?? 'Beteiligt'}', _portrait(node['image']));
+      }
+    }
+
+    final characters = value['characters'];
+    final characterEdges = characters is Map ? characters['edges'] : null;
+    if (characterEdges is List) {
+      for (final edge in characterEdges) {
+        if (edge is! Map) continue;
+        final node = edge['node'];
+        final figure = node is Map
+            ? _stringFromMap(node['name'], 'full')
+            : null;
+        final voices = edge['voiceActors'];
+        if (voices is! List) continue;
+        for (final voice in voices) {
+          if (voice is! Map) continue;
+          final full = _stringFromMap(voice['name'], 'full');
+          if (full == null) continue;
+          add(
+            full,
+            figure == null ? 'Sprecher' : 'Sprecher · $figure',
+            _portrait(voice['image']),
+          );
+        }
+      }
+    }
+    return people;
+  }
+
+  static String? _portrait(Object? image) =>
+      _stringFromMap(image, 'large') ?? _stringFromMap(image, 'medium');
 
   /// The people AniList lists as story or art, which is what „Urheber" means
   /// for a manga.
@@ -375,6 +459,68 @@ final class TmdbProvider implements MetadataProvider {
     }
   }
 
+  /// Wie breit ein Porträt geholt wird. 300 Pixel reichen für eine Kachel
+  /// und für das Doppelte an Pixeldichte; das Original wären Megabyte pro
+  /// Gesicht.
+  static const _portraitBase = 'https://image.tmdb.org/t/p/w300';
+
+  /// Wie viele Personen mitkommen.
+  ///
+  /// Eine Besetzungsliste ist manchmal hundert Namen lang; die ersten sind
+  /// die, die jemand sucht, und jedes Bild ist eine Datei in der Bibliothek.
+  static const _peopleLimit = 16;
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async {
+    if (candidate.provider != provider || apiKey.trim().isEmpty) {
+      return candidate;
+    }
+    final area = candidate.workKind == 'movie' ? 'movie' : 'tv';
+    try {
+      final response = await _request(
+        _client.get(
+          Uri.parse(
+            'https://api.themoviedb.org/3/$area/${candidate.providerId}/credits',
+          ).replace(queryParameters: {'api_key': apiKey}),
+          headers: const {'accept': 'application/json'},
+        ),
+      );
+      final data = _decodeObject(response, provider);
+      final people = [
+        ..._people(data['cast'], roleKey: 'character', fallback: 'Darsteller'),
+        ..._people(data['crew'], roleKey: 'job', fallback: 'Crew'),
+      ];
+      if (people.isEmpty) return candidate;
+      return candidate.copyWith(credits: people.take(_peopleLimit).toList());
+    } on MetadataProviderException {
+      // Ohne Besetzung ist der Abgleich immer noch ein Abgleich.
+      return candidate;
+    }
+  }
+
+  static List<MetadataPerson> _people(
+    Object? value, {
+    required String roleKey,
+    required String fallback,
+  }) {
+    if (value is! List) return const [];
+    return [
+      for (final entry in value)
+        if (entry is Map && entry['name'] is String)
+          MetadataPerson(
+            name: (entry['name']! as String).trim(),
+            role:
+                entry[roleKey] is String &&
+                    (entry[roleKey]! as String).trim().isNotEmpty
+                ? (entry[roleKey]! as String).trim()
+                : fallback,
+            imageUrl: entry['profile_path'] is String
+                ? '$_portraitBase${entry['profile_path']}'
+                : null,
+          ),
+    ];
+  }
+
   MetadataCandidate? _candidate(Map value) {
     final id = value['id'];
     final mediaType = value['media_type'];
@@ -427,6 +573,10 @@ final class OpenLibraryProvider implements MetadataProvider {
 
   @override
   String get provider => 'openlibrary';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
 
   @override
   Future<List<MetadataCandidate>> search(
@@ -518,6 +668,10 @@ final class AudibleProvider implements MetadataProvider {
 
   @override
   String get provider => 'audible';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
 
   /// Which Audible shop answers for a language.
   ///
@@ -686,6 +840,10 @@ final class ApplePodcastProvider implements MetadataProvider {
 
   @override
   String get provider => 'apple_podcasts';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
 
   @override
   Future<List<MetadataCandidate>> search(

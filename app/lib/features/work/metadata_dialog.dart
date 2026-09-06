@@ -112,6 +112,33 @@ class _MetadataDialogState extends State<_MetadataDialog> {
     }
   }
 
+  /// Holt zum gewählten Treffer nach, was die Suche nicht mitschickt.
+  ///
+  /// Erst jetzt und nicht für alle zehn Treffer: die Besetzung ist eine
+  /// zweite Runde übers Netz, und neun davon wären weggeworfen. Kommt sie
+  /// nicht, ist der Treffer trotzdem einer.
+  Future<MetadataCandidate> _withCredits(MetadataCandidate candidate) async {
+    try {
+      return await providerFor(
+        _provider,
+        apiKey: _key.text.trim(),
+      ).enrich(candidate);
+    } on Object {
+      return candidate;
+    }
+  }
+
+  Future<void> _finish(
+    MetadataCandidate chosen,
+    Set<MetadataField> fields,
+  ) async {
+    setState(() => _loading = true);
+    final full = await _withCredits(chosen);
+    if (!mounted) return;
+    setState(() => _loading = false);
+    Navigator.of(context).pop(MetadataChoice(candidate: full, fields: fields));
+  }
+
   void _choose(MetadataCandidate candidate) => setState(() {
     _chosen = candidate;
     _fields
@@ -149,17 +176,13 @@ class _MetadataDialogState extends State<_MetadataDialog> {
             child: const Text('Zurück'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(
-              context,
-            ).pop(MetadataChoice(candidate: chosen, fields: const {})),
+            onPressed: () => unawaited(_finish(chosen, const {})),
             child: const Text('Nur verknüpfen'),
           ),
           FilledButton(
             onPressed: _fields.isEmpty
                 ? null
-                : () => Navigator.of(context).pop(
-                    MetadataChoice(candidate: chosen, fields: {..._fields}),
-                  ),
+                : () => unawaited(_finish(chosen, {..._fields})),
             child: const Text('Übernehmen'),
           ),
         ],

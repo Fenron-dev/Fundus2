@@ -1653,7 +1653,8 @@ class _People extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final credits = creditsOf(work);
+    final vault = FundusScope.of(context).library.library;
+    final credits = creditsOf(work, library: vault);
     if (credits.isEmpty) {
       return const FundusEmptyState(
         title: 'Keine Personen erfasst',
@@ -1666,10 +1667,13 @@ class _People extends StatelessWidget {
     final tokens = context.fundus;
     // Nach Rolle gruppiert, wie im Entwurf: erst wer es gemacht hat, dann wer
     // es gelesen hat.
-    final byRole = <CreditRole, List<String>>{};
+    // Nach Rolle gruppiert, wie im Entwurf.
+    final byRole = <String, List<PersonCredit>>{};
     for (final credit in credits) {
-      final names = byRole.putIfAbsent(credit.role, () => []);
-      if (!names.contains(credit.name)) names.add(credit.name);
+      final group = byRole.putIfAbsent(credit.roleLabel, () => []);
+      if (!group.any((person) => person.name == credit.name)) {
+        group.add(credit);
+      }
     }
 
     return ListView(
@@ -1677,7 +1681,7 @@ class _People extends StatelessWidget {
       children: [
         for (final entry in byRole.entries) ...[
           Text(
-            entry.key.label.toUpperCase(),
+            entry.key.toUpperCase(),
             style: theme.textTheme.labelSmall?.copyWith(
               color: tokens.textFaint,
               letterSpacing: 1.2,
@@ -1688,8 +1692,13 @@ class _People extends StatelessWidget {
             spacing: FundusSpace.x4,
             runSpacing: FundusSpace.x4,
             children: [
-              for (final name in entry.value)
-                _PersonTile(name: name, role: entry.key.label),
+              for (final person in entry.value)
+                _PersonTile(
+                  name: person.name,
+                  role: entry.key,
+                  imagePath: person.imagePath,
+                  root: vault?.root.path,
+                ),
             ],
           ),
           const SizedBox(height: FundusSpace.x8),
@@ -1701,10 +1710,17 @@ class _People extends StatelessWidget {
 
 /// Eine Person als Kachel: Bild, Name, Rolle — und ein Weg zu ihr.
 class _PersonTile extends StatelessWidget {
-  const _PersonTile({required this.name, required this.role});
+  const _PersonTile({
+    required this.name,
+    required this.role,
+    this.imagePath,
+    this.root,
+  });
 
   final String name;
   final String role;
+  final String? imagePath;
+  final String? root;
 
   @override
   Widget build(BuildContext context) {
@@ -1718,7 +1734,12 @@ class _PersonTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            PersonAvatar(name: name, size: 132),
+            PersonAvatar(
+              name: name,
+              size: 132,
+              imagePath: imagePath,
+              root: root,
+            ),
             const SizedBox(height: FundusSpace.x2),
             Text(
               name,

@@ -1186,6 +1186,54 @@ final class FundusLibrary {
     updatedAt: updatedAt,
   );
 
+  /// Wer an einem Werk beteiligt ist, mit Bild, wo eines da ist.
+  List<({String name, String role, String? imagePath})> peopleOf(
+    String workId,
+  ) => _database.peopleOf(workId);
+
+  /// Schreibt die Beteiligten eines Werks neu.
+  void replaceWorkPeople(
+    String workId,
+    List<({String name, String role, String? imagePath})> people,
+  ) {
+    _ensureWritable();
+    _database.replaceWorkPeople(workId, people);
+  }
+
+  /// Der Pfad zum Bild einer Person, relativ zur Bibliothek.
+  String? personImage(String name) => _database.personImage(name);
+
+  /// Legt das Bild einer Person in der Bibliothek ab.
+  ///
+  /// In der Bibliothek und nicht bei der App: ein Gesicht gehört zum Bestand
+  /// wie ein Cover, und ein Ordner, den man auf ein anderes Gerät trägt, soll
+  /// ihn mitnehmen. Der Dateiname kommt aus dem Namen, damit dieselbe Person
+  /// nicht zweimal liegt.
+  Future<String> cachePersonImage({
+    required String name,
+    required Uint8List bytes,
+    String extension = 'jpg',
+  }) async {
+    _ensureWritable();
+    if (bytes.isEmpty) throw ArgumentError.value(bytes, 'bytes');
+    final safe = name.trim().toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9]+'),
+      '-',
+    );
+    final key = safe.isEmpty ? '${name.hashCode.abs()}' : safe;
+    final normalized = extension.toLowerCase() == 'png' ? 'png' : 'jpg';
+    final directory = Directory(
+      p.join(root.path, metadataDirectoryName, 'people'),
+    );
+    await directory.create(recursive: true);
+    final filename = '$key.$normalized';
+    final target = File(p.join(directory.path, filename));
+    await target.writeAsBytes(bytes, flush: true);
+    final relative = p.posix.join(metadataDirectoryName, 'people', filename);
+    _database.setPersonImage(name, relative);
+    return relative;
+  }
+
   Future<String> cacheGeneratedCover({
     required String workId,
     required Uint8List bytes,

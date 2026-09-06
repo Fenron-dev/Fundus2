@@ -1,3 +1,5 @@
+import 'package:fundus_core/fundus_core.dart';
+
 import '../../data/work_view.dart';
 
 /// Wofür eine Person in einem Werk steht.
@@ -16,34 +18,58 @@ enum CreditRole {
 
 /// Eine Person und wofür sie in diesem Werk steht.
 final class PersonCredit {
-  const PersonCredit(this.name, this.role);
+  const PersonCredit(this.name, this.roleLabel, {this.imagePath});
 
   final String name;
-  final CreditRole role;
+
+  /// Was diese Person hier getan hat, in den Worten der Quelle: „Regie",
+  /// „Sprecher · Denji", „Urheber".
+  final String roleLabel;
+
+  /// Der Pfad zum Bild in der Bibliothek, wo eines geholt wurde.
+  final String? imagePath;
 }
 
 /// Wer an einem Werk beteiligt ist.
-List<PersonCredit> creditsOf(WorkView work) => [
-  for (final name in work.summary.authors)
-    if (name.trim().isNotEmpty) PersonCredit(name.trim(), CreditRole.author),
-  for (final name in work.summary.narrators)
-    if (name.trim().isNotEmpty) PersonCredit(name.trim(), CreditRole.narrator),
-];
+///
+/// Steht im Katalog eine Besetzung — vom Abgleich mitgebracht —, dann ist sie
+/// die Antwort: sie ist genauer und hat Gesichter. Sonst bleiben die Namen
+/// aus den Dateien, denn ein Buch hat keine Besetzung, aber einen Autor.
+List<PersonCredit> creditsOf(WorkView work, {FundusLibrary? library}) {
+  final stored = library == null
+      ? const <({String name, String role, String? imagePath})>[]
+      : library.peopleOf(work.id);
+  if (stored.isNotEmpty) {
+    return [
+      for (final person in stored)
+        PersonCredit(person.name, person.role, imagePath: person.imagePath),
+    ];
+  }
+  return [
+    for (final name in work.summary.authors)
+      if (name.trim().isNotEmpty)
+        PersonCredit(name.trim(), CreditRole.author.label),
+    for (final name in work.summary.narrators)
+      if (name.trim().isNotEmpty)
+        PersonCredit(name.trim(), CreditRole.narrator.label),
+  ];
+}
 
 /// Was eine Person gemacht hat, über alle Bibliotheken hinweg.
 ///
 /// Eine Person steht am Werk und nicht am Regal: wer einen Sprecher antippt,
 /// meint seine Hörbücher genauso wie das, was er sonst noch gelesen hat.
-List<({WorkView work, Set<CreditRole> roles})> worksOfPerson(
+List<({WorkView work, Set<String> roles})> worksOfPerson(
   String name,
-  List<WorkView> works,
-) {
+  List<WorkView> works, {
+  FundusLibrary? library,
+}) {
   final wanted = _normalise(name);
-  final found = <({WorkView work, Set<CreditRole> roles})>[];
+  final found = <({WorkView work, Set<String> roles})>[];
   for (final work in works) {
-    final roles = <CreditRole>{
-      for (final credit in creditsOf(work))
-        if (_normalise(credit.name) == wanted) credit.role,
+    final roles = <String>{
+      for (final credit in creditsOf(work, library: library))
+        if (_normalise(credit.name) == wanted) credit.roleLabel,
     };
     if (roles.isNotEmpty) found.add((work: work, roles: roles));
   }

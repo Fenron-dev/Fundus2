@@ -215,7 +215,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 15;
+  static const schemaVersion = 16;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -3043,6 +3043,123 @@ final class FundusDatabase {
     }
   }
 
+  /// Wer an einem Werk beteiligt ist, in der Reihenfolge, in der es die
+  /// Quelle gesagt hat.
+  List<({String name, String role, String? imagePath})> peopleOf(
+    String workId,
+  ) {
+    if (!tableExists('people') || !tableExists('work_people')) return const [];
+    final hasImage = columnExists('people', 'image_path');
+    final rows = _database.select(
+      '''
+      SELECT p.display_name AS name, wp.role AS role,
+             ${hasImage ? 'p.image_path' : 'NULL'} AS image_path
+      FROM work_people wp
+      JOIN people p ON p.id = wp.person_id
+      WHERE wp.work_id = ?
+      ORDER BY wp.position
+      ''',
+      [workId],
+    );
+    return [
+      for (final row in rows)
+        (
+          name: row['name'] as String,
+          role: row['role'] as String,
+          imagePath: row['image_path'] as String?,
+        ),
+    ];
+  }
+
+  /// Schreibt die Beteiligten eines Werks neu.
+  ///
+  /// Personen werden über ihren Namen zusammengeführt: eine Personentabelle
+  /// mit eigenen Kennungen bräuchte jemanden, der zuordnet, und ein Name aus
+  /// einer Quelle ist sofort etwas wert. Ein Bild, das schon da ist, bleibt —
+  /// eine Quelle, die keines liefert, soll keines wegnehmen.
+  void replaceWorkPeople(
+    String workId,
+    List<({String name, String role, String? imagePath})> people,
+  ) {
+    if (!tableExists('people') || !tableExists('work_people')) return;
+    final hasImage = columnExists('people', 'image_path');
+    transaction(() {
+      _database.execute('DELETE FROM work_people WHERE work_id = ?', [workId]);
+      var position = 0;
+      for (final person in people) {
+        final name = person.name.trim();
+        if (name.isEmpty) continue;
+        final existing = _database.select(
+          'SELECT id FROM people WHERE display_name = ? COLLATE NOCASE',
+          [name],
+        );
+        final personId = existing.isEmpty
+            ? FundusId.generate()
+            : existing.first['id'] as String;
+        if (existing.isEmpty) {
+          _database.execute(
+            'INSERT INTO people (id, display_name, sort_name) VALUES (?, ?, ?)',
+            [personId, name, name.toLowerCase()],
+          );
+        }
+        if (hasImage && person.imagePath != null) {
+          _database.execute('UPDATE people SET image_path = ? WHERE id = ?', [
+            person.imagePath,
+            personId,
+          ]);
+        }
+        _database.execute(
+          '''
+          INSERT INTO work_people (work_id, person_id, role, position)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(work_id, person_id, role) DO UPDATE SET
+            position = excluded.position
+          ''',
+          [workId, personId, person.role, position],
+        );
+        position++;
+      }
+    });
+  }
+
+  /// Das Bild einer Person, wo eines da ist.
+  String? personImage(String name) {
+    if (!tableExists('people') || !columnExists('people', 'image_path')) {
+      return null;
+    }
+    final rows = _database.select(
+      'SELECT image_path FROM people WHERE display_name = ? COLLATE NOCASE',
+      [name.trim()],
+    );
+    return rows.isEmpty ? null : rows.first['image_path'] as String?;
+  }
+
+  /// Merkt sich das Bild einer Person, auch wenn sie noch an keinem Werk
+  /// hängt.
+  void setPersonImage(String name, String path) {
+    if (!tableExists('people') || !columnExists('people', 'image_path')) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final existing = _database.select(
+      'SELECT id FROM people WHERE display_name = ? COLLATE NOCASE',
+      [trimmed],
+    );
+    if (existing.isEmpty) {
+      _database.execute(
+        '''
+        INSERT INTO people (id, display_name, sort_name, image_path)
+        VALUES (?, ?, ?, ?)
+        ''',
+        [FundusId.generate(), trimmed, trimmed.toLowerCase(), path],
+      );
+      return;
+    }
+    _database.execute('UPDATE people SET image_path = ? WHERE id = ?', [
+      path,
+      existing.first['id'] as String,
+    ]);
+  }
+
   /// Die Bedingung, die das Cover aus dem Inhalt heraushält.
   ///
   /// Ein Ordner mit einem Band und seinem Bild ist ein Werk mit einer Datei,
@@ -3198,6 +3315,7 @@ final class FundusDatabase {
     if (_database.userVersion == 12 && !readOnly) _migrateToVersion13();
     if (_database.userVersion == 13 && !readOnly) _migrateToVersion14();
     if (_database.userVersion == 14 && !readOnly) _migrateToVersion15();
+    if (_database.userVersion == 15 && !readOnly) _migrateToVersion16();
   }
 
   void _migrateToVersion1() {
@@ -3517,6 +3635,27 @@ final class FundusDatabase {
     }
   }
 
+  void _migrateToVersion16() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      // Ältere Bibliotheken haben die Tabellen teils gar nicht: dann werden
+      // sie angelegt, statt eine Spalte an etwas zu hängen, das es nicht gibt.
+      if (!tableExists('people')) {
+        _database.execute(_peopleTable);
+      } else if (!columnExists('people', 'image_path')) {
+        _database.execute('ALTER TABLE people ADD COLUMN image_path TEXT');
+      }
+      if (!tableExists('work_people')) {
+        _database.execute(_workPeopleTable);
+      }
+      _database.userVersion = 16;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Copies a table into its version 8 shape.
   ///
   /// Legacy databases in the wild — and the migration fixtures — do not
@@ -3676,7 +3815,8 @@ const _version1Statements = <String>[
     display_name TEXT NOT NULL,
     sort_name TEXT,
     aliases_json TEXT NOT NULL DEFAULT '[]',
-    external_ids_json TEXT NOT NULL DEFAULT '{}'
+    external_ids_json TEXT NOT NULL DEFAULT '{}',
+    image_path TEXT
   )
   ''',
   '''
@@ -4026,3 +4166,24 @@ const _version13Statements = <String>[
   )
   ''',
 ];
+
+const _peopleTable = '''
+CREATE TABLE people (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  sort_name TEXT,
+  aliases_json TEXT NOT NULL DEFAULT '[]',
+  external_ids_json TEXT NOT NULL DEFAULT '{}',
+  image_path TEXT
+)
+''';
+
+const _workPeopleTable = '''
+CREATE TABLE work_people (
+  work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+  person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (work_id, person_id, role)
+)
+''';
