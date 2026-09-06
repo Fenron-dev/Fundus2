@@ -7,5 +7,6 @@ export 'src/pinned_client.dart';
 export 'src/catalogue_mirror.dart';
 export 'src/remote_client.dart';
 export 'src/stream_proxy.dart';
+export 'src/playlist_sync.dart';
 export 'src/sync.dart';
 export 'src/sync_journal.dart';

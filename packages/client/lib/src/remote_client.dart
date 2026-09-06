@@ -334,6 +334,108 @@ final class FundusRemoteClient {
     body: {'tags': tags},
   );
 
+  /// Die Listen der anderen Seite.
+  ///
+  /// Eine Liste ist keine Ansicht, sondern etwas, das jemand gemacht hat —
+  /// sie gehört der Bibliothek und nicht dem Gerät, auf dem sie entstand.
+  /// Deshalb reist sie mit.
+  Future<List<LibraryPlaylist>> playlists(String libraryId) async {
+    final decoded = await _get('/v1/libraries/$libraryId/playlists');
+    final rows = decoded['playlists'];
+    if (rows is! List) return const [];
+    return [
+      for (final row in rows)
+        if (row is Map<String, Object?>) playlistFromJson(row),
+    ];
+  }
+
+  /// Legt drüben eine Liste an, die es hier schon gibt — mit derselben
+  /// Kennung, damit beide Seiten danach von derselben Liste sprechen.
+  Future<LibraryPlaylist> createPlaylist(
+    String libraryId,
+    LibraryPlaylist playlist,
+  ) async {
+    final decoded = await _post(
+      '/v1/libraries/$libraryId/playlists',
+      body: {'id': playlist.id, ..._playlistBody(playlist)},
+    );
+    return playlistFromJson(decoded);
+  }
+
+  /// Schreibt eine Liste drüben fort. [expectedRevision] ist die Fassung, von
+  /// der diese Seite ausgeht; stimmt sie nicht, hat jemand anders zuerst
+  /// geschrieben und die Gegenstelle sagt das mit 409.
+  Future<LibraryPlaylist> updatePlaylist(
+    String libraryId,
+    LibraryPlaylist playlist, {
+    required int expectedRevision,
+  }) async {
+    final decoded = await _put(
+      '/v1/libraries/$libraryId/playlists/${playlist.id}',
+      body: {'expected_revision': expectedRevision, ..._playlistBody(playlist)},
+    );
+    return playlistFromJson(decoded);
+  }
+
+  static Map<String, Object?> _playlistBody(LibraryPlaylist playlist) => {
+    'name': playlist.name,
+    'media_type': ?playlist.mediaType,
+    'items': [
+      for (final entry in playlist.entries)
+        {'work_id': entry.workId, 'file_id': ?entry.fileId},
+    ],
+  };
+
+  /// Liest eine Liste, wie der Server sie schreibt.
+  static LibraryPlaylist playlistFromJson(Map<String, Object?> json) {
+    final kindName = json['kind'];
+    return LibraryPlaylist(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      kind: LibraryPlaylistKind.values.firstWhere(
+        (kind) => kind.name == kindName,
+        orElse: () => LibraryPlaylistKind.manual,
+      ),
+      mediaType: json['media_type'] as String?,
+      entries: _entries(json),
+      revision: (json['revision'] as num?)?.round() ?? 1,
+      createdAt: _time(json['created_at']),
+      updatedAt: _time(json['updated_at']),
+    );
+  }
+
+  /// Die Zeilen einer Liste. `items` ist die genauere Angabe — eine Zeile
+  /// darf eine einzelne Datei meinen; eine ältere Gegenstelle schickt nur
+  /// `work_ids`, und dann sind es eben ganze Werke.
+  static List<PlaylistEntry> _entries(Map<String, Object?> json) {
+    final items = json['items'];
+    if (items is List) {
+      return [
+        for (final item in items)
+          if (item is Map && item['work_id'] is String)
+            PlaylistEntry(
+              item['work_id'] as String,
+              fileId: item['file_id'] as String?,
+            ),
+      ];
+    }
+    final workIds = json['work_ids'];
+    if (workIds is! List) return const [];
+    return [
+      for (final workId in workIds)
+        if (workId is String) PlaylistEntry(workId),
+    ];
+  }
+
+  static DateTime _time(Object? value) => value is String
+      ? (DateTime.tryParse(value)?.toUtc() ?? DateTime.now().toUtc())
+      : DateTime.now().toUtc();
+
+  /// Löscht eine Liste drüben.
+  Future<void> deletePlaylist(String libraryId, String playlistId) async {
+    await _delete('/v1/libraries/$libraryId/playlists/$playlistId');
+  }
+
   /// The whole catalogue, works and their files, in one answer.
   ///
   /// This is what a mirror reads. The alternative — the works list, then one
@@ -516,6 +618,18 @@ final class FundusRemoteClient {
             headers: {..._headers, 'content-type': 'application/json'},
             body: jsonEncode(body),
           )
+          .timeout(timeout);
+    } on Object catch (error) {
+      throw _unreachable(error);
+    }
+    return _decode(response);
+  }
+
+  Future<Map<String, Object?>> _delete(String path) async {
+    final http.Response response;
+    try {
+      response = await _http
+          .delete(baseUri.resolve(path), headers: _headers)
           .timeout(timeout);
     } on Object catch (error) {
       throw _unreachable(error);

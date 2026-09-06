@@ -291,7 +291,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // A platform that will not say where its storage is must not cost the
       // ability to read: somewhere temporary is worse than the right place
       // and far better than nowhere.
-      _supportRoot = Directory.systemTemp.createTempSync('fundus-');
+      // Auch der Notausgang muss gebaut werden: in einer Sandbox gibt es
+      // den Ort für Temporäres erst, wenn ihn jemand anlegt.
+      _supportRoot = (Directory(
+        Directory.systemTemp.path,
+      )..createSync(recursive: true)).createTempSync('fundus-');
     }
     _wireSources();
   }

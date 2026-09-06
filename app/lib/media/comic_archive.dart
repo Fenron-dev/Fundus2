@@ -206,9 +206,7 @@ final class ComicArchiveService {
     final archive = _decode(archivePath);
     Directory? directory;
     try {
-      final root = Directory(
-        p.join(Directory.systemTemp.path, 'fundus-comic-pages'),
-      )..createSync(recursive: true);
+      final root = scratchDirectory('fundus-comic-pages');
       _removeStale(root);
       directory = root.createTempSync('pages-');
       final result = <String, String>{};
@@ -351,3 +349,13 @@ List<Object> _naturalParts(String value) {
   }
   return parts;
 }
+
+/// Ein Ordner für Seiten, die nur für diese Sitzung entstehen.
+///
+/// `Directory.systemTemp` zeigt in einer Sandbox auf einen Ort, den es noch
+/// gar nicht gibt: „$Container/Data/tmp". „PDF öffnen" war deshalb schlicht
+/// ein Fehler — angelegt wird der Ordner darum immer selbst, mitsamt seiner
+/// Eltern, bevor jemand hineinschreibt.
+Directory scratchDirectory(String name, {Directory? under}) =>
+    Directory(p.join((under ?? Directory.systemTemp).path, name))
+      ..createSync(recursive: true);

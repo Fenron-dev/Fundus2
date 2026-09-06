@@ -694,7 +694,14 @@ final class FundusServerHandler {
     if (!_canViewWorkIds(request, entry, values.workIds)) {
       return _badRequest('work_not_found');
     }
+    // Eine Kennung darf mitgeschickt werden: eine Liste, die auf dem Handy
+    // entstanden ist, soll hier dieselbe Liste sein und nicht eine zweite mit
+    // gleichem Namen. Fehlt sie, vergibt die Bibliothek eine.
+    final given = decoded['id'];
     final playlist = entry.library.savePlaylist(
+      playlistId: given is String && given.trim().isNotEmpty
+          ? given.trim()
+          : null,
       name: values.name,
       mediaType: values.mediaType,
       entries: values.entries,

@@ -71,8 +71,8 @@ final class PdfComicPageSource implements ComicPageSource {
   Future<Map<String, String>> materialize(List<ComicPage> pages) async {
     if (pages.isEmpty) return const {};
     final document = await _open();
-    final directory = _directory ??= await Directory(
-      p.join(Directory.systemTemp.path, 'fundus-pdf-pages'),
+    final directory = _directory ??= await scratchDirectory(
+      'fundus-pdf-pages',
     ).createTemp('pages-');
 
     final result = <String, String>{};

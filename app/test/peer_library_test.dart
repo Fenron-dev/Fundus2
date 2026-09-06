@@ -400,6 +400,65 @@ void main() {
     );
   });
 
+  /// Eine Liste ist etwas, das jemand gemacht hat — sie gehört der
+  /// Bibliothek, nicht dem Gerät. Aus dem Betrieb: auf dem MacBook angelegt,
+  /// auf dem Handy nicht vorhanden.
+  test('eine Liste vom Mac steht danach auch auf dem Handy', () async {
+    final schacht = theirs.listWorks().firstWhere(
+      (work) => work.title == 'Der Schacht',
+    );
+    theirs.savePlaylist(name: 'Für die Fahrt', workIds: [schacht.id]);
+
+    expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
+
+    final here = library.library!.listPlaylists();
+    expect(here.map((list) => list.name), contains('Für die Fahrt'));
+    expect(here.single.entries.single.workId, schacht.id);
+  });
+
+  test('eine Liste vom Handy kommt beim Mac an', () async {
+    await peers.connect(peer());
+    final work = _audiobook(library);
+    library.library!.savePlaylist(name: 'Abends', workIds: [work.id]);
+
+    await peers.refresh();
+
+    expect(theirs.listPlaylists().map((list) => list.name), contains('Abends'));
+    // Dieselbe Liste, nicht eine zweite mit gleichem Namen.
+    expect(
+      theirs.listPlaylists().single.id,
+      library.library!.listPlaylists().single.id,
+    );
+  });
+
+  test('was drüben gelöscht wird, verschwindet auch hier', () async {
+    final schacht = theirs.listWorks().first;
+    final list = theirs.savePlaylist(name: 'Kurz', workIds: [schacht.id]);
+    await peers.connect(peer());
+    expect(library.library!.listPlaylists(), hasLength(1));
+
+    theirs.deletePlaylist(list.id);
+    await peers.refresh();
+
+    expect(library.library!.listPlaylists(), isEmpty);
+  });
+
+  test('eine geänderte Liste gewinnt mit der höheren Fassung', () async {
+    final works = theirs.listWorks();
+    final list = theirs.savePlaylist(name: 'Reihe', workIds: [works.first.id]);
+    await peers.connect(peer());
+
+    // Drüben umbenannt: die Fassung steigt, und das reist hierher.
+    theirs.savePlaylist(
+      playlistId: list.id,
+      name: 'Reihe, umbenannt',
+      workIds: [works.first.id],
+    );
+    await peers.refresh();
+
+    expect(library.library!.listPlaylists().single.name, 'Reihe, umbenannt');
+  });
+
   test('ein schlafender Mac leert die Bibliothek nicht', () async {
     await peers.connect(peer());
     final before = library.works.length;

@@ -1933,6 +1933,57 @@ final class FundusDatabase {
     });
   }
 
+  /// Übernimmt eine Liste so, wie sie woanders steht.
+  ///
+  /// Der Unterschied zu [savePlaylist] ist die Fassungsnummer: die wird hier
+  /// nicht weitergezählt, sondern übernommen. Sonst zählten zwei Geräte sich
+  /// gegenseitig hoch, ohne dass jemand etwas geändert hätte, und jede Runde
+  /// sähe aus wie eine Änderung.
+  void adoptPlaylist(LibraryPlaylist playlist) {
+    transaction(() {
+      _database.execute(
+        '''
+        INSERT INTO playlists (
+          id, name, kind, media_type, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          kind = excluded.kind,
+          media_type = excluded.media_type,
+          revision = excluded.revision,
+          updated_at = excluded.updated_at
+        ''',
+        [
+          playlist.id,
+          playlist.name,
+          playlist.kind.name,
+          playlist.mediaType,
+          playlist.revision,
+          playlist.createdAt.millisecondsSinceEpoch,
+          playlist.updatedAt.millisecondsSinceEpoch,
+        ],
+      );
+      _database.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
+        playlist.id,
+      ]);
+      for (var position = 0; position < playlist.entries.length; position++) {
+        _database.execute(
+          '''
+          INSERT INTO playlist_items (id, playlist_id, work_id, file_id, position)
+          VALUES (?, ?, ?, ?, ?)
+          ''',
+          [
+            FundusId.generate(),
+            playlist.id,
+            playlist.entries[position].workId,
+            playlist.entries[position].fileId,
+            position,
+          ],
+        );
+      }
+    });
+  }
+
   void deletePlaylist(String playlistId) {
     _database.execute('DELETE FROM playlists WHERE id = ?', [playlistId]);
   }

@@ -1425,6 +1425,13 @@ final class FundusLibrary {
     );
   }
 
+  /// Übernimmt eine Liste, wie sie auf einem anderen Gerät steht — mit ihrer
+  /// Fassungsnummer, damit ein Abgleich sich nicht selbst hochzählt.
+  void adoptPlaylist(LibraryPlaylist playlist) {
+    _ensureWritable();
+    _database.adoptPlaylist(playlist);
+  }
+
   void deletePlaylist(String playlistId) {
     _ensureWritable();
     _database.deletePlaylist(playlistId);

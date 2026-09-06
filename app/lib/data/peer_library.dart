@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../app/app_settings.dart';
+import '../app/fundus_log.dart';
 import 'library_controller.dart';
 import 'peer_connection.dart';
 
@@ -290,6 +291,27 @@ class PeerLibraries extends ChangeNotifier {
       libraryId: entry.libraryId,
       sourceId: entry.sourceId,
     ).run();
+    // Listen gehören der Bibliothek, nicht dem Gerät, auf dem sie entstanden
+    // sind — sie reisen mit dem Katalog. Scheitert das, ist der Katalog
+    // trotzdem da; eine fehlende Liste ist kein Grund, alles hinzuwerfen.
+    try {
+      final moved = await FundusPlaylistSync(
+        library: vault,
+        client: entry.client,
+        libraryId: entry.libraryId,
+        sourceId: entry.sourceId,
+      ).run();
+      if (!moved.isEmpty) {
+        FundusLog.instance.info('sync.playlists', {
+          'geholt': moved.pulled,
+          'geschickt': moved.pushed,
+          'hier_weg': moved.removedHere,
+          'dort_weg': moved.removedThere,
+        });
+      }
+    } on Object catch (error) {
+      FundusLog.instance.warn('sync.playlists', {'error': '$error'});
+    }
   }
 
   /// Lets go of one machine. Its works stay in the index — that is what
