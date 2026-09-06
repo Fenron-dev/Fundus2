@@ -153,9 +153,9 @@ class WorkSpotlight extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     FilledButton.icon(
-                      onPressed: work.origin == FundusOrigin.unreachable
-                          ? null
-                          : onOpen,
+                      // Auch hier gilt: der Versuch entscheidet, nicht die
+                      // Markierung vom letzten Durchgang.
+                      onPressed: onOpen,
                       icon: Icon(FundusIcons.play, size: FundusIcons.sizeSm),
                       label: Text(
                         work.hasProgress ? 'Fortsetzen' : 'Abspielen',

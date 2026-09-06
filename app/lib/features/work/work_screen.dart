@@ -549,11 +549,11 @@ class _Actions extends StatelessWidget {
   Widget build(BuildContext context) {
     final reads = ReaderController.handles(work);
     final primary = FilledButton.icon(
-      // Only what can be reached offers to play; everything else says why,
-      // rather than doing nothing.
-      onPressed: work.origin == FundusOrigin.unreachable
-          ? null
-          : () => FundusScope.of(context).play(work),
+      // Auch was zuletzt nicht erreichbar war, lässt sich drücken: die
+      // Markierung stammt vom letzten Durchgang, und ein Netzlaufwerk, das
+      // kurz weg war, ist gleich wieder da. Der Versuch entscheidet, und
+      // scheitert er, sagt der Player warum — ein toter Knopf sagt nichts.
+      onPressed: () => FundusScope.of(context).play(work),
       // Ein Abspielpfeil auf einem Manga verspricht das Falsche; gelesen
       // wird, nicht abgespielt.
       icon: Icon(

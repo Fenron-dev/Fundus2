@@ -105,6 +105,22 @@ class PlaybackController extends ChangeNotifier {
   bool _chrome = true;
   String? _failure;
 
+  /// Ob die Engine gerade nichts mehr hält.
+  ///
+  /// Eine Liste, die ausläuft, eine Datei, die abreißt, eine, die nicht
+  /// erreichbar war: danach ist geladen nichts mehr. „Abspielen" hieße dann,
+  /// auf eine leere Engine zu drücken — und genau das war es, was mitten in
+  /// der Musik passierte: Schluss, und weiter ging es nur noch über
+  /// „Fortsetzen" auf dem Dashboard.
+  bool _ended = false;
+
+  /// Wie oft dieselbe abgerissene Stelle schon wieder aufgesetzt wurde, und
+  /// wo sie lag. Läuft es danach wieder eine Weile, war es ein einzelner
+  /// Aussetzer — dann fängt die Zählung von vorn an, sonst gäbe eine Datei
+  /// nach zwei Aussetzern in zwei Stunden auf.
+  int _resumeTries = 0;
+  Duration _brokeOffAt = Duration.zero;
+
   WorkView? get work => _work;
 
   /// Der Name der laufenden Liste, wo eine läuft.
@@ -178,6 +194,10 @@ class PlaybackController extends ChangeNotifier {
   }
 
   String? get failure => _failure;
+
+  /// True, wenn nichts mehr läuft und der nächste Druck auf „abspielen"
+  /// erst wieder öffnen muss.
+  bool get hasStopped => _ended;
 
   /// True for the media types that carry a picture.
   bool get showsVideo => switch (_work?.mediaType?.id) {
@@ -315,6 +335,8 @@ class PlaybackController extends ChangeNotifier {
     // Namen und dem Bild der neuen darüber.
     await _stopWhatIsPlaying();
     _failure = null;
+    _ended = false;
+    _resumeTries = 0;
     _library = library;
     _work = work;
     // Starting a title opens the player; minimising is the deliberate step.
@@ -407,6 +429,8 @@ class PlaybackController extends ChangeNotifier {
   }) async {
     await _stopWhatIsPlaying();
     _failure = null;
+    _ended = false;
+    _resumeTries = 0;
     _library = library;
     _queueName = name;
     _expanded = autoplay;
@@ -529,6 +553,7 @@ class PlaybackController extends ChangeNotifier {
       // trotzdem — sonst liefe die vorige Datei unter neuem Namen weiter.
       await _engineOrNull?.stop();
       _playing = false;
+      _ended = true;
       _failure = 'Die Datei „${source.title}" ist nicht erreichbar.';
       notifyListeners();
       return;
@@ -547,6 +572,7 @@ class PlaybackController extends ChangeNotifier {
     span.step('resolved');
     await _engine.open(uri, start: at);
     span.done();
+    _ended = false;
     _startSaveTimer();
     // After playback has started, never before it: reading the chapters means
     // walking the file's tags, and nobody should wait for a picture.
@@ -575,6 +601,10 @@ class PlaybackController extends ChangeNotifier {
       _engine.positionStream.listen((value) {
         final previous = _position;
         _position = value;
+        if (_resumeTries > 0 &&
+            value - _brokeOffAt > const Duration(minutes: 1)) {
+          _resumeTries = 0;
+        }
         // mpv meldet die Position vielfach pro Sekunde. Jede Meldung baute
         // bisher den ganzen Baum neu — sichtbar wird davon aber nur die
         // Sekunde, also wird auch nur dafür neu gebaut. Das Ruckeln kam
@@ -607,9 +637,34 @@ class PlaybackController extends ChangeNotifier {
     ]);
   }
 
+  /// „Abspielen" heißt immer, dass es spielt.
+  ///
+  /// Hält die Engine nichts mehr — die Liste ist ausgelaufen, der Strom ist
+  /// abgerissen, die Datei war kurz nicht da —, dann wäre ein Druck auf
+  /// abspielen ein Druck ins Leere. Stattdessen wird dieselbe Stelle noch
+  /// einmal geöffnet; das ist genau das, was „Fortsetzen" auf dem Dashboard
+  /// tut, nur ohne den Umweg.
   Future<void> playOrPause() async {
     if (_work == null || _engineOrNull == null) return;
-    _playing ? await _engine.pause() : await _engine.play();
+    if (_playing) {
+      await _engine.pause();
+      return;
+    }
+    if (_ended || _failure != null) {
+      await pickUpAgain();
+      return;
+    }
+    await _engine.play();
+  }
+
+  /// Öffnet die laufende Datei noch einmal an der Stelle, an der sie steht.
+  Future<void> pickUpAgain() async {
+    if (currentSource == null) return;
+    _failure = null;
+    final at = _position;
+    await _openCurrent(at: at);
+    if (_failure == null) await _engine.play();
+    notifyListeners();
   }
 
   Future<void> seek(Duration value) async {
@@ -630,6 +685,7 @@ class PlaybackController extends ChangeNotifier {
     final target = _nextIndex(manual: true);
     if (target == null) {
       await _engine.pause();
+      _ended = true;
       _markFinished();
       return;
     }
@@ -759,9 +815,36 @@ class PlaybackController extends ChangeNotifier {
   /// next file, a single film — behaves as it always did, because there is
   /// nothing to decide.
   void _finished() {
+    // Ein Strom, der reißt, meldet sich wie ein Ende. Der Unterschied ist
+    // messbar: was zu Ende ist, steht am Ende. Steht es mitten drin, wird
+    // dieselbe Stelle noch einmal geöffnet — das ist, was ein Mensch täte,
+    // und es geht auch ohne ihn.
+    if (_brokeOff) {
+      saveProgress();
+      if (_resumeTries < 2) {
+        _resumeTries++;
+        _brokeOffAt = _position;
+        FundusLog.instance.warn('player.brokeOff', {
+          'file': currentSource?.title ?? '',
+          'at': _position.inSeconds,
+          'try': _resumeTries,
+        });
+        unawaited(pickUpAgain());
+        return;
+      }
+      // Zweimal abgerissen ist kein Zufall mehr. Angehalten wird gesagt, und
+      // der nächste Druck auf abspielen setzt hier wieder an.
+      _playing = false;
+      _ended = true;
+      _failure = 'Die Wiedergabe ist abgerissen.';
+      notifyListeners();
+      return;
+    }
+    _resumeTries = 0;
     final target = _nextIndex();
     if (target == null) {
       saveProgress();
+      _ended = true;
       notifyListeners();
       return;
     }
@@ -783,6 +866,20 @@ class PlaybackController extends ChangeNotifier {
       _nextIn = left;
       notifyListeners();
     });
+  }
+
+  /// Ob das gemeldete Ende keines sein kann.
+  ///
+  /// Großzügig gemessen, und mit Absicht: eine Datei versehentlich von der
+  /// falschen Stelle noch einmal zu öffnen wäre schlimmer als ein Abriss,
+  /// den niemand bemerkt hat. Erst wenn eine halbe Minute *und* ein
+  /// Zwanzigstel des Stücks fehlen, war es kein Ende.
+  bool get _brokeOff {
+    final total = _duration;
+    if (total == null || total <= Duration.zero) return false;
+    final left = total - _position;
+    return left > const Duration(seconds: 30) &&
+        left.inMilliseconds * 20 > total.inMilliseconds;
   }
 
   Timer? _nextTick;
@@ -902,6 +999,8 @@ class PlaybackController extends ChangeNotifier {
     saveProgress();
     await _engineOrNull?.stop();
     _saveTimer?.cancel();
+    _ended = false;
+    _resumeTries = 0;
     _work = null;
     _sources = const [];
     _owners = const [];
