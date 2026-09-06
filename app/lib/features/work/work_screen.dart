@@ -2,15 +2,19 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/fundus_scope.dart';
 import '../../data/download_controller.dart';
+import '../../media/playback_controller.dart' show formatPlaybackTime;
 import '../../media/reader_controller.dart';
 import '../../data/media_type.dart';
 import '../../data/work_view.dart';
 import '../../metadata/metadata_apply.dart';
+import '../downloads/downloads_screen.dart' show formatBytes;
 import '../library/work_poster.dart';
 import '../lists/add_to_list.dart';
 import 'download_choice_sheet.dart';
@@ -147,7 +151,14 @@ class _Hero extends StatelessWidget {
                   children: [
                     SizedBox(
                       width: stage.posterWidth * 1.2,
-                      child: _Cover(work: work),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _Cover(work: work),
+                          const SizedBox(height: FundusSpace.x4),
+                          _Storage(work: work, centred: false),
+                        ],
+                      ),
                     ),
                     const SizedBox(width: FundusSpace.x8),
                     Expanded(
@@ -194,6 +205,93 @@ class _Cover extends StatelessWidget {
 }
 
 /// Everything the head says in words.
+/// Woher das Werk kommt, wie groß es ist und wo es liegt.
+///
+/// Die Fragen, die man sich vor dem Löschen stellt — und die einzigen
+/// Angaben auf dieser Seite, die nicht vom Werk, sondern von der Datei
+/// handeln. Deshalb stehen sie klein und unter dem Bild.
+class _Storage extends StatelessWidget {
+  const _Storage({required this.work, required this.centred});
+
+  final WorkView work;
+  final bool centred;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final library = scope.library.library;
+    if (library == null) return const SizedBox.shrink();
+
+    final storage = library.workStorage(work.id);
+    final source = scope.library.sources
+        .where((entry) => entry.id == work.summary.sourceId)
+        .firstOrNull;
+    final rows = <(String, String)>[
+      if (source != null) ('Quelle', source.displayName),
+      if (_resolution(storage.height) case final resolution?)
+        ('Auflösung', resolution),
+      if (storage.bytes > 0) ('Größe', formatBytes(storage.bytes)),
+    ];
+    if (rows.isEmpty && work.summary.sourcePath.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: centred
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.stretch,
+      children: [
+        for (final row in rows)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Row(
+              mainAxisSize: centred ? MainAxisSize.min : MainAxisSize.max,
+              children: [
+                Text(
+                  row.$1,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                ),
+                const SizedBox(width: FundusSpace.x3),
+                Expanded(
+                  flex: centred ? 0 : 1,
+                  child: Text(
+                    row.$2,
+                    textAlign: centred ? TextAlign.start : TextAlign.end,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (work.summary.sourcePath.isNotEmpty) ...[
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            work.summary.sourcePath,
+            textAlign: centred ? TextAlign.center : TextAlign.start,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: tokens.textFaint,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// „2160p" sagt mehr als „3840 × 2160", und die Höhe genügt dafür.
+  static String? _resolution(int? height) {
+    if (height == null || height <= 0) return null;
+    return '${height}p';
+  }
+}
+
 class _Facts extends StatelessWidget {
   const _Facts({
     required this.work,
@@ -217,8 +315,15 @@ class _Facts extends StatelessWidget {
     // One line of small print rather than a row of boxes: year, genre and
     // where the work lives, in the order somebody reads them.
     final meta = [
-      if (summary.publishedYear != null) '${summary.publishedYear}',
-      ...summary.genres.take(2),
+      ?summary.publishedYear?.toString(),
+      if (summary.series case final series?
+          when series.trim().isNotEmpty && series != work.title)
+        summary.seriesSequence == null
+            ? series
+            : '$series · Band ${_band(summary.seriesSequence!)}',
+      ...summary.genres.take(3),
+      ?_upper(summary.language),
+      ?_trimmed(summary.publisher),
       if (summary.fileCount > 1) '${summary.fileCount} Dateien',
     ].join(' · ');
 
@@ -301,8 +406,132 @@ class _Facts extends StatelessWidget {
             children: [for (final tag in summary.tags.take(5)) FundusTag(tag)],
           ),
         ],
+        // Auf dem Handy nur, wenn es etwas zu zeigen gibt: dort zählt jede
+        // Zeile im Kopf gegen die Liste darunter.
+        if (work.summary.externalIds.isNotEmpty || !centred) ...[
+          const SizedBox(height: FundusSpace.x4),
+          _External(work: work, centred: centred),
+        ],
       ],
     );
+  }
+
+  /// Ein Wert ohne Ränder, oder gar nichts.
+  static String? _trimmed(String? value) =>
+      value == null || value.trim().isEmpty ? null : value.trim();
+
+  /// Eine Sprache in Großbuchstaben, oder gar nichts.
+  static String? _upper(String? value) =>
+      value == null || value.trim().isEmpty ? null : value.toUpperCase();
+
+  /// „Band 3" statt „Band 3.0".
+  static String _band(double value) {
+    final rounded = value.round();
+    return value == rounded ? '$rounded' : '$value';
+  }
+}
+
+/// Wo dieses Werk außerhalb der Bibliothek geführt wird.
+///
+/// Eine Kennung bei einem Dienst ist keine Zierde: sie ist der Weg zurück
+/// zur Quelle und die Bedingung dafür, dass ein späterer Abgleich dasselbe
+/// Werk wiederfindet. Was fehlt, sagt es — und lässt sich von hier aus
+/// nachholen.
+class _External extends StatelessWidget {
+  const _External({required this.work, required this.centred});
+
+  final WorkView work;
+  final bool centred;
+
+  /// Die Adresse, unter der ein Dienst dieses Werk zeigt.
+  static Uri? addressFor(String service, String id) => switch (service) {
+    'tmdb' => Uri.parse('https://www.themoviedb.org/search?query=$id'),
+    'anilist' => Uri.parse('https://anilist.co/anime/$id'),
+    'openlibrary' => Uri.parse('https://openlibrary.org/works/$id'),
+    'itunes' => Uri.parse('https://podcasts.apple.com/podcast/id$id'),
+    'audible' || 'asin' => Uri.parse('https://www.audible.de/pd/$id'),
+    'feed' => Uri.tryParse(id),
+    _ => null,
+  };
+
+  static const _names = {
+    'tmdb': 'TMDB',
+    'anilist': 'AniList',
+    'openlibrary': 'Open Library',
+    'itunes': 'Apple Podcasts',
+    'audible': 'Audible',
+    'asin': 'ASIN',
+    'feed': 'Feed',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final ids = work.summary.externalIds;
+    // Die ASIN steht schon als „Audible" da, wenn beides gesetzt ist.
+    final shown = {
+      for (final entry in ids.entries)
+        if (entry.key != 'asin' || !ids.containsKey('audible'))
+          entry.key: entry.value,
+    };
+    final matched = _matchedAt(work);
+
+    return Wrap(
+      spacing: FundusSpace.x2,
+      runSpacing: FundusSpace.x2,
+      alignment: centred ? WrapAlignment.center : WrapAlignment.start,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          'EXTERN',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: tokens.textFaint,
+            letterSpacing: 1.2,
+          ),
+        ),
+        if (shown.isEmpty)
+          Text(
+            'noch nicht verknüpft',
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+          ),
+        for (final entry in shown.entries)
+          ActionChip(
+            avatar: Icon(FundusIcons.originStream, size: FundusIcons.sizeSm),
+            label: Text(_names[entry.key] ?? entry.key),
+            onPressed: () {
+              final address = addressFor(entry.key, entry.value);
+              if (address != null) unawaited(launchUrl(address));
+            },
+          ),
+        if (matched != null)
+          Text(
+            'abgeglichen ${_ago(matched)}',
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+          ),
+      ],
+    );
+  }
+
+  /// Wann zuletzt ein Dienst etwas an diesem Werk geschrieben hat.
+  static DateTime? _matchedAt(WorkView work) {
+    DateTime? newest;
+    for (final origin in work.summary.metadataOrigins.values) {
+      if (origin.source != WorkMetadataSource.online) continue;
+      if (newest == null || origin.updatedAt.isAfter(newest)) {
+        newest = origin.updatedAt;
+      }
+    }
+    return newest;
+  }
+
+  static String _ago(DateTime value) {
+    final days = DateTime.now().difference(value).inDays;
+    if (days <= 0) return 'heute';
+    if (days == 1) return 'gestern';
+    if (days < 31) return 'vor $days Tagen';
+    final months = days ~/ 30;
+    return months < 12 ? 'vor $months Monaten' : 'vor über einem Jahr';
   }
 }
 
@@ -581,6 +810,20 @@ class _TabContent extends StatelessWidget {
   }
 }
 
+/// Was ein Werk belegt, als Zeile für die Eigenschaften.
+(String, String)? _storageRow(BuildContext context, WorkView work) {
+  final library = FundusScope.of(context).library.library;
+  if (library == null) return null;
+  final bytes = library.workStorage(work.id).bytes;
+  return bytes <= 0 ? null : ('Größe', formatBytes(bytes));
+}
+
+(String, String)? _resolutionRow(BuildContext context, WorkView work) {
+  final library = FundusScope.of(context).library.library;
+  final height = library?.workStorage(work.id).height;
+  return height == null || height <= 0 ? null : ('Auflösung', '${height}p');
+}
+
 class _Properties extends StatelessWidget {
   const _Properties({required this.work});
 
@@ -604,6 +847,13 @@ class _Properties extends StatelessWidget {
       ('Herkunft', work.origin.label),
       ('Dateien', '${summary.fileCount}'),
       ('Aufgenommen', _formatDate(summary.addedAt)),
+      // Was die Datei sagt, nicht das Werk — dieselben Angaben stehen am
+      // Rechner neben dem Bild, auf dem Handy wäre dafür kein Platz.
+      ?_storageRow(context, work),
+      ?_resolutionRow(context, work),
+      if (summary.sourcePath.isNotEmpty) ('Pfad', summary.sourcePath),
+      for (final entry in summary.externalIds.entries)
+        (_External._names[entry.key] ?? entry.key, entry.value),
     ];
 
     final theme = Theme.of(context);
@@ -865,6 +1115,8 @@ class _FilesState extends State<_Files> {
     }
 
     final seasons = _seasons(tracks);
+    // Auch eine einzelne Staffel wird benannt: „Staffel 1 · 12 Folgen" ist
+    // eine Auskunft, kein Bedienelement, und sie fehlte.
     final shown = seasons.length < 2
         ? tracks
         : [
@@ -875,9 +1127,9 @@ class _FilesState extends State<_Files> {
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: FundusSpace.x12),
-      itemCount: shown.length + (seasons.length < 2 ? 0 : 1),
+      itemCount: shown.length + (seasons.isEmpty ? 0 : 1),
       itemBuilder: (context, index) {
-        if (seasons.length >= 2) {
+        if (seasons.isNotEmpty) {
           if (index == 0) {
             return _SeasonBar(
               seasons: seasons,
@@ -1419,47 +1671,145 @@ class _Devices extends StatefulWidget {
 }
 
 class _DevicesState extends State<_Devices> {
-  Future<List<DeviceProfile>>? _profiles;
+  /// Was die anderen Geräte zu diesem Werk sagen. Erst gefragt, wenn jemand
+  /// hersieht — es ist eine Runde übers Netz.
+  Future<List<({String peerName, String serverId, RemoteProgress progress})>>?
+  _elsewhere;
+  bool _busy = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Created once: a future built inside build() restarts on every rebuild.
-    _profiles ??= FundusScope.of(context).library.library?.listDeviceProfiles();
+    _elsewhere ??= FundusScope.of(
+      context,
+    ).sync.progressEverywhere(widget.work.id);
+  }
+
+  void _askAgain() => setState(() {
+    _elsewhere = FundusScope.of(
+      context,
+    ).sync.progressEverywhere(widget.work.id);
+  });
+
+  /// Übernimmt den Stand von drüben — hier, auf diesem Gerät.
+  Future<void> _take(RemoteProgress progress) async {
+    final scope = FundusScope.of(context);
+    final vault = scope.library.library;
+    if (vault == null || vault.isReadOnly || _busy) return;
+    setState(() => _busy = true);
+    try {
+      vault.saveMediaProgress(
+        workId: widget.work.id,
+        position: progress.position,
+        // Ohne Datei gilt der Stand für das Werk als Ganzes; die
+        // Bibliothek erwartet trotzdem eine Angabe.
+        fileId: progress.fileId ?? progress.position.fileId ?? '',
+        finished: progress.finished,
+        deviceId: scope.settings.deviceKey,
+        updatedAt: progress.updatedAt,
+      );
+      scope.library.refreshWork(widget.work.id);
+    } on Object {
+      // Ein Stand, der sich nicht schreiben lässt, ist kein Grund, die Seite
+      // zu verlieren; der Knopf bleibt stehen.
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
-    final profiles = _profiles;
-    if (profiles == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final mine = scope.library.library?.loadProgress(widget.work.id);
+    final order = [
+      for (final track
+          in scope.library.library?.playbackTracks(widget.work.id) ??
+              const <LibraryPlaybackTrack>[])
+        track.fileId,
+    ];
 
-    return FutureBuilder<List<DeviceProfile>>(
-      future: profiles,
+    return FutureBuilder<
+      List<({String peerName, String serverId, RemoteProgress progress})>
+    >(
+      future: _elsewhere,
       builder: (context, snapshot) {
-        final profiles = snapshot.data ?? const <DeviceProfile>[];
-        if (profiles.isEmpty) {
-          return const FundusEmptyState(
-            title: 'Nur dieses Gerät',
-            reason:
-                'Sobald ein zweites Gerät dieselbe Bibliothek öffnet, steht '
-                'hier dessen Stand für dieses Werk.',
-            icon: null,
-          );
-        }
+        final answers = snapshot.data ?? const [];
+        final waiting =
+            snapshot.connectionState == ConnectionState.waiting &&
+            scope.settings.peers.isNotEmpty;
+
         return ListView(
           padding: _contentPadding(context),
           children: [
-            for (final profile in profiles)
-              ListTile(
-                leading: Icon(FundusIcons.devices, size: FundusIcons.sizeLg),
-                title: Text(profile.displayName),
-                subtitle: Text(
-                  profile.key == scope.settings.deviceKey
-                      ? 'Dieses Gerät'
-                      : profile.platform.isEmpty
-                      ? 'Anderes Gerät'
-                      : profile.platform,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'STAND PRO GERÄT',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: tokens.textFaint,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+                if (waiting)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  TextButton(
+                    onPressed: _askAgain,
+                    child: const Text('Jetzt abgleichen'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: FundusSpace.x3),
+            _DeviceRow(
+              name: '${scope.settings.deviceName} · dieses Gerät',
+              icon: FundusIcons.devices,
+              position: mine == null
+                  ? null
+                  : _positionLabel(mine.position, mine.finished),
+              fraction: mine == null ? null : _fraction(mine.position),
+              when: mine?.updatedAt,
+              action: null,
+            ),
+            for (final answer in answers)
+              _DeviceRow(
+                name: answer.peerName,
+                icon: FundusIcons.originStream,
+                position: _positionLabel(
+                  answer.progress.position,
+                  answer.progress.finished,
+                ),
+                fraction: _fraction(answer.progress.position),
+                when: answer.progress.updatedAt,
+                ahead:
+                    mine == null ||
+                    comparePositions(
+                          answer.progress.position,
+                          mine.position,
+                          fileOrder: order,
+                        ) >
+                        0,
+                action: _busy ? null : () => unawaited(_take(answer.progress)),
+              ),
+            if (answers.isEmpty && !waiting)
+              Padding(
+                padding: const EdgeInsets.only(top: FundusSpace.x4),
+                child: Text(
+                  scope.settings.peers.isEmpty
+                      ? 'Dieses Gerät ist mit keinem anderen gekoppelt. Sobald '
+                            'eines dazukommt, steht sein Stand hier.'
+                      : 'Kein anderes Gerät hat gerade geantwortet. Der Stand '
+                            'von hier bleibt davon unberührt.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textFaint,
+                  ),
                 ),
               ),
           ],
@@ -1467,9 +1817,146 @@ class _DevicesState extends State<_Devices> {
       },
     );
   }
+
+  /// „S02E04 · 00:27:10" — was von einem Stand zu sehen sein soll.
+  String _positionLabel(MediaPosition position, bool finished) {
+    if (finished) return 'abgeschlossen';
+    final label = position.label;
+    if (label != null && label.trim().isNotEmpty) return label;
+    final value = position.numericValue ?? 0;
+    return switch (position.kind) {
+      MediaPositionKind.time => formatPlaybackTime(
+        Duration(seconds: value.round()),
+      ),
+      MediaPositionKind.page => 'Seite ${value.round()}',
+      _ => '${(value * 100).round()} %',
+    };
+  }
+
+  double? _fraction(MediaPosition position) {
+    final total = position.total;
+    final value = position.numericValue;
+    if (total == null || value == null || total <= 0) return null;
+    return (value / total).clamp(0.0, 1.0);
+  }
 }
 
-/// „Das mag ich."
+/// Eine Zeile der Geräteliste: wer, wo, wann — und was man damit tun kann.
+class _DeviceRow extends StatelessWidget {
+  const _DeviceRow({
+    required this.name,
+    required this.icon,
+    required this.position,
+    required this.fraction,
+    required this.when,
+    required this.action,
+    this.ahead = false,
+  });
+
+  final String name;
+  final IconData icon;
+
+  /// Null heißt: dieses Gerät hat zu diesem Werk keinen Stand.
+  final String? position;
+  final double? fraction;
+  final DateTime? when;
+
+  /// Ob dieses Gerät weiter ist als das hier. Nur dann lohnt „übernehmen".
+  final bool ahead;
+  final VoidCallback? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: FundusSpace.x2),
+      padding: const EdgeInsets.all(FundusSpace.x3),
+      decoration: BoxDecoration(
+        color: ahead ? tokens.accentTint(0.12) : Colors.transparent,
+        borderRadius: FundusRadius.mdAll,
+        border: Border.fromBorderSide(
+          BorderSide(color: ahead ? tokens.accent : tokens.divider),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: FundusIcons.sizeLg, color: tokens.textFaint),
+          const SizedBox(width: FundusSpace.x3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
+                    if (ahead) ...[
+                      const SizedBox(width: FundusSpace.x2),
+                      const FundusTag('weiter', tone: FundusTagTone.accent),
+                    ],
+                  ],
+                ),
+                Text(
+                  position ?? 'kein Stand für dieses Werk',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                ),
+                if (fraction case final share?) ...[
+                  const SizedBox(height: FundusSpace.x2),
+                  ClipRRect(
+                    borderRadius: FundusRadius.smAll,
+                    child: LinearProgressIndicator(
+                      value: share,
+                      minHeight: 3,
+                      backgroundColor: tokens.divider,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: FundusSpace.x3),
+          if (when case final moment?)
+            Text(
+              _ago(moment),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: tokens.textFaint,
+              ),
+            ),
+          if (action case final take?) ...[
+            const SizedBox(width: FundusSpace.x3),
+            OutlinedButton(
+              onPressed: take,
+              child: const Text('Stand übernehmen'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _ago(DateTime value) {
+    final passed = DateTime.now().difference(value.toLocal());
+    if (passed.inMinutes < 1) return 'jetzt';
+    if (passed.inMinutes < 60) return 'vor ${passed.inMinutes} Min';
+    if (passed.inHours < 24) return 'vor ${passed.inHours} Std';
+    if (passed.inDays == 1) return 'gestern';
+    if (passed.inDays < 31) return 'vor ${passed.inDays} Tagen';
+    return 'vor ${passed.inDays ~/ 30} Monaten';
+  }
+}
+
+/// „Das mag ich."/// „Das mag ich."
 ///
 /// In the vault rather than on this device, because it is a statement about
 /// the work and should be true on the phone as well.

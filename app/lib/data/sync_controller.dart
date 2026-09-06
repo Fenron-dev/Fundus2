@@ -214,6 +214,30 @@ class SyncController extends ChangeNotifier {
     return best;
   }
 
+  /// Was jedes gekoppelte Gerät zu diesem einen Werk sagt.
+  ///
+  /// Nicht „das weiteste", sondern alle: die Geräteseite eines Werks zeigt,
+  /// wer wo steht, und lässt dann wählen. Ein Gerät, das schläft, fehlt
+  /// einfach — das ist die Auskunft, nicht ein Fehler.
+  Future<List<({String peerName, String serverId, RemoteProgress progress})>>
+  progressEverywhere(String workId) async {
+    final vault = library.library;
+    if (vault == null || peers.isEmpty) return const [];
+    final asked = await Future.wait([
+      for (final peer in peers)
+        _askOne(peer, vault, workId).then(
+          (answer) => answer == null
+              ? null
+              : (
+                  peerName: peer.name,
+                  serverId: peer.serverId,
+                  progress: answer.progress,
+                ),
+        ),
+    ]);
+    return [for (final answer in asked) ?answer];
+  }
+
   Future<({RemoteProgress progress, String peerName})?> _askOne(
     PeerConnection peer,
     FundusLibrary vault,

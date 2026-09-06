@@ -639,6 +639,32 @@ final class FundusDatabase {
     );
   }
 
+  /// Was ein Werk auf der Platte belegt und wie groß sein Bild ist.
+  ///
+  /// Beides steht schon in der Dateitabelle; gefragt wird es auf der
+  /// Detailseite, wo „2160p · 64,2 GB" die Frage beantwortet, ob man diese
+  /// Fassung behalten will.
+  ({int bytes, int? width, int? height, int files}) workStorage(String workId) {
+    final rows = _database.select(
+      '''
+      SELECT COALESCE(SUM(f.size), 0) AS bytes, MAX(f.width) AS width,
+             MAX(f.height) AS height, COUNT(*) AS files
+      FROM work_files wf
+      JOIN files f ON f.id = wf.file_id
+      WHERE wf.work_id = ? AND wf.role = 'content'
+      ''',
+      [workId],
+    );
+    if (rows.isEmpty) return (bytes: 0, width: null, height: null, files: 0);
+    final row = rows.first;
+    return (
+      bytes: (row['bytes'] as num?)?.round() ?? 0,
+      width: (row['width'] as num?)?.round(),
+      height: (row['height'] as num?)?.round(),
+      files: (row['files'] as num?)?.round() ?? 0,
+    );
+  }
+
   /// Wo in jeder einzelnen Datei eines Werks jemand steht.
   ///
   /// Nur dort geführt, wo Dateien für sich stehen: eine Podcast-Folge hört

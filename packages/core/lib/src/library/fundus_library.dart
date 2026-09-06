@@ -1268,6 +1268,11 @@ final class FundusLibrary {
     int limit = 500,
   }) => _database.progressChangedSince(since, limit: limit);
 
+  /// Was ein Werk belegt und wie groß sein Bild ist.
+  ({int bytes, int? width, int? height, int files}) workStorage(
+    String workId,
+  ) => _database.workStorage(workId);
+
   /// Wo in jeder Datei eines Werks jemand steht — für Werke, deren Dateien
   /// für sich stehen (eine Podcast-Folge, nicht das Kapitel eines Hörbuchs).
   Map<String, ({double position, double? total, DateTime updatedAt})>
