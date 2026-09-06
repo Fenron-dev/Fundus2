@@ -11,10 +11,20 @@ import 'work_poster.dart';
 /// made a library look like a spreadsheet. On a narrow screen the columns
 /// stack into two lines rather than being squeezed into four.
 class WorkRow extends StatelessWidget {
-  const WorkRow({super.key, required this.work, required this.onTap});
+  const WorkRow({
+    super.key,
+    required this.work,
+    required this.onTap,
+    this.onLongPress,
+    this.selected = false,
+  });
 
   final WorkView work;
   final VoidCallback onTap;
+
+  /// Beginnt die Mehrfachauswahl.
+  final VoidCallback? onLongPress;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -29,10 +39,11 @@ class WorkRow extends StatelessWidget {
         vertical: 2,
       ),
       child: Material(
-        color: Colors.transparent,
+        color: selected ? tokens.accentTint(0.22) : Colors.transparent,
         borderRadius: FundusRadius.mdAll,
         child: InkWell(
           onTap: onTap,
+          onLongPress: onLongPress,
           borderRadius: FundusRadius.mdAll,
           hoverColor: tokens.hover,
           child: Padding(

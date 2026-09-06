@@ -9,6 +9,7 @@ import '../../data/media_type.dart';
 import '../../data/work_filter.dart';
 import '../../data/work_view.dart';
 import '../lists/lists_screen.dart';
+import '../work/batch_editor.dart';
 import '../work/bulk_metadata.dart';
 import 'stage_screen.dart';
 import 'work_grid.dart';
@@ -19,10 +20,25 @@ import 'work_row.dart';
 /// It does not branch on where a work came from — origin is a column and a
 /// filter. The "Ordnen nach" switch lays the same works out differently;
 /// filters keep applying in every one of them, the folder view included.
-class LibraryScreen extends StatelessWidget {
+class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key, required this.route});
 
   final LibraryRoute route;
+
+  @override
+  State<LibraryScreen> createState() => _LibraryScreenState();
+}
+
+class _LibraryScreenState extends State<LibraryScreen> {
+  /// Die ausgewählten Werke, solange ausgewählt wird. Leer heißt: es wird
+  /// nicht ausgewählt, und ein Tipp öffnet wieder.
+  final _selected = <String>{};
+
+  LibraryRoute get route => widget.route;
+
+  void _toggle(WorkView work) => setState(() {
+    if (!_selected.remove(work.id)) _selected.add(work.id);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -57,6 +73,19 @@ class LibraryScreen extends StatelessWidget {
               ? _empty(context, scope)
               : _body(context, scope, works, grouping, type),
         ),
+        if (_selected.isNotEmpty)
+          _SelectionBar(
+            works: [
+              for (final work in works)
+                if (_selected.contains(work.id)) work,
+            ],
+            onClear: () => setState(_selected.clear),
+            onSelectAll: () => setState(() {
+              _selected
+                ..clear()
+                ..addAll(works.map((work) => work.id));
+            }),
+          ),
       ],
     );
   }
@@ -123,13 +152,23 @@ class LibraryScreen extends StatelessWidget {
           scope.filter.text.isEmpty) {
         return StageScreen(works: works, type: type, onOpen: open);
       }
-      return WorkGrid(works: works, onOpen: open);
+      return WorkGrid(
+        works: works,
+        onOpen: open,
+        selected: _selected,
+        onSelect: _toggle,
+      );
     }
     if (grouping == GroupingMode.table) {
       return ListView.builder(
         itemCount: works.length,
-        itemBuilder: (context, index) =>
-            WorkRow(work: works[index], onTap: () => open(works[index])),
+        itemBuilder: (context, index) => WorkRow(
+          work: works[index],
+          selected: _selected.contains(works[index].id),
+          onTap: () =>
+              _selected.isEmpty ? open(works[index]) : _toggle(works[index]),
+          onLongPress: () => _toggle(works[index]),
+        ),
       );
     }
 
@@ -303,6 +342,98 @@ class _GroupRow extends StatelessWidget {
 /// looks at their own library, one tap away and combinable. Several at once
 /// read as „and also". They live in the vault, so the phone has the same
 /// ones.
+/// Was mit den ausgewählten Werken geschehen kann.
+///
+/// Mehrere Werke auf einmal zu pflegen ist der Normalfall, sobald eine Reihe
+/// im Spiel ist: zwölf Bände eines Hörbuchs haben denselben Autor, denselben
+/// Verlag und dieselbe Reihe, und die einzeln einzutragen ist Arbeit ohne
+/// Erkenntnis.
+class _SelectionBar extends StatelessWidget {
+  const _SelectionBar({
+    required this.works,
+    required this.onClear,
+    required this.onSelectAll,
+  });
+
+  final List<WorkView> works;
+  final VoidCallback onClear;
+  final VoidCallback onSelectAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+    final writable = scope.library.library?.isReadOnly == false;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surface,
+        border: Border(top: BorderSide(color: tokens.divider)),
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: FundusSpace.x4,
+        vertical: FundusSpace.x3,
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            Text(
+              '${works.length} ausgewählt',
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(width: FundusSpace.x4),
+            TextButton(onPressed: onSelectAll, child: const Text('Alle')),
+            const SizedBox(width: FundusSpace.x2),
+            TextButton(onPressed: onClear, child: const Text('Aufheben')),
+            const SizedBox(width: FundusSpace.x4),
+            FilledButton.icon(
+              onPressed: !writable || works.isEmpty
+                  ? null
+                  : () => unawaited(_edit(context, scope)),
+              icon: Icon(FundusIcons.edit, size: FundusIcons.sizeSm),
+              label: const Text('Gemeinsam bearbeiten'),
+            ),
+            const SizedBox(width: FundusSpace.x2),
+            OutlinedButton.icon(
+              onPressed: !writable || works.isEmpty
+                  ? null
+                  : () => unawaited(_match(context, scope)),
+              icon: Icon(FundusIcons.search, size: FundusIcons.sizeSm),
+              label: const Text('Details abgleichen'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _edit(BuildContext context, FundusScopeState scope) async {
+    final vault = scope.library.library;
+    if (vault == null) return;
+    final changed = await showBatchEditor(
+      context,
+      library: vault,
+      works: works,
+    );
+    if (changed) scope.library.refresh();
+  }
+
+  Future<void> _match(BuildContext context, FundusScopeState scope) async {
+    final vault = scope.library.library;
+    if (vault == null) return;
+    await showBulkMetadata(
+      context,
+      works: works,
+      library: vault,
+      settings: scope.settings,
+      onChanged: scope.library.refresh,
+      mediaTypeId: works.first.mediaType?.id,
+    );
+  }
+}
+
 /// Die Leiste über jedem Regal: filtern, ordnen, merken.
 ///
 /// Sie steht hier und nicht in der Kopfzeile, weil sie zum Regal gehört —

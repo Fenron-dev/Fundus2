@@ -16,11 +16,19 @@ class WorkGrid extends StatelessWidget {
     required this.works,
     required this.onOpen,
     this.padding,
+    this.selected = const {},
+    this.onSelect,
   });
 
   final List<WorkView> works;
   final void Function(WorkView) onOpen;
   final EdgeInsets? padding;
+
+  /// Die Werke, die zur Auswahl gehören.
+  final Set<String> selected;
+
+  /// Null heißt: hier wird nicht ausgewählt.
+  final void Function(WorkView)? onSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +69,14 @@ class WorkGrid extends StatelessWidget {
           itemBuilder: (context, index) => WorkPoster(
             work: works[index],
             width: width,
-            onTap: () => onOpen(works[index]),
+            selected: selected.contains(works[index].id),
+            // Während ausgewählt wird, wählt ein Tipp aus. Sonst öffnet er.
+            onTap: () => selected.isEmpty || onSelect == null
+                ? onOpen(works[index])
+                : onSelect!(works[index]),
+            onLongPress: onSelect == null
+                ? null
+                : () => onSelect!(works[index]),
           ),
         );
       },

@@ -44,6 +44,8 @@ class WorkPoster extends StatefulWidget {
     required this.onTap,
     required this.width,
     this.showName = true,
+    this.onLongPress,
+    this.selected = false,
   });
 
   final WorkView work;
@@ -52,6 +54,12 @@ class WorkPoster extends StatefulWidget {
 
   /// A rail names its works; a stage's row of thumbnails does not need to.
   final bool showName;
+
+  /// Beginnt die Mehrfachauswahl. Null, wo es nichts auszuwählen gibt.
+  final VoidCallback? onLongPress;
+
+  /// Ob dieses Werk zur Auswahl gehört.
+  final bool selected;
 
   @override
   State<WorkPoster> createState() => _WorkPosterState();
@@ -73,6 +81,7 @@ class _WorkPosterState extends State<WorkPoster> {
         onExit: (_) => setState(() => _hovered = false),
         child: GestureDetector(
           onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
           behavior: HitTestBehavior.opaque,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -95,7 +104,36 @@ class _WorkPosterState extends State<WorkPoster> {
                       ),
                     ],
                   ),
-                  child: WorkArtwork(work: work),
+                  child: Stack(
+                    children: [
+                      WorkArtwork(work: work),
+                      // Ausgewählt: ein Haken auf dem Bild und ein Rahmen
+                      // darum. Beides zusammen, weil ein Rahmen allein auf
+                      // einem dunklen Cover kaum zu sehen ist.
+                      if (widget.selected)
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: FundusArtwork.posterRadius,
+                              color: tokens.accentTint(0.35),
+                              border: Border.fromBorderSide(
+                                BorderSide(color: tokens.accent, width: 2),
+                              ),
+                            ),
+                            child: Align(
+                              alignment: Alignment.topLeft,
+                              child: Padding(
+                                padding: const EdgeInsets.all(FundusSpace.x2),
+                                child: Icon(
+                                  FundusIcons.finished,
+                                  color: tokens.accent,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
               if (widget.showName) ...[
