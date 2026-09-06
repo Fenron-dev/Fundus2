@@ -27,20 +27,41 @@ class ReaderScreen extends StatelessWidget {
 
     final tokens = context.fundus;
 
+    // Die Leisten liegen über der Seite, nicht neben ihr.
+    //
+    // Als Spalte gebaut, änderte jedes Ein- und Ausblenden die Höhe der
+    // Lesefläche — und ein Streifen, dessen Fenster sich ändert, rechnet
+    // seine Position neu. Beim Tippen in die Mitte sprang das Bild deshalb
+    // an den Anfang des Kapitels. Jetzt bleibt die Fläche, wie sie ist, und
+    // die Leisten sind Gäste darüber.
     return ColoredBox(
       color: tokens.background,
-      child: SafeArea(
-        top: reader.showsChrome,
-        bottom: false,
-        child: Column(
-          children: [
-            if (reader.showsChrome) const _ReaderBar(),
-            const Expanded(child: _ReaderSurface()),
-            // Die Leiste unten ist der Daumenbereich: das Kapitel davor, die
-            // Leserichtung, das Kapitel danach — und wo man im Band steht.
-            if (reader.showsChrome) const _ChapterBar(),
-          ],
-        ),
+      child: Stack(
+        children: [
+          const Positioned.fill(child: _ReaderSurface()),
+          if (reader.showsChrome)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: ColoredBox(
+                color: tokens.background,
+                child: const SafeArea(bottom: false, child: _ReaderBar()),
+              ),
+            ),
+          // Die Leiste unten ist der Daumenbereich: das Kapitel davor, die
+          // Leserichtung, das Kapitel danach — und wo man im Band steht.
+          if (reader.showsChrome)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: ColoredBox(
+                color: tokens.background,
+                child: const SafeArea(top: false, child: _ChapterBar()),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -282,15 +303,21 @@ class _ReaderSurface extends StatelessWidget {
     // read right to left, or the zones were deliberately swapped.
     var leftGoesBack = !reader.isRightToLeft;
     if (reader.profile.invertTapZones) leftGoesBack = !leftGoesBack;
+    // Ist die Ansicht vergrößert, gehört jede Berührung ihr: wer eine
+    // herangeholte Seite mit dem Finger verschiebt, blättert nicht um.
     return [
       Positioned(
         left: 0,
         top: 0,
         bottom: 0,
         width: edge,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: leftGoesBack ? reader.previousPage : reader.nextPage,
+        child: IgnorePointer(
+          ignoring: reader.isZoomed,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: leftGoesBack ? reader.previousPage : reader.nextPage,
+            onDoubleTap: reader.toggleZoom,
+          ),
         ),
       ),
       Positioned(
@@ -298,9 +325,16 @@ class _ReaderSurface extends StatelessWidget {
         right: edge,
         top: 0,
         bottom: 0,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: reader.toggleChrome,
+        child: IgnorePointer(
+          ignoring: reader.isZoomed,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: reader.toggleChrome,
+            // Der Doppeltipp holt heran. Auf einem Telefon ist er die
+            // verlässlichere Geste als das Kneifen, weil er sich mit dem
+            // Scrollen des Streifens nicht streitet.
+            onDoubleTap: reader.toggleZoom,
+          ),
         ),
       ),
       Positioned(
@@ -308,9 +342,13 @@ class _ReaderSurface extends StatelessWidget {
         top: 0,
         bottom: 0,
         width: edge,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: leftGoesBack ? reader.nextPage : reader.previousPage,
+        child: IgnorePointer(
+          ignoring: reader.isZoomed,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: leftGoesBack ? reader.nextPage : reader.previousPage,
+            onDoubleTap: reader.toggleZoom,
+          ),
         ),
       ),
     ];
@@ -355,26 +393,29 @@ class _PagedPagesState extends State<_PagedPages> {
       });
     }
 
-    return PageView.builder(
-      controller: _controller,
-      reverse: reader.isRightToLeft,
-      itemCount: groups.length,
-      onPageChanged: (index) {
-        _attachedTo = index;
-        reader.goToPage(groups[index].first);
-      },
-      itemBuilder: (context, index) {
-        final group = groups[index];
-        if (group.length == 1) {
-          return _Page(index: group.single);
-        }
-        final pages = [
-          for (final page in group) Expanded(child: _Page(index: page)),
-        ];
-        return Row(
-          children: reader.isRightToLeft ? pages.reversed.toList() : pages,
-        );
-      },
+    return _ZoomWindow(
+      builder: (context, zoomed) => PageView.builder(
+        controller: _controller,
+        physics: zoomed ? const NeverScrollableScrollPhysics() : null,
+        reverse: reader.isRightToLeft,
+        itemCount: groups.length,
+        onPageChanged: (index) {
+          _attachedTo = index;
+          reader.goToPage(groups[index].first);
+        },
+        itemBuilder: (context, index) {
+          final group = groups[index];
+          if (group.length == 1) {
+            return _Page(index: group.single);
+          }
+          final pages = [
+            for (final page in group) Expanded(child: _Page(index: page)),
+          ];
+          return Row(
+            children: reader.isRightToLeft ? pages.reversed.toList() : pages,
+          );
+        },
+      ),
     );
   }
 }
@@ -466,14 +507,12 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
     // im Hintergrund. Der Streifen bleibt dabei ein Streifen — gezoomt wird
     // die Ansicht, nicht die Seite, und beim Loslassen bleibt es, wo es ist,
     // bis jemand mit zwei Fingern zurückgeht.
-    return InteractiveViewer(
-      maxScale: 5,
-      // Ohne dies fängt jede Wischbewegung der Zoom-Ansicht an und das
-      // Blättern hört auf.
-      panEnabled: false,
-      scaleEnabled: true,
-      child: ListView.builder(
+    return _ZoomWindow(
+      builder: (context, zoomed) => ListView.builder(
         controller: _scroll,
+        // Ist etwas herangeholt, hält die Liste still: dann will man sich auf
+        // der Seite bewegen, nicht weiterscrollen.
+        physics: zoomed ? const NeverScrollableScrollPhysics() : null,
         scrollDirection: horizontal ? Axis.horizontal : Axis.vertical,
         reverse: horizontal && reader.isRightToLeft,
         itemCount: reader.pageCount,
@@ -492,6 +531,85 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
           );
         },
       ),
+    );
+  }
+}
+
+/// Das Fenster auf die Seite, das sich heranholen lässt.
+///
+/// Hineinzoomen gehört zum Lesen: eine Fußnote in einem Scan, ein Schild im
+/// Hintergrund. Vergrößert wird dabei die Ansicht, nicht die Seite — der
+/// Streifen bleibt ein Streifen und die Reihe eine Reihe.
+///
+/// Solange nichts herangeholt ist, gehört jeder Wisch dem Blättern; sonst
+/// fingen Liste und Zoom-Ansicht an, sich um jede Bewegung zu streiten, und
+/// auf dem Telefon reagierte das Kneifen kaum. Ist etwas herangeholt, ist es
+/// andersherum. Der Doppeltipp ist der verlässliche Weg dazwischen.
+class _ZoomWindow extends StatefulWidget {
+  const _ZoomWindow({required this.builder});
+
+  final Widget Function(BuildContext context, bool zoomed) builder;
+
+  @override
+  State<_ZoomWindow> createState() => _ZoomWindowState();
+}
+
+class _ZoomWindowState extends State<_ZoomWindow> {
+  final _view = TransformationController();
+  int _lastZoomRequest = 0;
+
+  /// Wie weit ein Doppeltipp heranholt: genug, um eine Fußnote zu lesen,
+  /// nicht so weit, dass man sich verliert.
+  static const _doubleTapScale = 2.5;
+
+  @override
+  void initState() {
+    super.initState();
+    _view.addListener(_reportZoom);
+  }
+
+  @override
+  void dispose() {
+    _view.removeListener(_reportZoom);
+    _view.dispose();
+    super.dispose();
+  }
+
+  double get _scale => _view.value.getMaxScaleOnAxis();
+  bool get _zoomed => _scale > 1.01;
+
+  void _reportZoom() {
+    if (!mounted) return;
+    setState(() {});
+    FundusScope.of(context).reader.reportZoom(_scale);
+  }
+
+  /// Holt heran oder wieder weg — die Antwort auf einen Doppeltipp.
+  void _toggleZoom() {
+    _view.value = _zoomed
+        ? Matrix4.identity()
+        : (Matrix4.identity()
+            ..scaleByDouble(_doubleTapScale, _doubleTapScale, 1, 1));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = FundusScope.of(context).reader;
+    // Der Doppeltipp kommt von den Tippflächen darüber; hier wird er
+    // beantwortet.
+    if (_lastZoomRequest != reader.zoomRequest) {
+      _lastZoomRequest = reader.zoomRequest;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _toggleZoom();
+      });
+    }
+
+    return InteractiveViewer(
+      transformationController: _view,
+      maxScale: 5,
+      panEnabled: _zoomed,
+      scaleEnabled: true,
+      child: widget.builder(context, _zoomed),
     );
   }
 }
@@ -569,11 +687,10 @@ class _Page extends StatelessWidget {
     }
 
     return switch (reader.profile.pageScale) {
-      PublicationPageScale.fitScreen => InteractiveViewer(
-        maxScale: 6,
-        child: SizedBox.expand(
-          child: FittedBox(fit: BoxFit.contain, child: image),
-        ),
+      // Herangeholt wird eine Ebene höher, für die ganze Ansicht; ein
+      // zweiter Zoom in der Seite selbst stritte mit ihm um jede Berührung.
+      PublicationPageScale.fitScreen => SizedBox.expand(
+        child: FittedBox(fit: BoxFit.contain, child: image),
       ),
       PublicationPageScale.fitWidth => SingleChildScrollView(
         child: Image.file(

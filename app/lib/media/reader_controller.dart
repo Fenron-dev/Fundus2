@@ -470,6 +470,33 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Wie weit hineingezoomt ist, und ob überhaupt.
+  ///
+  /// Der Leser selbst zoomt nicht — das tut die Ansicht. Er weiß es aber,
+  /// weil die Tippflächen es wissen müssen: wer eine vergrößerte Seite mit
+  /// dem Finger verschiebt, blättert nicht um.
+  double _zoom = 1;
+  bool get isZoomed => _zoom > 1.01;
+
+  void reportZoom(double value) {
+    final was = isZoomed;
+    _zoom = value;
+    if (was != isZoomed) notifyListeners();
+  }
+
+  /// Ein Doppeltipp, der die Ansicht heran- und wieder wegholt.
+  ///
+  /// Die Geste kommt von den Tippflächen, die über der Seite liegen; gezoomt
+  /// wird eine Ebene tiefer. Der Zähler ist die Nachricht dazwischen — er
+  /// steigt, und die Ansicht sieht daran, dass sie gemeint ist.
+  int _zoomRequest = 0;
+  int get zoomRequest => _zoomRequest;
+
+  void toggleZoom() {
+    _zoomRequest++;
+    notifyListeners();
+  }
+
   void showChrome() {
     if (_chrome) return;
     _chrome = true;

@@ -7,6 +7,7 @@ import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/app/fundus_scope.dart';
 import 'package:fundus/app/shell/fundus_shell.dart';
 import 'package:fundus/media/playback_controller.dart';
+import 'package:fundus/features/reader/reader_screen.dart';
 import 'package:fundus/media/reader_controller.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/media_type.dart';
@@ -98,9 +99,32 @@ void main() {
     expect(engine.opened, isEmpty, reason: 'Der Player wurde angeworfen');
     // Geöffnet wird im Vollbild, also ohne Leiste — ein Tipp holt sie zurück.
     expect(reader.showsChrome, isFalse);
+    // Die Lesefläche ändert dabei ihre Größe nicht. Als Spalte gebaut, tat
+    // sie das — und ein Streifen, dessen Fenster sich ändert, sprang beim
+    // Tippen in die Mitte an den Anfang des Kapitels.
+    final before = tester.getSize(find.byType(ReaderScreen));
     reader.showChrome();
     await tester.pump();
+    expect(tester.getSize(find.byType(ReaderScreen)), before);
     expect(find.textContaining('Seite 1 von 12'), findsWidgets);
+
+    // Ein Doppeltipp holt heran; danach gehört jede Berührung der Seite und
+    // nicht mehr dem Umblättern.
+    expect(reader.isZoomed, isFalse);
+    reader.toggleZoom();
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+    expect(reader.isZoomed, isTrue);
+    reader.toggleZoom();
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+    expect(reader.isZoomed, isFalse);
   });
 
   testWidgets('eine Light Novel öffnet den Textleser', (tester) async {
