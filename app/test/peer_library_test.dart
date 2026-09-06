@@ -45,6 +45,13 @@ void main() {
       '${work.path}/01 - Anfang.mp3',
     ).writeAsBytes(List.filled(2048, 7));
 
+    // Ein Album: mehrere Stücke in einem Werk.
+    final album = Directory('${source.path}/Musik/Kraftwerk/Autobahn');
+    await album.create(recursive: true);
+    for (final track in ['01', '02']) {
+      await File('${album.path}/$track.mp3').writeAsBytes(List.filled(512, 3));
+    }
+
     // Und ein Manga, denn genau der ließ sich vom Handy aus nicht öffnen.
     final manga = Directory('${source.path}/Manga/Klingenwind');
     await manga.create(recursive: true);
@@ -376,6 +383,70 @@ void main() {
       expect(library.library!.progressChoice(workId), isNotNull);
     },
   );
+
+  /// Bei einem Album ist dieselbe Datei ein Titel unter vielen. Zwei
+  /// Sekundenangaben im selben Lied sind dann keine Frage, sondern nur die
+  /// Frage danach, wer weiter ist — und genau das wanderte nicht mit.
+  test('im selben Titel gewinnt die weitere Stelle ohne Frage', () async {
+    await peers.connect(peer());
+    final album = library.works.firstWhere((work) => work.title == 'Autobahn');
+    final tracks = theirs.playbackTracks(album.id);
+    expect(tracks.length, greaterThan(1));
+    final fileId = tracks.first.fileId;
+
+    library.library!.saveProgress(
+      workId: album.id,
+      fileId: fileId,
+      position: const Duration(seconds: 80),
+      deviceId: 'handy',
+    );
+    theirs.saveProgress(
+      workId: album.id,
+      fileId: fileId,
+      position: const Duration(seconds: 160),
+      deviceId: 'mac',
+    );
+    final sync = SyncController(settings: settings, library: library);
+    addTearDown(sync.dispose);
+
+    await sync.pullRecent();
+
+    expect(
+      library.library!.loadProgress(album.id)!.position.numericValue,
+      closeTo(160, 1),
+    );
+    expect(library.library!.progressChoice(album.id), isNull);
+  });
+
+  test('im selben Titel bleibt die weitere Stelle auch stehen', () async {
+    await peers.connect(peer());
+    final album = library.works.firstWhere((work) => work.title == 'Autobahn');
+    final fileId = theirs.playbackTracks(album.id).first.fileId;
+
+    library.library!.saveProgress(
+      workId: album.id,
+      fileId: fileId,
+      position: const Duration(seconds: 160),
+      deviceId: 'handy',
+    );
+    theirs.saveProgress(
+      workId: album.id,
+      fileId: fileId,
+      position: const Duration(seconds: 80),
+      deviceId: 'mac',
+    );
+    final sync = SyncController(settings: settings, library: library);
+    addTearDown(sync.dispose);
+
+    await sync.pullRecent();
+
+    expect(
+      library.library!.loadProgress(album.id)!.position.numericValue,
+      closeTo(160, 1),
+    );
+    // Und gefragt wird auch nicht: es gibt nichts zu entscheiden.
+    expect(library.library!.progressChoice(album.id), isNull);
+  });
 
   test('der Zeitpunkt eines Standes überlebt die Reise', () async {
     await peers.connect(peer());

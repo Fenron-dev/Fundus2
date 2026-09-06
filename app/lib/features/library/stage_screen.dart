@@ -48,7 +48,6 @@ class _StageScreenState extends State<StageScreen> {
   ///
   /// A suggestion that changes under your hand while you are reading it is
   /// not a suggestion. „Neu würfeln" is the way to change it, on purpose.
-  int _seed = DateTime.now().millisecondsSinceEpoch;
 
   List<WorkView> get _continuing {
     final open = widget.works
@@ -74,7 +73,8 @@ class _StageScreenState extends State<StageScreen> {
   }
 
   List<WorkView> get _surprise {
-    final all = [...widget.works]..shuffle(Random(_seed));
+    final seed = FundusScope.of(context).suggestionSeed;
+    final all = [...widget.works]..shuffle(Random(seed));
     return all.take(20).toList(growable: false);
   }
 
@@ -84,7 +84,9 @@ class _StageScreenState extends State<StageScreen> {
     // „was jetzt?" — and otherwise a draw from the whole shelf.
     final open = _continuing;
     final pool = open.isEmpty ? widget.works : open;
-    return pool[Random(_seed).nextInt(pool.length)];
+    return pool[Random(
+      FundusScope.of(context).suggestionSeed,
+    ).nextInt(pool.length)];
   }
 
   @override
@@ -104,8 +106,7 @@ class _StageScreenState extends State<StageScreen> {
               onOpen: () => widget.onOpen(feature),
               onDetails: () =>
                   FundusScope.of(context).navigation.go(WorkRoute(feature.id)),
-              onReroll: () =>
-                  setState(() => _seed = DateTime.now().millisecondsSinceEpoch),
+              onReroll: FundusScope.of(context).reshuffleSuggestion,
             ),
           ),
         if (continuing.isNotEmpty)
@@ -131,11 +132,18 @@ class _StageScreenState extends State<StageScreen> {
             works: _surprise,
             stage: stage,
             onOpen: widget.onOpen,
-            action: TextButton(
-              onPressed: () =>
-                  setState(() => _seed = DateTime.now().millisecondsSinceEpoch),
-              child: const Text('Neu mischen'),
-            ),
+            // Auf dem Telefon ist „Neu mischen" ein Zeichen: nebeneinander
+            // blieb von der Überschrift „Zufällig en…" übrig.
+            action: stage == FundusStageSize.handset
+                ? IconButton(
+                    onPressed: FundusScope.of(context).reshuffleSuggestion,
+                    tooltip: 'Neu mischen',
+                    icon: Icon(FundusIcons.shuffle, size: FundusIcons.sizeMd),
+                  )
+                : TextButton(
+                    onPressed: FundusScope.of(context).reshuffleSuggestion,
+                    child: const Text('Neu mischen'),
+                  ),
           ),
         ),
         SliverPadding(

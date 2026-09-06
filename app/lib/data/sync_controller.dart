@@ -380,6 +380,16 @@ class SyncController extends ChangeNotifier {
     final furtherHere =
         mine != null &&
         comparePositions(mine.position, theirs.position, fileOrder: order) > 0;
+    // Derselbe Titel, nur eine andere Sekunde, ist keine Frage: gemeint ist
+    // die weitere Stelle. Gefragt wird, wenn zwei Geräte an verschiedenen
+    // Stücken eines Werks stehen — oder wenn das Werk nur aus einem Stück
+    // besteht, denn dann ist dieselbe Datei das ganze Werk.
+    final sameFile =
+        mine != null &&
+        order.length > 1 &&
+        mine.position.fileId != null &&
+        mine.position.fileId == theirs.position.fileId;
+    if (furtherHere && sameFile) return false;
     if (furtherHere) {
       vault.recordProgressChoice(
         LibraryProgressChoice(

@@ -423,6 +423,20 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
   }
 
+  /// Der Würfel hinter „Vorschlag für heute".
+  ///
+  /// Für heute heißt: für heute. Vorher wurde bei jedem Aufbau neu gewürfelt
+  /// — einmal vor und zurück, und der Vorschlag war ein anderer, was ihn zu
+  /// keinem Vorschlag mehr machte, sondern zu einem Rauschen. Der Wert
+  /// wechselt jetzt mit dem Tag, und dazwischen nur, wenn jemand „neu
+  /// mischen" drückt.
+  int _reshuffles = 0;
+
+  int get suggestionSeed =>
+      DateTime.now().difference(DateTime.utc(2020)).inDays * 97 + _reshuffles;
+
+  void reshuffleSuggestion() => _bump(() => _reshuffles++);
+
   /// Zeigt alles, was dieses Schlagwort trägt.
   ///
   /// „Leisure" auf einer Werkseite ist keine Beschriftung, sondern eine
@@ -799,6 +813,30 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       vault.clearProgressChoice(work.id);
       return;
     }
+    // Derselbe Titel, nur eine andere Sekunde: das ist keine Frage.
+    //
+    // Ein Fenster, das fragen will, ob man bei 1:20 oder bei 2:40 desselben
+    // Liedes weiterhören möchte, hilft niemandem — gemeint ist die weitere
+    // Stelle. Zu fragen lohnt erst, wenn zwei Geräte an verschiedenen Stücken
+    // eines Werks stehen: eine andere Folge, ein anderer Titel. Genau daran
+    // lag es, dass die Stelle im Lied nicht mitwanderte: die Frage kam, und
+    // wer sie wegtippt, bleibt, wo er war.
+    //
+    // Bei einem Werk aus einer einzigen Datei — einem Film, einem Hörbuch am
+    // Stück — ist dieselbe Datei dagegen das ganze Werk, und zwei weit
+    // auseinanderliegende Stellen sind sehr wohl eine Frage.
+    final pieces = vault.playbackTracks(work.id).length;
+    if (mine != null &&
+        pieces > 1 &&
+        _sameFile(mine.position, other.position)) {
+      if (comparePositions(other.position, mine.position) > 0) {
+        vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
+      } else {
+        vault.clearProgressChoice(work.id);
+      }
+      library.refreshWork(work.id);
+      return;
+    }
     // Somebody who has said „immer die weiteste Stelle" has answered this
     // question once and for all; asking again is not asking, it is nagging.
     if (settings.alwaysFurthestPosition) {
@@ -884,6 +922,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   }
 
   /// Two positions that are the same place are not a question.
+  /// Ob beide Stände dieselbe Datei meinen — denselben Titel, dieselbe Folge.
+  static bool _sameFile(MediaPosition left, MediaPosition right) =>
+      left.fileId != null && left.fileId == right.fileId;
+
   static bool _samePlace(MediaPosition left, MediaPosition right) =>
       left.kind == right.kind &&
       left.fileId == right.fileId &&

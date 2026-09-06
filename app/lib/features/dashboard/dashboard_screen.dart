@@ -23,10 +23,6 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  /// Drawn once and kept while the screen is open. A suggestion that changes
-  /// under your hand as you read it is not a suggestion.
-  int _seed = DateTime.now().millisecondsSinceEpoch;
-
   @override
   void initState() {
     super.initState();
@@ -90,8 +86,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _Spotlights(
             picks: picks,
             stage: stage,
-            onReroll: () =>
-                setState(() => _seed = DateTime.now().millisecondsSinceEpoch),
+            onReroll: scope.reshuffleSuggestion,
           ),
         ],
         if (continuing.isNotEmpty) ...[
@@ -250,7 +245,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final wanted = FundusStageSize.of(context) == FundusStageSize.handset
         ? 1
         : 2;
-    final pool = [...works]..shuffle(Random(_seed));
+    final pool = [...works]
+      ..shuffle(Random(FundusScope.of(context).suggestionSeed));
     return pool.take(wanted.clamp(1, pool.length)).toList(growable: false);
   }
 }
