@@ -116,7 +116,10 @@ Falls bisher nur die alten, wechselnden Debug-APK installiert wurden, muss die
 erste APK mit dem stabilen Schlüssel noch einmal von Hand installiert werden
 (einmalig alte Installation entfernen). Ab dann geht jedes Update in place,
 und die Kopplung sowie Offline-Kopien bleiben erhalten. Der Schlüssel darf
-niemals ins Repository committed werden.
+niemals ins Repository committed werden. Bei einem öffentlichen Repository
+sollten außerdem nur vertrauenswürdige Personen Schreibrechte und die
+Möglichkeit haben, GitHub-Workflows zu ändern: Der Keystore ist die
+Signaturidentität der App, nicht bloß ein Versionszähler.
 
 Dasselbe gilt für die heruntergeladenen Medien. Sie liegen im App-Speicher
 des Geräts — dort, wo auch die Kopplung liegt —, und Android räumt diesen
