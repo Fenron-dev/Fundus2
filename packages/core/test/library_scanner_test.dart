@@ -69,4 +69,70 @@ void main() {
 
     expect(events.last.kind, ScanEventKind.cancelled);
   });
+
+  /// Über eine Netzfreigabe kostet jede Frage einen Weg hin und zurück. Sie
+  /// gleichzeitig zu stellen ist der ganze Unterschied zwischen zwei Minuten
+  /// und ein paar Sekunden — herauskommen muss dabei dasselbe.
+  test('gleichzeitig gefragt kommt heraus, was einzeln herauskommt', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-gleichzeitig-');
+    addTearDown(() => root.delete(recursive: true));
+    for (final album in ['Kraftwerk/Autobahn', 'Kraftwerk/Radio-Aktivität']) {
+      final folder = Directory(p.join(root.path, 'Musik', album));
+      await folder.create(recursive: true);
+      for (var track = 1; track <= 40; track++) {
+        await File(
+          p.join(folder.path, '${track.toString().padLeft(2, '0')}.mp3'),
+        ).writeAsBytes(List.filled(track, 1));
+      }
+    }
+
+    Future<List<ScannedFile>> walk(int atOnce) async {
+      final events = await LibraryScanner(
+        filesAtOnce: atOnce,
+      ).scan(root).toList();
+      expect(events.last.kind, ScanEventKind.completed);
+      return events
+          .map((event) => event.file)
+          .whereType<ScannedFile>()
+          .toList();
+    }
+
+    final oneByOne = await walk(1);
+    final together = await walk(16);
+
+    expect(oneByOne, hasLength(80));
+    // Reihenfolge und Inhalt: von der Gleichzeitigkeit ist nichts zu merken.
+    expect(
+      together.map((file) => file.relativePath),
+      oneByOne.map((file) => file.relativePath),
+    );
+    expect(
+      together.map((file) => file.size),
+      oneByOne.map((file) => file.size),
+    );
+    // Und jede Datei genau einmal.
+    expect(together.map((file) => file.relativePath).toSet(), hasLength(80));
+  });
+
+  test('ein Abbruch zwischen zwei Bündeln hört auf', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-abbruch-');
+    addTearDown(() => root.delete(recursive: true));
+    for (var track = 1; track <= 12; track++) {
+      await File(p.join(root.path, '$track.mp3')).writeAsBytes([1]);
+    }
+    final token = ScanCancellationToken();
+
+    final events = <ScanEvent>[];
+    await for (final event in LibraryScanner(
+      filesAtOnce: 4,
+    ).scan(root, cancellationToken: token)) {
+      events.add(event);
+      if (events.where((e) => e.kind == ScanEventKind.file).length == 4) {
+        token.cancel();
+      }
+    }
+
+    expect(events.last.kind, ScanEventKind.cancelled);
+    expect(events.where((e) => e.kind == ScanEventKind.file), hasLength(4));
+  });
 }

@@ -93,10 +93,20 @@ base class LibraryScanner {
       '.fseventsd',
     },
     this.ignoredFileNames = const {'.DS_Store', 'Thumbs.db'},
+    this.filesAtOnce = 16,
   });
 
   final Set<String> ignoredDirectoryNames;
   final Set<String> ignoredFileNames;
+
+  /// Wie viele Dateien einer Ablage gleichzeitig gefragt werden.
+  ///
+  /// Auf der eigenen Platte ist das gleich, dort kostet eine Frage nichts.
+  /// Über eine Netzfreigabe kostet jede Frage einen Weg hin und zurück —
+  /// gemessen elf Millisekunden, und bei zehntausend Dateien sind das zwei
+  /// Minuten, in denen nichts passiert außer Warten. Gleichzeitig gefragt,
+  /// wartet man einmal statt sechzehnmal.
+  final int filesAtOnce;
 
   /// Walks [root] and reports every file it finds.
   ///
@@ -154,6 +164,11 @@ base class LibraryScanner {
       final directory = pending.removeLast();
       final directoryPath = p.normalize(directory.absolute.path);
       if (!visitedDirectories.add(directoryPath)) continue;
+
+      // Erst wird die Ablage gelesen, dann werden ihre Dateien gefragt. Vorher
+      // war beides ineinander: jede Datei einzeln, und zwischen zwei Fragen
+      // stand die Freigabe still.
+      final files = <File>[];
       try {
         await for (final entity in directory.list(followLinks: false)) {
           if (cancellationToken?.isCancelled ?? false) {
@@ -173,62 +188,7 @@ base class LibraryScanner {
               name.startsWith('._')) {
             continue;
           }
-
-          try {
-            final stat = await entity.stat();
-            final extension = p
-                .extension(name)
-                .toLowerCase()
-                .replaceFirst('.', '');
-            final relative = p.relative(entity.absolute.path, from: rootPath);
-            if (relative == '..' || relative.startsWith('../')) {
-              yield ScanEvent(
-                kind: ScanEventKind.skipped,
-                visitedFiles: visited,
-                path: entity.path,
-              );
-              continue;
-            }
-            final portableRelative = p.posix.joinAll(p.split(relative));
-            // SMB providers can return an entry more than once while
-            // generated files are changing during a scan.
-            if (!visitedFiles.add(portableRelative)) continue;
-            visited++;
-            final known =
-                isUnchanged?.call(portableRelative, stat.size, stat.modified) ??
-                false;
-            yield ScanEvent(
-              kind: ScanEventKind.file,
-              visitedFiles: visited,
-              file: ScannedFile(
-                absolutePath: entity.absolute.path,
-                relativePath: portableRelative,
-                filename: name,
-                extension: extension,
-                size: stat.size,
-                modifiedAt: stat.modified,
-                mimeType: _mimeTypes[extension],
-                unchanged: known,
-                videoEpisode: known || !_videoExtensions.contains(extension)
-                    ? null
-                    : parseVideoEpisode(name),
-                audioMetadata: known
-                    ? null
-                    : await AudioTechnicalMetadataProbe.inspect(
-                        entity,
-                        extension,
-                        stat.size,
-                      ),
-              ),
-            );
-          } catch (error) {
-            yield ScanEvent(
-              kind: ScanEventKind.error,
-              visitedFiles: visited,
-              path: entity.path,
-              error: error,
-            );
-          }
+          files.add(entity);
         }
       } catch (error) {
         yield ScanEvent(
@@ -237,10 +197,105 @@ base class LibraryScanner {
           path: directory.path,
           error: error,
         );
+        continue;
+      }
+
+      final batch = filesAtOnce < 1 ? 1 : filesAtOnce;
+      for (var offset = 0; offset < files.length; offset += batch) {
+        if (cancellationToken?.isCancelled ?? false) {
+          yield ScanEvent(kind: ScanEventKind.cancelled, visitedFiles: visited);
+          return;
+        }
+        final looked = await Future.wait([
+          for (final entity in files.skip(offset).take(batch))
+            _look(entity, rootPath: rootPath, isUnchanged: isUnchanged),
+        ]);
+        // Gemeldet wird nacheinander und in der Reihenfolge der Ablage: wer
+        // die Ereignisse liest, soll von der Gleichzeitigkeit nichts merken.
+        for (final result in looked) {
+          if (result.error case final failure?) {
+            yield ScanEvent(
+              kind: ScanEventKind.error,
+              visitedFiles: visited,
+              path: result.path,
+              error: failure,
+            );
+            continue;
+          }
+          final file = result.file;
+          if (file == null) {
+            yield ScanEvent(
+              kind: ScanEventKind.skipped,
+              visitedFiles: visited,
+              path: result.path,
+            );
+            continue;
+          }
+          // SMB providers can return an entry more than once while
+          // generated files are changing during a scan.
+          if (!visitedFiles.add(file.relativePath)) continue;
+          visited++;
+          yield ScanEvent(
+            kind: ScanEventKind.file,
+            visitedFiles: visited,
+            file: file,
+          );
+        }
       }
     }
 
     yield ScanEvent(kind: ScanEventKind.completed, visitedFiles: visited);
+  }
+
+  /// Sieht sich eine Datei an, ohne etwas zu melden.
+  ///
+  /// Alles, was hier passiert, kann neben anderen Dateien passieren; gemeldet
+  /// wird danach, einzeln und der Reihe nach.
+  Future<({String path, ScannedFile? file, Object? error})> _look(
+    File entity, {
+    required String rootPath,
+    ScannedFileStamp? isUnchanged,
+  }) async {
+    final path = entity.path;
+    try {
+      final name = p.basename(path);
+      final stat = await entity.stat();
+      final extension = p.extension(name).toLowerCase().replaceFirst('.', '');
+      final relative = p.relative(entity.absolute.path, from: rootPath);
+      if (relative == '..' || relative.startsWith('../')) {
+        return (path: path, file: null, error: null);
+      }
+      final portableRelative = p.posix.joinAll(p.split(relative));
+      final known =
+          isUnchanged?.call(portableRelative, stat.size, stat.modified) ??
+          false;
+      return (
+        path: path,
+        file: ScannedFile(
+          absolutePath: entity.absolute.path,
+          relativePath: portableRelative,
+          filename: name,
+          extension: extension,
+          size: stat.size,
+          modifiedAt: stat.modified,
+          mimeType: _mimeTypes[extension],
+          unchanged: known,
+          videoEpisode: known || !_videoExtensions.contains(extension)
+              ? null
+              : parseVideoEpisode(name),
+          audioMetadata: known
+              ? null
+              : await AudioTechnicalMetadataProbe.inspect(
+                  entity,
+                  extension,
+                  stat.size,
+                ),
+        ),
+        error: null,
+      );
+    } catch (error) {
+      return (path: path, file: null, error: error);
+    }
   }
 
   bool _isIgnoredDirectory(String name) {
