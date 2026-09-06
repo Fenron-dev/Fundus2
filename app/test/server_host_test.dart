@@ -24,6 +24,7 @@ void main() {
   late ServerHostController host;
   late String workId;
   late String fileId;
+  late Directory root;
 
   setUpAll(() async {
     // Making an RSA key takes a moment; one is enough for every test here.
@@ -35,7 +36,7 @@ void main() {
   tearDownAll(() async => temporary.delete(recursive: true));
 
   setUp(() async {
-    final root = await Directory(
+    root = await Directory(
       '${temporary.path}/vault-${DateTime.now().microsecondsSinceEpoch}',
     ).create(recursive: true);
     final work = Directory('${root.path}/Hörbücher/Karl May/Der Schacht');
@@ -158,6 +159,67 @@ void main() {
       ),
     );
   });
+
+  test('die Freigabe folgt der Bibliothek, die geöffnet ist', () async {
+    await host.start(remember: false);
+    host.beginPairing();
+    final session = host.pairingSession;
+    if (session == null) return; // Kein Netz — siehe oben.
+
+    final code = _loopback(host, session, await store.loadOrCreate());
+    final claimed = await FundusRemoteClient.claim(
+      code: code,
+      pin: session.pin,
+      deviceId: 'anderes-geraet',
+      deviceName: 'Telefon',
+    );
+    final client = FundusRemoteClient(
+      baseUri: code.baseUri,
+      token: claimed.token,
+      certificateFingerprint: code.certificateFingerprint,
+    );
+    addTearDown(client.close);
+    final libraryId = (await client.libraries()).single.id;
+    expect((await client.works(libraryId)).single.id, workId);
+
+    // Dieselbe Bibliothek noch einmal geöffnet ist eine neue Instanz, und
+    // die alte ist geschlossen. Genau hier stand die Freigabe bisher auf
+    // einer geschlossenen Datenbank: koppeln ging, erreichbar war nichts.
+    await library.open(root);
+    expect(library.isOpen, isTrue);
+
+    expect((await client.libraries()).single.id, libraryId);
+    expect((await client.works(libraryId)).single.id, workId);
+
+    // Die Kopplung liegt beim Ausweis dieses Geräts und überlebt den Test —
+    // die folgenden Prüfungen gehen von einer leeren Liste aus.
+    await host.revoke('anderes-geraet');
+  });
+
+  test(
+    'eingeschaltet ohne Bibliothek beginnt sie, sobald eine da ist',
+    () async {
+      final waiting = LibraryController();
+      final later = ServerHostController(
+        settings: settings,
+        library: waiting,
+        identityStore: store,
+      );
+      addTearDown(() async {
+        await later.stop(remember: false);
+        later.dispose();
+        waiting.dispose();
+      });
+
+      await later.start(remember: false);
+      expect(later.isRunning, isFalse);
+
+      await waiting.open(root);
+      // Der Wunsch galt dem Gerät: die Freigabe zieht nach.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(later.isRunning, isTrue, reason: later.failure);
+    },
+  );
 
   test('ein anderes Zertifikat wird nicht angenommen', () async {
     await host.start(remember: false);

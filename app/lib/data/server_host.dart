@@ -4,11 +4,13 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../app/app_settings.dart';
+import '../app/fundus_log.dart';
 import 'library_controller.dart';
 import 'server_identity.dart';
 
@@ -25,7 +27,13 @@ class ServerHostController extends ChangeNotifier {
     required this.settings,
     required this.library,
     ServerIdentityStore? identityStore,
-  }) : _identityStore = identityStore;
+  }) : _identityStore = identityStore {
+    // Die Freigabe bedient *die* Bibliothek, die offen ist — nicht die, die
+    // beim Einschalten offen war. Wird eine andere geöffnet (oder dieselbe
+    // erneut, was eine neue Instanz ist), zeigte die Registrierung bisher auf
+    // eine geschlossene Datenbank: koppeln ging weiter, alles andere nicht.
+    library.addListener(_followLibrary);
+  }
 
   /// The port asked for first. A fixed one makes a pairing code readable and
   /// a firewall rule possible; if it is taken, any free port will do.
@@ -36,6 +44,12 @@ class ServerHostController extends ChangeNotifier {
 
   ServerIdentityStore? _identityStore;
   ServerIdentity? _identity;
+
+  /// Die Bibliothek, die gerade freigegeben ist.
+  FundusLibrary? _shared;
+
+  /// Ob geteilt werden soll, auch wenn gerade keine Bibliothek offen ist.
+  bool _wantsSharing = false;
   FundusPairingAuthority? _pairing;
   FundusLibraryRegistry? _registry;
   HttpServer? _socket;
@@ -117,6 +131,9 @@ class ServerHostController extends ChangeNotifier {
 
   Future<void> start({bool remember = true}) async {
     if (isRunning || isBusy) return;
+    // Der Wunsch gilt dem Gerät, nicht dem Augenblick: ist gerade keine
+    // Bibliothek offen, beginnt die Freigabe, sobald eine geöffnet wird.
+    _wantsSharing = true;
     final vault = library.library;
     if (vault == null) {
       _failure = 'Es ist keine Bibliothek geöffnet, die sich teilen ließe.';
@@ -134,6 +151,7 @@ class ServerHostController extends ChangeNotifier {
       final registry = FundusLibraryRegistry()
         ..register(vault, name: library.displayName);
       _registry = registry;
+      _shared = vault;
       final handler = FundusServerHandler(
         // Only paired devices get in. The handler also accepts one fixed
         // token; it is generated here, never shown and never stored, so no
@@ -144,11 +162,18 @@ class ServerHostController extends ChangeNotifier {
         serverName: settings.deviceName,
         registry: registry,
         pairingAuthority: _pairing,
+        // Was das andere Gerät gefragt hat und was es bekam — ohne diese
+        // Zeilen ist „bei mir ist nichts erreichbar" nicht nachvollziehbar.
+        requestObserver: _logRequest,
       );
       _socket = await _listen(handler, identity);
       _addresses = await _networkAddresses(_socket!.port);
       _address = _addresses.firstOrNull;
       _state = ServerHostState.running;
+      FundusLog.instance.info('server.start', {
+        'port': _socket!.port,
+        'library': library.displayName,
+      });
       if (remember) await _identityStore!.saveSharing(true);
       _presenceTick ??= Timer.periodic(
         const Duration(seconds: 15),
@@ -164,6 +189,8 @@ class ServerHostController extends ChangeNotifier {
   }
 
   Future<void> stop({bool remember = true}) async {
+    _wantsSharing = false;
+    _shared = null;
     _presenceTick?.cancel();
     _presenceTick = null;
     await _closeSocket();
@@ -208,12 +235,71 @@ class ServerHostController extends ChangeNotifier {
 
   @override
   void dispose() {
+    library.removeListener(_followLibrary);
     _presenceTick?.cancel();
     final socket = _socket;
     _socket = null;
     if (socket != null) unawaited(socket.close(force: true));
     _releaseRegistry();
     super.dispose();
+  }
+
+  /// Hält die Freigabe auf der Bibliothek, die gerade offen ist.
+  ///
+  /// `LibraryController.open` legt jedes Mal eine neue Instanz an und
+  /// schließt die alte. Die Registrierung zeigte danach auf eine
+  /// geschlossene Datenbank — von außen sah das so aus: koppeln geht,
+  /// „verbunden" blinkt kurz auf, und erreichbar ist nichts.
+  void _followLibrary() {
+    final vault = library.library;
+    if (identical(vault, _shared)) {
+      // Dieselbe Bibliothek, aber ihr Inhalt ändert sich: ein Scan, eine
+      // geänderte Angabe, ein neues Werk. Der Abzug, den die Freigabe hält,
+      // gilt damit nicht mehr — gelesen wird er erst, wenn jemand fragt.
+      for (final shared in _registry?.libraries ?? const []) {
+        shared.invalidate();
+      }
+      return;
+    }
+    if (_state == ServerHostState.running) {
+      final registry = _registry;
+      if (registry == null) return;
+      for (final shared in registry.libraries) {
+        registry.unregister(shared.id);
+      }
+      if (vault != null) {
+        registry.register(vault, name: library.displayName);
+      }
+      _shared = vault;
+      FundusLog.instance.info('server.library', {
+        'library': vault == null ? 'keine' : library.displayName,
+      });
+      notifyListeners();
+      return;
+    }
+    // Eingeschaltet, aber beim Einschalten war nichts offen: sobald eine
+    // Bibliothek da ist, geht die Freigabe von selbst an.
+    if (_wantsSharing && vault != null && _state != ServerHostState.starting) {
+      unawaited(start(remember: false));
+    }
+  }
+
+  /// Schreibt mit, was ein gekoppeltes Gerät gefragt hat.
+  ///
+  /// Erfolgreiche Dateiabrufe wären ein Wasserfall — ein Comic sind hundert
+  /// Seiten —, deshalb steht davon nur die Art im Protokoll, und jeder
+  /// Fehlschlag vollständig.
+  void _logRequest(FundusServerRequestEvent event) {
+    final failed = event.statusCode >= 400;
+    FundusLog.instance.write(
+      failed ? LogLevel.warn : LogLevel.debug,
+      'server.request',
+      {
+        'method': event.method,
+        'was': event.resource,
+        'antwort': event.statusCode,
+      },
+    );
   }
 
   /// Lets go of the shared library without closing it.
@@ -223,6 +309,7 @@ class ServerHostController extends ChangeNotifier {
   /// the person has open, and switching sharing off must not take their
   /// library down with it.
   void _releaseRegistry() {
+    _shared = null;
     final registry = _registry;
     _registry = null;
     if (registry == null) return;

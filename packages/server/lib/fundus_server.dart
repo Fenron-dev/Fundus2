@@ -11,39 +11,81 @@ export 'src/pairing.dart';
 import 'src/pairing.dart';
 import 'src/comic_archive.dart';
 
+/// Eine Bibliothek, wie sie nach außen bedient wird.
+///
+/// Der Katalog wird gehalten, nicht eingefroren. Beides ist nötig: eine
+/// Datei-Anfrage darf nicht zehntausend Werke neu lesen, und ein Gerät darf
+/// nicht den Stand von gestern bekommen. Deshalb liegt hier ein Abzug mit
+/// Verfallsdatum — und wer weiß, dass sich etwas geändert hat (ein Scan, eine
+/// geänderte Angabe), sagt es mit [invalidate].
+///
+/// Vorher wurde der Abzug im Konstruktor genommen und nie wieder: wer die
+/// Freigabe vor dem ersten Scan einschaltete, teilte für immer eine leere
+/// Bibliothek.
 final class SharedFundusLibrary {
-  SharedFundusLibrary({required this.name, required this.library})
-    : _works = library.listWorks() {
-    _worksById = {for (final work in _works) work.id: work};
-  }
+  SharedFundusLibrary({
+    required this.name,
+    required this.library,
+    this.freshness = const Duration(seconds: 30),
+  });
 
   final String name;
   final FundusLibrary library;
-  final List<LibraryWorkSummary> _works;
-  late final Map<String, LibraryWorkSummary> _worksById;
+
+  /// Wie lange ein Abzug ohne Nachfrage gilt.
+  final Duration freshness;
+
+  List<LibraryWorkSummary> _works = const [];
+  Map<String, LibraryWorkSummary> _worksById = const {};
   final Map<String, List<LibraryPlaybackTrack>> _tracksByWork = {};
   final Map<String, ({LibraryWorkSummary work, LibraryPlaybackTrack track})>
   _tracksById = {};
+  DateTime? _readAt;
 
   String get id => library.manifest.libraryId;
-  List<LibraryWorkSummary> get works => _works;
-  LibraryWorkSummary? findWork(String workId) => _worksById[workId];
 
-  List<LibraryPlaybackTrack> tracksFor(String workId) =>
-      _tracksByWork.putIfAbsent(workId, () {
-        final tracks = library.playbackTracks(workId);
-        final work = _worksById[workId];
-        if (work != null) {
-          for (final track in tracks) {
-            _tracksById[track.fileId] = (work: work, track: track);
-          }
+  List<LibraryWorkSummary> get works {
+    _ensureFresh();
+    return _works;
+  }
+
+  LibraryWorkSummary? findWork(String workId) {
+    _ensureFresh();
+    return _worksById[workId];
+  }
+
+  /// Sagt, dass der Katalog nicht mehr stimmt. Gelesen wird erst wieder,
+  /// wenn ihn jemand braucht.
+  void invalidate() => _readAt = null;
+
+  void _ensureFresh() {
+    final read = _readAt;
+    if (read != null && DateTime.now().difference(read) < freshness) return;
+    _works = library.listWorks();
+    _worksById = {for (final work in _works) work.id: work};
+    _tracksByWork.clear();
+    _tracksById.clear();
+    _readAt = DateTime.now();
+  }
+
+  List<LibraryPlaybackTrack> tracksFor(String workId) {
+    _ensureFresh();
+    return _tracksByWork.putIfAbsent(workId, () {
+      final tracks = library.playbackTracks(workId);
+      final work = _worksById[workId];
+      if (work != null) {
+        for (final track in tracks) {
+          _tracksById[track.fileId] = (work: work, track: track);
         }
-        return tracks;
-      });
+      }
+      return tracks;
+    });
+  }
 
   ({LibraryWorkSummary work, LibraryPlaybackTrack track})? findTrack(
     String fileId,
   ) {
+    _ensureFresh();
     final cached = _tracksById[fileId];
     if (cached != null) return cached;
     for (final work in _works) {

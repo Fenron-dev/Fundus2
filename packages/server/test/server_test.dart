@@ -57,6 +57,67 @@ void main() {
     expect(body.containsKey('library_count'), isFalse);
   });
 
+  test('a work added after sharing began is served too', () async {
+    // Der Fall aus dem Betrieb: die Freigabe geht an, *dann* wird gescannt.
+    // Ein Abzug, der nur einmal genommen wird, teilt für immer den Stand von
+    // vorher — vom anderen Gerät aus sieht das aus wie „nichts da".
+    final folder = Directory(
+      '${temporary.path}/Hoerbuecher/Audiobooks/Autor/Serie/02 - Danach',
+    );
+    await folder.create(recursive: true);
+    await File('${folder.path}/02 - Danach.mp3').writeAsBytes([1, 2, 3]);
+    await firstLibrary.index().drain<void>();
+
+    registry.lookup(firstLibrary.manifest.libraryId)!.invalidate();
+
+    final response = await server.handler(
+      Request(
+        'GET',
+        Uri.parse(
+          'http://localhost/v1/libraries/'
+          '${firstLibrary.manifest.libraryId}/works',
+        ),
+        headers: const {'authorization': 'Bearer secret'},
+      ),
+    );
+    final body = await _json(response);
+    expect(response.statusCode, 200);
+    expect(
+      (body['works'] as List).map((entry) => (entry as Map)['title']),
+      containsAll(<String>['Der Server-Test', 'Danach']),
+    );
+  });
+
+  test('a file added after sharing began can be fetched', () async {
+    final folder = Directory(
+      '${temporary.path}/Hoerbuecher/Audiobooks/Autor/Serie/03 - Später',
+    );
+    await folder.create(recursive: true);
+    await File('${folder.path}/03 - Später.mp3').writeAsBytes([7, 7, 7]);
+    await firstLibrary.index().drain<void>();
+    final shared = registry.lookup(firstLibrary.manifest.libraryId)!
+      ..invalidate();
+
+    final added = firstLibrary.listWorks().firstWhere(
+      (entry) => entry.title == 'Später',
+    );
+    final fileId = firstLibrary.playbackTracks(added.id).single.fileId;
+    expect(shared.findTrack(fileId), isNotNull);
+
+    final response = await server.handler(
+      Request(
+        'GET',
+        Uri.parse(
+          'http://localhost/v1/libraries/'
+          '${firstLibrary.manifest.libraryId}/files/$fileId/content',
+        ),
+        headers: const {'authorization': 'Bearer secret'},
+      ),
+    );
+    expect(response.statusCode, 200);
+    expect(await response.read().expand((chunk) => chunk).toList(), [7, 7, 7]);
+  });
+
   test('API rejects missing token', () async {
     final response = await server.handler(
       Request('GET', Uri.parse('http://localhost/v1/libraries')),
