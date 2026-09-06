@@ -55,15 +55,17 @@ Lauffähig als Einzelplatz-Bibliothek:
 - Einstellungen mit Thema, Dichte, Bibliotheken, Geräten und Diagnose
 - Hell und Dunkel gleichwertig, Dichteumschaltung komfortabel/kompakt
 
-Datenmodell (Schema 8):
+Datenmodell (Schema 16):
 
 - `sources` — die geöffnete Bibliothek ist selbst eine Quelle
 - `availability` auf Dateien und Werken; der Pfad ist nicht mehr die Identität
 - Geräteprofile portabel unter `_fundus/devices/`, damit eine Neuinstallation
   keine Reader- und Darstellungseinstellungen kostet
 
-Noch nicht gebaut: Wiedergabe und Reader, Peer-Server-Anbindung, Katalog-Delta,
-Sync-Journal, Downloads, Metadaten-Abgleich, Schutzmodus.
+Wiedergabe, Reader, Peer-Server-Anbindung, Katalog-Delta, Sync-Journal,
+Downloads, Metadaten-Abgleich und Schutzmodus sind inzwischen im Workspace
+vorhanden. `legacy/` bleibt als Referenz erhalten und ist kein Bestandteil des
+aktiven Builds.
 
 ## Entwicklung
 
@@ -73,21 +75,23 @@ dart analyze
 dart format --output=none --set-exit-if-changed app packages
 (cd packages/core && dart test)
 (cd packages/server && dart test)
+(cd packages/client && dart test)
+(cd packages/design && flutter test)
 (cd app && flutter test)
 ```
 
 **Gebaut wird in GitHub Actions, nicht lokal.** Die Workflows
-`Build macOS Preview` und `Build Android Preview` erzeugen die Artefakte und
-lassen sich auch von Hand starten (`workflow_dispatch`); lokal laufen nur
-Analyse, Format und Tests.
+`Build macOS Preview`, `Build Windows Preview` und `Build Android Preview`
+erzeugen die Artefakte und lassen sich auch von Hand starten
+(`workflow_dispatch`); lokal laufen nur Analyse, Format und Tests.
 
 ### Android-Vorschau: der Signaturschlüssel
 
-Ohne hinterlegten Schlüssel signiert Gradle jede Vorschau mit einem
-Debug-Schlüssel, den der Runner neu erzeugt. Android lässt eine so signierte
-App nicht über die vorige installieren — man muss deinstallieren, und damit
-sind Einstellungen, gekoppelte Geräte und der Gerätename weg. Genau das ist
-der Grund, warum das Handy nach jedem Build neu verbunden werden muss.
+Jede veröffentlichte Vorschau muss mit demselben stabilen Schlüssel signiert
+werden. Ein Debug-Schlüssel des GitHub-Runners wird bei jedem Lauf neu erzeugt
+und kann keine vorhandene Installation aktualisieren. Der Workflow bricht
+deshalb ohne die vier Secrets ab, statt eine APK zu veröffentlichen, die zur
+Deinstallation zwingt.
 
 Abhilfe ist ein eigener Schlüssel, einmal erzeugt und als Repository-Secret
 hinterlegt. Der Schlüssel selbst gehört **nicht** ins Repository:
@@ -108,9 +112,11 @@ Unter *Settings → Secrets and variables → Actions* anlegen:
 | `FUNDUS_ANDROID_KEY_ALIAS` | `fundus` |
 | `FUNDUS_ANDROID_KEY_PASSWORD` | das Schlüssel-Passwort |
 
-Die erste APK mit dem neuen Schlüssel muss noch einmal von Hand installiert
-werden (die alte deinstallieren); ab dann geht jedes Update in place, und die
-Kopplung bleibt.
+Falls bisher nur die alten, wechselnden Debug-APK installiert wurden, muss die
+erste APK mit dem stabilen Schlüssel noch einmal von Hand installiert werden
+(einmalig alte Installation entfernen). Ab dann geht jedes Update in place,
+und die Kopplung sowie Offline-Kopien bleiben erhalten. Der Schlüssel darf
+niemals ins Repository committed werden.
 
 Dasselbe gilt für die heruntergeladenen Medien. Sie liegen im App-Speicher
 des Geräts — dort, wo auch die Kopplung liegt —, und Android räumt diesen

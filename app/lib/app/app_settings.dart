@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Color, ThemeMode;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -22,8 +23,13 @@ import 'device_name.dart';
 /// `_fundus/devices/` directory, because reinstalling the app must not cost
 /// them again — see `DeviceProfile` in the core package.
 class AppSettings extends ChangeNotifier {
-  AppSettings._(this._file, this._values, {bool ephemeral = false})
-    : _ephemeral = ephemeral;
+  AppSettings._(
+    this._file,
+    this._values, {
+    bool ephemeral = false,
+    FlutterSecureStorage? secureStorage,
+  }) : _ephemeral = ephemeral,
+       _secureStorage = secureStorage;
 
   static const fileName = 'device.json';
 
@@ -32,7 +38,10 @@ class AppSettings extends ChangeNotifier {
   /// Tests and previews keep their settings in memory; writing them would only
   /// leave files behind.
   final bool _ephemeral;
+  final FlutterSecureStorage? _secureStorage;
   Map<String, Object?> _values;
+
+  static const _sensitiveKeys = {'peers', 'tmdb_key', 'protection_pin'};
 
   static Future<AppSettings> load() async {
     final directory = await getApplicationSupportDirectory();
@@ -50,7 +59,23 @@ class AppSettings extends ChangeNotifier {
         // Same.
       }
     }
-    final settings = AppSettings._(file, values);
+    final secureStorage = const FlutterSecureStorage();
+    var hadPlainSensitiveValues = false;
+    for (final key in _sensitiveKeys) {
+      try {
+        final encoded = await secureStorage.read(key: key);
+        if (encoded != null) {
+          values[key] = jsonDecode(encoded);
+        } else if (values.containsKey(key)) {
+          hadPlainSensitiveValues = true;
+        }
+      } on Object {
+        // A platform without a registered backend keeps legacy settings
+        // usable; the JSON file remains protected by app storage and chmod.
+      }
+    }
+    final settings = AppSettings._(file, values, secureStorage: secureStorage);
+    if (hadPlainSensitiveValues) await settings._persist();
     if (settings.deviceKey.isEmpty) {
       settings._values['device_key'] = _generateKey();
       settings._values['device_name'] ??= await platformDeviceName();
@@ -281,11 +306,43 @@ class AppSettings extends ChangeNotifier {
   Future<void> _persist() async {
     if (_ephemeral) return;
     try {
+      var storedSecurely = _secureStorage != null;
+      if (storedSecurely) {
+        try {
+          for (final key in _sensitiveKeys) {
+            await _secureStorage.write(
+              key: key,
+              value: _values.containsKey(key) ? jsonEncode(_values[key]) : null,
+            );
+          }
+        } on Object {
+          // Keep the value usable if a platform has no working keychain. The
+          // fallback is still protected by app storage and Unix file mode.
+          storedSecurely = false;
+        }
+      }
       await _file.parent.create(recursive: true);
       final partial = File('${_file.path}.part');
-      await partial.writeAsString(jsonEncode(_values), flush: true);
+      final persisted = Map<String, Object?>.from(_values);
+      if (storedSecurely) {
+        for (final key in _sensitiveKeys) {
+          persisted.remove(key);
+        }
+      }
+      await partial.writeAsString(jsonEncode(persisted), flush: true);
       if (await _file.exists()) await _file.delete();
       await partial.rename(_file.path);
+      if (!Platform.isWindows) {
+        // device.json contains bearer tokens, the protection verifier and
+        // optional provider credentials. Keep it private on Unix desktops;
+        // Android's application sandbox remains the primary boundary there.
+        try {
+          await Process.run('chmod', ['600', _file.path]);
+        } on ProcessException {
+          // Some sandboxed platforms do not expose chmod; the file is still
+          // inside the platform's application-support directory.
+        }
+      }
     } on FileSystemException {
       // Losing a preference is not worth interrupting the user for.
     }

@@ -1,0 +1,58 @@
+name: Build Windows Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'app/**'
+      - 'packages/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-preview
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: 3.41.4
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        working-directory: app
+        run: flutter build windows --release
+
+      - name: Package application
+        working-directory: app
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path build/windows/x64/runner/Release/* `
+            -DestinationPath Fundus-Windows.zip `
+            -CompressionLevel Optimal
+
+      - name: Upload preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fundus-Windows-${{ github.sha }}
+          path: app/Fundus-Windows.zip
+          if-no-files-found: error
+          retention-days: 14

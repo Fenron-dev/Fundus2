@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fundus_client/fundus_client.dart';
@@ -51,10 +52,31 @@ final class PeerFileCache {
           'Die Datei ließ sich nicht holen (${response.statusCode}).',
         );
       }
-      // A complete file of the right size is the same file; anything else is
-      // fetched again rather than trusted.
+      // Size alone is not an identity: a peer can replace a file without
+      // changing its length. The proxy forwards ETag/Last-Modified, which we
+      // persist beside the cache entry and compare on the next request.
       final expected = response.contentLength;
+      final etag = response.headers.value(HttpHeaders.etagHeader);
+      final lastModified = response.headers.value(
+        HttpHeaders.lastModifiedHeader,
+      );
+      final marker = File('${target.path}.meta');
+      Map<String, dynamic>? stored;
+      if (await marker.exists()) {
+        try {
+          stored =
+              jsonDecode(await marker.readAsString()) as Map<String, dynamic>;
+        } on Object {
+          stored = null;
+        }
+      }
+      final identityMatches = etag != null
+          ? stored != null && stored['etag'] == etag
+          : lastModified != null &&
+                stored != null &&
+                stored['last_modified'] == lastModified;
       if (expected > 0 &&
+          identityMatches &&
           await target.exists() &&
           await target.length() == expected) {
         await response.drain<void>();
@@ -79,6 +101,13 @@ final class PeerFileCache {
       }
       if (await target.exists()) await target.delete();
       await partial.rename(target.path);
+      await marker.writeAsString(
+        jsonEncode({
+          ...?(etag == null ? null : {'etag': etag}),
+          ...?(lastModified == null ? null : {'last_modified': lastModified}),
+        }),
+        flush: true,
+      );
       return target.path;
     } finally {
       client.close(force: true);

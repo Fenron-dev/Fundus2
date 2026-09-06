@@ -129,23 +129,45 @@ final class MetadataSearch {
       for (final provider in providers)
         _safeSearch(provider, query, limitPerProvider, language),
     ]);
-    return rankMetadataCandidates(
-      query,
-      responses.expand((candidates) => candidates),
-      year: year,
-    );
+    final candidates = responses.expand((result) => result.candidates);
+    if (candidates.isEmpty) {
+      final failure = responses
+          .map((result) => result.error)
+          .whereType<MetadataProviderException>()
+          .firstOrNull;
+      if (failure != null) throw failure;
+    }
+    return rankMetadataCandidates(query, candidates, year: year);
   }
 
-  Future<List<MetadataCandidate>> _safeSearch(
+  Future<
+    ({List<MetadataCandidate> candidates, MetadataProviderException? error})
+  >
+  _safeSearch(
     MetadataProvider provider,
     String query,
     int limit,
     String? language,
   ) async {
     try {
-      return await provider.search(query, limit: limit, language: language);
-    } on Object {
-      return const [];
+      return (
+        candidates: await provider.search(
+          query,
+          limit: limit,
+          language: language,
+        ),
+        error: null,
+      );
+    } on MetadataProviderException catch (error) {
+      return (candidates: const <MetadataCandidate>[], error: error);
+    } on Object catch (error) {
+      return (
+        candidates: const <MetadataCandidate>[],
+        error: MetadataProviderException(
+          provider.provider,
+          'Netzwerkfehler: $error',
+        ),
+      );
     }
   }
 }

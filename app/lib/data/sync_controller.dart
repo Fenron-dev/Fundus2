@@ -342,9 +342,12 @@ class SyncController extends ChangeNotifier {
           _lastPull[peer.serverId] = entry.updatedAt;
           done++;
           final mine = vault.loadProgress(entry.workId);
-          // Was hier schon genauso alt oder neuer ist, muss nicht geholt
-          // werden — das spart die Anfrage, nicht nur das Schreiben.
-          if (mine != null && !entry.updatedAt.isAfter(mine.updatedAt)) {
+          // Nur ein nachweislich älterer Stand kann sicher übersprungen werden.
+          // Millisekunden sind keine eindeutige Änderungs-ID: zwei Geräte
+          // können denselben Zeitstempel erzeugen. Gleich alte Einträge müssen
+          // deshalb geladen und von _carryOver anhand der Position entschieden
+          // werden, sonst gehen Fortschritte oder Konfliktfragen verloren.
+          if (mine != null && entry.updatedAt.isBefore(mine.updatedAt)) {
             continue;
           }
           final theirs = await client.progress(libraryId, entry.workId);

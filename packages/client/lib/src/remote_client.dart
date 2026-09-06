@@ -456,10 +456,16 @@ final class FundusRemoteClient {
   }
 
   static RemoteWorkRecord _recordFrom(Map<String, Object?> value) {
+    final id = '${value['id'] ?? ''}';
+    if (!FundusId.isSafe(id)) {
+      throw const FormatException(
+        'Die Gegenstelle lieferte eine ungültige Werk-ID.',
+      );
+    }
     final authors = value['authors'];
     final files = value['files'];
     return RemoteWorkRecord(
-      id: '${value['id'] ?? ''}',
+      id: id,
       kind: '${value['kind'] ?? 'document'}',
       title: '${value['title'] ?? 'Ohne Titel'}',
       author: authors is List && authors.isNotEmpty ? '${authors.first}' : null,
@@ -493,11 +499,17 @@ final class FundusRemoteClient {
   }
 
   static RemoteFileRecord _fileFrom(Map<String, Object?> value, int fallback) {
+    final id = '${value['id'] ?? ''}';
+    if (!FundusId.isSafe(id)) {
+      throw const FormatException(
+        'Die Gegenstelle lieferte eine ungültige Datei-ID.',
+      );
+    }
     final filename = '${value['title'] ?? ''}';
     final dot = filename.lastIndexOf('.');
     final seconds = (value['duration_seconds'] as num?)?.toDouble();
     return RemoteFileRecord(
-      id: '${value['id'] ?? ''}',
+      id: id,
       filename: filename,
       position: (value['position'] as num?)?.toInt() ?? fallback,
       extension: dot > 0 ? filename.substring(dot).toLowerCase() : '',

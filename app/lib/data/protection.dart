@@ -42,6 +42,10 @@ class ProtectionController extends ChangeNotifier {
   final AppSettings settings;
 
   bool _unlocked = false;
+  int _failedAttempts = 0;
+  DateTime? _lockedUntil;
+
+  static const _kdfIterations = 100000;
 
   ProtectionMode get mode => settings.protectionMode;
 
@@ -76,7 +80,9 @@ class ProtectionController extends ChangeNotifier {
       return;
     }
     final salt = _salt();
-    await settings.setProtectionPin('$salt:${_digest(digits, salt)}');
+    await settings.setProtectionPin(
+      'v2:$_kdfIterations:$salt:${_derive(digits, salt, _kdfIterations)}',
+    );
     _unlocked = true;
     notifyListeners();
   }
@@ -86,11 +92,30 @@ class ProtectionController extends ChangeNotifier {
   /// A wrong PIN is answered with false rather than an exception: it is the
   /// expected case, not a fault.
   bool unlock(String pin) {
+    final now = DateTime.now();
+    final lockedUntil = _lockedUntil;
+    if (lockedUntil != null && now.isBefore(lockedUntil)) return false;
+    _lockedUntil = null;
     final stored = settings.protectionPin;
-    if (stored.isEmpty) return false;
+    if (stored.isEmpty) return _failed();
     final parts = stored.split(':');
-    if (parts.length != 2) return false;
-    if (_digest(pin.trim(), parts.first) != parts.last) return false;
+    var valid = false;
+    if (parts.length == 4 && parts.first == 'v2') {
+      final iterations = int.tryParse(parts[1]);
+      if (iterations != null && iterations >= 10000 && iterations <= 1000000) {
+        valid = _constantTimeEquals(
+          _derive(pin.trim(), parts[2], iterations),
+          parts[3],
+        );
+      }
+    } else if (parts.length == 2) {
+      valid = _constantTimeEquals(
+        _legacyDigest(pin.trim(), parts[0]),
+        parts[1],
+      );
+    }
+    if (!valid) return _failed();
+    _failedAttempts = 0;
     _unlocked = true;
     notifyListeners();
     return true;
@@ -102,6 +127,15 @@ class ProtectionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool _failed() {
+    _failedAttempts++;
+    if (_failedAttempts >= 5) {
+      _failedAttempts = 0;
+      _lockedUntil = DateTime.now().add(const Duration(seconds: 30));
+    }
+    return false;
+  }
+
   static String _salt() {
     final random = Random.secure();
     return base64UrlEncode(
@@ -109,8 +143,34 @@ class ProtectionController extends ChangeNotifier {
     ).replaceAll('=', '');
   }
 
-  /// Salted, so the same PIN on two devices does not produce the same string,
-  /// and so a file full of digests says nothing about the digits.
-  static String _digest(String pin, String salt) =>
+  /// Legacy verifier retained so existing installations can still unlock once
+  /// and then migrate the PIN on the next explicit change.
+  static String _legacyDigest(String pin, String salt) =>
       sha256.convert(utf8.encode('$salt|$pin')).toString();
+
+  /// PBKDF2-HMAC-SHA256 makes offline guessing substantially more expensive
+  /// than the former single SHA-256 digest while keeping the settings format
+  /// portable across platforms.
+  static String _derive(String pin, String salt, int iterations) {
+    final hmac = Hmac(sha256, utf8.encode(pin));
+    final message = <int>[...utf8.encode(salt), 0, 0, 0, 1];
+    var block = hmac.convert(message).bytes;
+    final result = List<int>.from(block);
+    for (var round = 1; round < iterations; round++) {
+      block = hmac.convert(block).bytes;
+      for (var index = 0; index < result.length; index++) {
+        result[index] ^= block[index];
+      }
+    }
+    return result.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  static bool _constantTimeEquals(String left, String right) {
+    if (left.length != right.length) return false;
+    var difference = 0;
+    for (var index = 0; index < left.length; index++) {
+      difference |= left.codeUnitAt(index) ^ right.codeUnitAt(index);
+    }
+    return difference == 0;
+  }
 }

@@ -358,6 +358,18 @@ void main() {
       );
     });
 
+    test('unverschlüsseltes HTTP wird nur für Loopback akzeptiert', () {
+      expect(
+        () => FundusPairingCode.parse(
+          '{"type":"fundus_pairing","version":1,'
+          '"base_url":"http://192.168.1.20:47891",'
+          '"certificate_sha256":"",'
+          '"nonce":"n","expires_at":"2030-01-01T00:00:00Z"}',
+        ),
+        throwsFormatException,
+      );
+    });
+
     test('etwas anderes als ein Kopplungscode wird abgelehnt', () {
       expect(() => FundusPairingCode.parse('hallo'), throwsFormatException);
       expect(

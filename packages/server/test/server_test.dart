@@ -159,6 +159,24 @@ void main() {
     expect(response.statusCode, 401);
   });
 
+  test('API rejects oversized JSON bodies before decoding them', () async {
+    final response = await server.handler(
+      Request(
+        'PUT',
+        Uri.parse(
+          'http://localhost/v1/libraries/${firstLibrary.manifest.libraryId}'
+          '/progress/${work.id}',
+        ),
+        headers: {
+          'authorization': 'Bearer secret',
+          'content-type': 'application/json',
+        },
+        body: 'x' * (256 * 1024 + 1),
+      ),
+    );
+    expect(response.statusCode, HttpStatus.requestEntityTooLarge);
+  });
+
   test('reports sanitized request diagnostics', () async {
     FundusServerRequestEvent? observed;
     final observedServer = FundusServerHandler(

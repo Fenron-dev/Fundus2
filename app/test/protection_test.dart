@@ -94,6 +94,16 @@ void main() {
     final first = settings.protectionPin;
     await protection.setPin('2451');
     expect(settings.protectionPin, isNot(first));
+    expect(settings.protectionPin, startsWith('v2:'));
+  });
+
+  test('fünf falsche PINs drosseln weitere Versuche', () async {
+    await protection.setPin('2451');
+    protection.lock();
+    for (var attempt = 0; attempt < 5; attempt++) {
+      expect(protection.unlock('0000'), isFalse);
+    }
+    expect(protection.unlock('2451'), isFalse);
   });
 
   test('gesperrt wird beim Start, nicht beim Beenden', () async {

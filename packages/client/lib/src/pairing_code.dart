@@ -56,7 +56,12 @@ final class FundusPairingCode {
         // A user info section would send the credentials to a different host
         // than the one shown; a code carrying one is not one to trust.
         baseUri.userInfo.isNotEmpty ||
-        (baseUri.scheme != 'https' && baseUri.scheme != 'http')) {
+        (baseUri.scheme != 'https' && baseUri.scheme != 'http') ||
+        // Plain HTTP is useful for local test servers, but must never be
+        // accepted for a LAN pairing code: the claim request carries the
+        // bearer token that protects the whole library.
+        (baseUri.scheme == 'http' &&
+            !const {'localhost', '127.0.0.1', '::1'}.contains(baseUri.host))) {
       throw const FormatException('Der Kopplungscode nennt keine Adresse.');
     }
     if (!_fingerprintPattern.hasMatch(fingerprint) &&

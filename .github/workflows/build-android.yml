@@ -32,22 +32,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Without the signing secret the build still produces an installable
-      # APK — Gradle falls back to the debug key. Only updates in place need
-      # the stable key, so a fresh repository can build before it has one.
+      # A debug key is generated on every hosted runner and cannot update an
+      # APK from an earlier run. Failing here is safer than publishing an APK
+      # that forces users to uninstall and lose app-private data.
       - name: Restore stable preview signing key
         id: signing
         env:
           FUNDUS_ANDROID_KEYSTORE_BASE64: ${{ secrets.FUNDUS_ANDROID_KEYSTORE_BASE64 }}
         run: |
-          if [ -n "$FUNDUS_ANDROID_KEYSTORE_BASE64" ]; then
-            echo "$FUNDUS_ANDROID_KEYSTORE_BASE64" | base64 --decode \
-              > "$RUNNER_TEMP/fundus-preview.p12"
-            echo "store-file=$RUNNER_TEMP/fundus-preview.p12" >> "$GITHUB_OUTPUT"
-          else
-            echo "Kein Signaturschlüssel hinterlegt — Debug-Signatur." >&2
-            echo "store-file=" >> "$GITHUB_OUTPUT"
+          if [ -z "$FUNDUS_ANDROID_KEYSTORE_BASE64" ] || \
+             [ -z "${{ secrets.FUNDUS_ANDROID_STORE_PASSWORD }}" ] || \
+             [ -z "${{ secrets.FUNDUS_ANDROID_KEY_ALIAS }}" ] || \
+             [ -z "${{ secrets.FUNDUS_ANDROID_KEY_PASSWORD }}" ]; then
+            echo "Stable Android-Signatur fehlt. Bitte die vier FUNDUS_ANDROID_* Secrets hinterlegen." >&2
+            exit 1
           fi
+          echo "$FUNDUS_ANDROID_KEYSTORE_BASE64" | base64 --decode \
+            > "$RUNNER_TEMP/fundus-preview.p12"
+          test -s "$RUNNER_TEMP/fundus-preview.p12"
+          echo "store-file=$RUNNER_TEMP/fundus-preview.p12" >> "$GITHUB_OUTPUT"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2.23.0

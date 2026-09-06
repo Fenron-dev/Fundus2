@@ -88,12 +88,12 @@ final class SharedFundusLibrary {
     _ensureFresh();
     final cached = _tracksById[fileId];
     if (cached != null) return cached;
-    for (final work in _works) {
-      tracksFor(work.id);
-      final located = _tracksById[fileId];
-      if (located != null) return located;
-    }
-    return null;
+    final workId = library.workIdForFile(fileId);
+    if (workId == null) return null;
+    final work = _worksById[workId];
+    if (work == null) return null;
+    tracksFor(workId);
+    return _tracksById[fileId];
   }
 }
 
@@ -236,6 +236,7 @@ final class FundusServerHandler {
         _restoreProgressRevision,
       );
     return Pipeline()
+        .addMiddleware(_requestBodyLimit())
         .addMiddleware(_compression())
         .addMiddleware(_requestDiagnostics())
         .addMiddleware(_authentication())
@@ -289,6 +290,25 @@ final class FundusServerHandler {
   /// Below this, packing is noise: a few hundred bytes of JSON travel in one
   /// packet either way.
   static const _compressAbove = 1024;
+
+  /// JSON writes are small protocol messages, never media uploads. Bound them
+  /// before authentication and while reading chunked requests so a LAN peer
+  /// cannot exhaust the server by sending an unbounded body.
+  static const _maxJsonRequestBytes = 256 * 1024;
+
+  Middleware _requestBodyLimit() {
+    return (inner) {
+      return (request) {
+        final length = int.tryParse(
+          request.headers[HttpHeaders.contentLengthHeader] ?? '',
+        );
+        if (length != null && length > _maxJsonRequestBytes) {
+          return _json({'error': 'request_too_large'}, statusCode: 413);
+        }
+        return inner(request);
+      };
+    };
+  }
 
   Middleware _requestDiagnostics() {
     return (inner) {
@@ -346,13 +366,8 @@ final class FundusServerHandler {
     if (authority == null || authority.activeSession == null) {
       return _json({'error': 'pairing_unavailable'}, statusCode: 403);
     }
-    final Object? decoded;
-    try {
-      decoded = jsonDecode(await request.readAsString());
-    } on FormatException {
-      return _badRequest('invalid_json');
-    }
-    if (decoded is! Map<String, dynamic>) {
+    final decoded = await _readJson(request);
+    if (decoded == null) {
       return _badRequest('invalid_pairing_request');
     }
     try {
@@ -944,7 +959,14 @@ final class FundusServerHandler {
 
   static Future<Map<String, dynamic>?> _readJson(Request request) async {
     try {
-      final decoded = jsonDecode(await request.readAsString());
+      final bytes = <int>[];
+      await for (final chunk in request.read()) {
+        if (bytes.length + chunk.length > _maxJsonRequestBytes) {
+          return null;
+        }
+        bytes.addAll(chunk);
+      }
+      final decoded = jsonDecode(utf8.decode(bytes));
       return decoded is Map<String, dynamic> ? decoded : null;
     } on FormatException {
       return null;
@@ -1360,13 +1382,8 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    final Object? decoded;
-    try {
-      decoded = jsonDecode(await request.readAsString());
-    } on FormatException {
-      return _badRequest('invalid_json');
-    }
-    if (decoded is! Map<String, dynamic>) {
+    final decoded = await _readJson(request);
+    if (decoded == null) {
       return _badRequest('invalid_progress');
     }
     final fileId = decoded['file_id'];

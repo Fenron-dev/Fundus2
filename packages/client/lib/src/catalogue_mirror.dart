@@ -72,6 +72,17 @@ final class FundusCatalogueMirror {
     final vanished = known.keys.where((id) => !index.containsKey(id)).toList();
 
     if (changed.isEmpty && vanished.isEmpty) {
+      // Covers are deliberately fetched in small batches.  An unchanged
+      // catalogue still needs another pass when earlier runs stopped at the
+      // cover limit; otherwise works after the first batch stay blank forever.
+      final needsMoreCovers = library
+          .listWorks(includeMissing: true)
+          .any((work) => work.sourceId == sourceId && work.coverPath == null);
+      if (!needsMoreCovers) {
+        return const RemoteMirrorReport(written: 0, removed: 0);
+      }
+      final works = await client.catalogue(libraryId);
+      await _covers(works);
       return const RemoteMirrorReport(written: 0, removed: 0);
     }
     if (changed.length > index.length * _fetchAllAbove) return _full(index);

@@ -67,6 +67,7 @@ void main() {
     for (final name in ['01 - Anfang.mp3', '02 - Mitte.mp3']) {
       await File('${work.path}/$name').writeAsBytes(List.filled(64, 1));
     }
+    await File('${work.path}/cover.jpg').writeAsBytes([255, 216, 255, 217]);
     theirs = await FundusLibrary.create(source);
     await for (final _ in theirs.index()) {}
 
@@ -205,6 +206,34 @@ void main() {
       expect(second.removed, 0);
       // Und die Bibliothek steht unverändert da.
       expect(mine.listWorks(), hasLength(1));
+    },
+  );
+
+  test(
+    'fehlende Cover werden auch nach dem ersten 60er-Batch weitergeholt',
+    () async {
+      final root = Directory('${theirs.root.path}/Hörbücher/Katalog');
+      for (var index = 0; index < 60; index++) {
+        final work = Directory('${root.path}/Werk-$index');
+        await work.create(recursive: true);
+        await File('${work.path}/01.mp3').writeAsBytes([index]);
+        await File('${work.path}/cover.jpg').writeAsBytes([255, 216, 255, 217]);
+      }
+      await for (final _ in theirs.index()) {}
+      await share();
+      registerPeer();
+
+      await mirror().run();
+      expect(
+        mine.listWorks().where((work) => work.coverPath != null),
+        hasLength(60),
+      );
+
+      await mirror().run();
+      expect(
+        mine.listWorks().where((work) => work.coverPath != null),
+        hasLength(61),
+      );
     },
   );
 

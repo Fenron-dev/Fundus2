@@ -1307,6 +1307,16 @@ final class FundusDatabase {
         .toList(growable: false);
   }
 
+  /// Finds the owning work without scanning every work's track list.
+  String? workIdForFile(String fileId) {
+    final rows = _database.select(
+      'SELECT work_id FROM work_files WHERE file_id = ? AND role = \'content\' '
+      'LIMIT 1',
+      [fileId],
+    );
+    return rows.isEmpty ? null : rows.first['work_id'] as String;
+  }
+
   static VideoEpisodeIdentity? _decodeVideoEpisode(Object? value) {
     if (value is! String || value.isEmpty) return null;
     try {

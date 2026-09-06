@@ -4,6 +4,13 @@ import 'dart:math';
 abstract final class FundusId {
   static final Random _random = Random.secure();
 
+  /// IDs cross the peer protocol and are also used in URL and cache paths.
+  /// Keep the accepted alphabet deliberately narrower than a generic string so
+  /// a malformed or hostile peer cannot turn an ID into a path component.
+  static final RegExp safePattern = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
+  static bool isSafe(String value) => safePattern.hasMatch(value);
+
   static String generate() {
     final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
     bytes[6] = (bytes[6] & 0x0f) | 0x40;

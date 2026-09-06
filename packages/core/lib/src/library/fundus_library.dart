@@ -795,6 +795,10 @@ final class FundusLibrary {
         .toList(growable: false);
   }
 
+  /// Resolves a file through the indexed relation instead of walking all
+  /// works. The server uses this for every stream request.
+  String? workIdForFile(String fileId) => _database.workIdForFile(fileId);
+
   /// Whether this work is the kind whose one file names its own chapters.
   static const _chapteredKinds = {'audiobook', 'podcast', 'podcast_episode'};
 
