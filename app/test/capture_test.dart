@@ -119,9 +119,28 @@ void main() {
         const Duration(seconds: 5),
       );
 
+      // Erst wenn die Seite wirklich ausgepackt ist, gibt es etwas zu
+      // sichern. Auf einer belegten Maschine dauert das länger als eine feste
+      // Wartezeit — also wird gewartet, bis es so weit ist, statt zu hoffen.
+      await tester.runAsync(() async {
+        for (var tries = 0; tries < 100; tries++) {
+          if (reader.currentPageFile != null) break;
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      });
+      await tester.pump();
+      expect(
+        reader.currentPageFile,
+        isNotNull,
+        reason: 'Die Seite wurde nie ausgepackt',
+      );
+
       await tester.runAsync(() async {
         await tester.tap(find.byTooltip('Seite speichern'));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
+        for (var tries = 0; tries < 100; tries++) {
+          if (sink.saved.isNotEmpty) break;
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
       });
       await tester.pump();
 
