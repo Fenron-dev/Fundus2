@@ -143,16 +143,13 @@ class _TextReaderBar extends StatelessWidget {
           // Kein Vollbild-Knopf mehr: der Leser geht ohnehin ins Vollbild,
           // sobald die Leiste weg ist. An seiner Stelle das, was beim Lesen
           // entsteht.
-          if (reader.highlights.isNotEmpty)
-            IconButton(
-              onPressed: () => _showHighlights(context),
-              icon: Icon(
-                FundusIcons.edit,
-                size: FundusIcons.sizeLg,
-                color: ink,
-              ),
-              tooltip: 'Markierungen',
-            ),
+          // Immer da, auch wenn noch nichts markiert ist: eine Funktion, die
+          // erst auftaucht, wenn man sie benutzt hat, findet niemand.
+          IconButton(
+            onPressed: () => _showHighlights(context),
+            icon: Icon(FundusIcons.edit, size: FundusIcons.sizeLg, color: ink),
+            tooltip: 'Markierungen',
+          ),
         ],
       ),
     );
@@ -491,8 +488,10 @@ class _ParagraphState extends State<_Paragraph> {
         final selected = selection != null && !selection.isCollapsed;
         return AdaptiveTextSelectionToolbar.buttonItems(
           anchors: state.contextMenuAnchors,
+          // „Markieren" steht vorn, nicht hinter Ausschneiden, Kopieren und
+          // Einfügen: die Leiste ist auf einem Telefon schmal, und was hinten
+          // steht, findet niemand.
           buttonItems: [
-            ...state.contextMenuButtonItems,
             if (selected)
               ContextMenuButtonItem(
                 label: 'Markieren',
@@ -516,6 +515,7 @@ class _ParagraphState extends State<_Paragraph> {
                     state.hideToolbar();
                   },
                 ),
+            ...state.contextMenuButtonItems,
           ],
         );
       },
@@ -917,13 +917,23 @@ Future<void> _showHighlights(BuildContext context) {
                 ),
               ),
               TextButton.icon(
-                onPressed: () => unawaited(_exportHighlights(sheetContext)),
+                onPressed: reader.highlights.isEmpty
+                    ? null
+                    : () => unawaited(_exportHighlights(sheetContext)),
                 icon: Icon(FundusIcons.downloads, size: FundusIcons.sizeSm),
                 label: const Text('Sichern'),
               ),
             ],
           ),
           const SizedBox(height: FundusSpace.x3),
+          if (reader.highlights.isEmpty)
+            Text(
+              'Noch nichts markiert. Eine Stelle im Text auswählen und '
+              '„Markieren" wählen.',
+              style: Theme.of(
+                sheetContext,
+              ).textTheme.bodyMedium?.copyWith(color: context.fundus.textFaint),
+            ),
           for (final mark in reader.highlights)
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -1090,17 +1100,9 @@ class _TextChapterBar extends StatelessWidget {
               ),
               tooltip: 'Vorheriges Kapitel',
             ),
-            Expanded(
-              child: Text(
-                reader.positionLabel,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: ink.withValues(alpha: .7),
-                ),
-              ),
-            ),
+            // Kein Kapitelname hier: er ist oft so lang, dass er die Zeile
+            // füllt und trotzdem abgeschnitten wird. Er steht oben.
+            const Spacer(),
             IconButton(
               onPressed: last ? null : reader.nextChapter,
               icon: Icon(

@@ -41,7 +41,11 @@ class PlaybackController extends ChangeNotifier {
   Future<void> Function(TrackPreference value)? onPreferenceChanged;
 
   /// Set once per opened file — mpv reports its tracks more than once.
-  bool _appliedPreference = false;
+  /// Ob für diese Datei jemand von Hand gewählt hat.
+  ///
+  /// Nur eine Wahl von Hand hält die Wunschsprache auf; alles andere darf
+  /// nachgezogen werden, sobald mpv mehr Spuren meldet.
+  bool _handPicked = false;
 
   /// Where a track's bytes come from, by the source it belongs to.
   ///
@@ -250,6 +254,7 @@ class PlaybackController extends ChangeNotifier {
   /// Remembering the id would remember nothing: it is a position inside one
   /// file, and the next episode may well have German second instead of first.
   Future<void> selectAudioTrack(String id) async {
+    _handPicked = true;
     await _engine.selectAudioTrack(id);
     final chosen = _tracks.audio.where((track) => track.id == id).firstOrNull;
     if (chosen?.language case final language?) {
@@ -259,6 +264,7 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> selectSubtitleTrack(String id) async {
+    _handPicked = true;
     await _engine.selectSubtitleTrack(id);
     if (id == 'no') {
       preference = preference.withSubtitle(TrackPreference.off);
@@ -276,12 +282,17 @@ class PlaybackController extends ChangeNotifier {
   /// Applies the remembered languages to a file that has just reported its
   /// tracks.
   ///
-  /// Only once per file, and only where the file actually has the language:
-  /// overriding the file's own choice with nothing would be worse than the
-  /// choice it made.
+  /// Nur dort, wo die Datei die Sprache wirklich hat: die eigene Wahl der
+  /// Datei durch nichts zu ersetzen wäre schlimmer als sie stehen zu lassen.
+  ///
+  /// Und nicht nur beim ersten Mal. mpv meldet seine Spuren nach und nach —
+  /// die erste Meldung trägt oft nur die erste Tonspur. Wer sich darauf
+  /// festlegte, hatte entschieden, bevor die deutsche Spur überhaupt gemeldet
+  /// war, und der Film lief auf Englisch, obwohl Deutsch dastand. Also wird
+  /// bei jeder Meldung erneut geschaut; gewählt wird nur, was noch nicht
+  /// gewählt ist, und eine Wahl von Hand hält alles an.
   Future<void> _applyPreference() async {
-    if (_appliedPreference || _tracks.audio.isEmpty) return;
-    _appliedPreference = true;
+    if (_handPicked || _tracks.audio.isEmpty) return;
     // Which language ends up playing decides the subtitles, so the audio is
     // settled first and the answer handed on: the rule is about what came
     // out, not about what was asked for.
@@ -538,7 +549,7 @@ class PlaybackController extends ChangeNotifier {
     // its tracks however it likes.
     _tracks = const MediaTracks();
     _trackChapters = const [];
-    _appliedPreference = false;
+    _handPicked = false;
     _clearBetweenEpisodes();
     // Stand und Länge gehören ab jetzt der neuen Datei. Vorher standen sie
     // erst nach der Erreichbarkeitsfrage hier — scheiterte die, blieb der

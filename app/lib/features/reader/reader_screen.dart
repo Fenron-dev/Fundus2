@@ -1340,14 +1340,6 @@ class _ChapterBar extends StatelessWidget {
     final index = reader.volumeIndex;
     final pages = reader.pageCount;
 
-    String name(int at) {
-      if (at < 0 || at >= volumes.length) return '';
-      final number = comicChapterNumber(volumes[at].title);
-      return number == null
-          ? volumes[at].title
-          : 'Kap. ${_formatChapter(number)}';
-    }
-
     return SafeArea(
       top: false,
       child: Padding(
@@ -1384,15 +1376,18 @@ class _ChapterBar extends StatelessWidget {
                   ),
                 ],
               ),
+            // Nur Pfeile, kein Kapitelname: ein Name wie „Rebirth - Kapitel
+            // 0280 - Der lange Weg zurück" füllt allein die ganze Zeile und
+            // ist trotzdem abgeschnitten. Welches Kapitel läuft, steht oben.
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                OutlinedButton.icon(
+                IconButton(
                   onPressed: index > 0
                       ? () => unawaited(reader.openVolume(index - 1))
                       : null,
-                  icon: Icon(FundusIcons.back, size: FundusIcons.sizeSm),
-                  label: Text(index > 0 ? name(index - 1) : 'Anfang'),
+                  icon: Icon(FundusIcons.back, size: FundusIcons.sizeMd),
+                  tooltip: 'Vorheriges Kapitel',
                 ),
                 OutlinedButton.icon(
                   onPressed: () => unawaited(
@@ -1405,15 +1400,12 @@ class _ChapterBar extends StatelessWidget {
                   icon: Icon(FundusIcons.sort, size: FundusIcons.sizeSm),
                   label: Text(comicLayoutLabel(reader.profile.layout)),
                 ),
-                OutlinedButton.icon(
+                IconButton(
                   onPressed: index + 1 < volumes.length
                       ? () => unawaited(reader.openVolume(index + 1))
                       : null,
-                  iconAlignment: IconAlignment.end,
-                  icon: Icon(FundusIcons.forward, size: FundusIcons.sizeSm),
-                  label: Text(
-                    index + 1 < volumes.length ? name(index + 1) : 'Ende',
-                  ),
+                  icon: Icon(FundusIcons.forward, size: FundusIcons.sizeMd),
+                  tooltip: 'Nächstes Kapitel',
                 ),
               ],
             ),
@@ -1422,7 +1414,4 @@ class _ChapterBar extends StatelessWidget {
       ),
     );
   }
-
-  static String _formatChapter(double value) =>
-      value == value.roundToDouble() ? '${value.round()}' : '$value';
 }
