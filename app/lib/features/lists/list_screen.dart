@@ -54,44 +54,64 @@ class _ListScreenState extends State<ListScreen> {
 
     final reading = isReadingList(scope, list);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(FundusSpace.x4),
-          child: _Head(list: list, reading: reading),
-        ),
-        Expanded(
-          child: list.entries.isEmpty
-              ? Center(
-                  child: Text(
-                    'Diese Liste ist leer.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: tokens.textFaint,
+    // Ein eigener Grund unter der Liste: beim Ziehen legt Material eine
+    // erhöhte Fläche über die Seite, und ohne Grund darunter schlug dabei
+    // das helle Standardpapier durch — auf dem Mac wurde alles unterhalb der
+    // gezogenen Zeile weiß.
+    return ColoredBox(
+      color: tokens.background,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(FundusSpace.x4),
+            child: _Head(list: list, reading: reading),
+          ),
+          Expanded(
+            child: list.entries.isEmpty
+                ? Center(
+                    child: Text(
+                      'Diese Liste ist leer.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                  )
+                : ReorderableListView.builder(
+                    padding: const EdgeInsets.only(
+                      left: FundusSpace.x4,
+                      right: FundusSpace.x4,
+                      bottom: FundusSpace.x6,
+                    ),
+                    itemCount: list.entries.length,
+                    onReorder: (from, to) => scope.reorderPlaylist(
+                      list.id,
+                      from,
+                      to > from ? to - 1 : to,
+                    ),
+                    // Die gezogene Zeile behält ihr eigenes Aussehen. Der
+                    // Standard legt eine Materialfläche darüber, und deren
+                    // Farbe ist die des Themas, nicht die dieser Liste.
+                    proxyDecorator: (child, _, animation) => AnimatedBuilder(
+                      animation: animation,
+                      builder: (context, _) => Material(
+                        color: Colors.transparent,
+                        shadowColor: Colors.black54,
+                        elevation: 8 * animation.value,
+                        borderRadius: FundusRadius.mdAll,
+                        child: child,
+                      ),
+                    ),
+                    itemBuilder: (context, index) => _EntryRow(
+                      key: ValueKey('${list.id}-$index'),
+                      list: list,
+                      index: index,
+                      reading: reading,
                     ),
                   ),
-                )
-              : ReorderableListView.builder(
-                  padding: const EdgeInsets.only(
-                    left: FundusSpace.x4,
-                    right: FundusSpace.x4,
-                    bottom: FundusSpace.x6,
-                  ),
-                  itemCount: list.entries.length,
-                  onReorder: (from, to) => scope.reorderPlaylist(
-                    list.id,
-                    from,
-                    to > from ? to - 1 : to,
-                  ),
-                  itemBuilder: (context, index) => _EntryRow(
-                    key: ValueKey('${list.id}-$index'),
-                    list: list,
-                    index: index,
-                    reading: reading,
-                  ),
-                ),
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 }
