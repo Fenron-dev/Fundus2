@@ -49,6 +49,10 @@ final class WorkFilter {
   final bool favouritesOnly;
 
   /// Every one of these has to be on the work. Chips read as „and also".
+  ///
+  /// Gemeint sind Schlagworte *und* Genres: „Shōnen" steht bei dem einen Werk
+  /// als Genre vom Abgleich, beim anderen als Schlagwort von Hand. Wer danach
+  /// filtert, meint beide.
   final Set<String> tags;
 
   /// One machine's shelf out of the several this device holds.
@@ -98,6 +102,12 @@ final class WorkFilter {
     sourceId: clearSource ? null : (sourceId ?? this.sourceId),
   );
 
+  /// Wonach sich ein Werk filtern lässt: seine Schlagworte und seine Genres.
+  static Set<String> labelsOf(WorkView work) => {
+    ...work.summary.tags,
+    ...work.summary.genres,
+  };
+
   /// Why the result is empty. An empty state without a cause is a dead end,
   /// so the screen always has this sentence to show.
   String emptyReason() {
@@ -129,7 +139,7 @@ final class WorkFilter {
     final matched = works.where((work) {
       if (unassignedOnly && work.mediaType != null) return false;
       if (favouritesOnly && !work.summary.favourite) return false;
-      if (tags.isNotEmpty && !tags.every(work.summary.tags.contains)) {
+      if (tags.isNotEmpty && !tags.every(labelsOf(work).contains)) {
         return false;
       }
       if (type != null && work.mediaType?.id != type.id) return false;

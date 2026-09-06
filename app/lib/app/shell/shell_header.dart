@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../data/media_type.dart';
-import '../../data/work_filter.dart';
 import '../app_navigation.dart';
 import '../fundus_scope.dart';
 import 'fundus_shell.dart';
@@ -72,9 +71,8 @@ class ShellHeader extends StatelessWidget {
           ),
           const SizedBox(width: FundusSpace.x3),
           const _ConnectionMark(),
-          const _FilterButton(),
-          const SizedBox(width: FundusSpace.x2),
-          const _SortButton(),
+          // Filtern und Ordnen stehen jetzt über dem Regal, wo sie
+          // hingehören — und wo das Handy sie auch hat.
         ],
       ),
     );
@@ -225,103 +223,6 @@ class _SearchFieldState extends State<_SearchField> {
         hintText: 'Suchen in dieser Ansicht …',
         prefixIcon: Icon(FundusIcons.search, size: FundusIcons.sizeSm),
         prefixIconConstraints: const BoxConstraints(minWidth: 34),
-      ),
-    );
-  }
-}
-
-class _FilterButton extends StatelessWidget {
-  const _FilterButton();
-
-  @override
-  Widget build(BuildContext context) {
-    final scope = FundusScope.of(context);
-    final tokens = context.fundus;
-    final count = scope.filter.activeFilterCount;
-
-    return PopupMenuButton<FundusOrigin>(
-      tooltip: 'Nach Herkunft filtern',
-      position: PopupMenuPosition.under,
-      color: tokens.surface,
-      onSelected: (origin) {
-        final origins = Set<FundusOrigin>.from(scope.filter.origins);
-        origins.contains(origin) ? origins.remove(origin) : origins.add(origin);
-        scope.setFilter(scope.filter.copyWith(origins: origins));
-      },
-      itemBuilder: (context) => [
-        for (final origin in FundusOrigin.values)
-          CheckedPopupMenuItem(
-            value: origin,
-            checked: scope.filter.origins.contains(origin),
-            child: FundusOriginMark(origin, showLabel: true),
-          ),
-      ],
-      child: _HeaderChip(
-        icon: FundusIcons.filter,
-        label: 'Filter',
-        badge: count == 0 ? null : '$count',
-      ),
-    );
-  }
-}
-
-class _SortButton extends StatelessWidget {
-  const _SortButton();
-
-  @override
-  Widget build(BuildContext context) {
-    final scope = FundusScope.of(context);
-    final tokens = context.fundus;
-
-    return PopupMenuButton<WorkSort>(
-      tooltip: 'Sortierung',
-      position: PopupMenuPosition.under,
-      color: tokens.surface,
-      onSelected: (sort) => scope.setFilter(scope.filter.copyWith(sort: sort)),
-      itemBuilder: (context) => [
-        for (final sort in WorkSort.values)
-          CheckedPopupMenuItem(
-            value: sort,
-            checked: scope.filter.sort == sort,
-            child: Text(sort.label),
-          ),
-      ],
-      child: _HeaderChip(
-        icon: FundusIcons.sort,
-        label: scope.filter.sort.label,
-      ),
-    );
-  }
-}
-
-class _HeaderChip extends StatelessWidget {
-  const _HeaderChip({required this.icon, required this.label, this.badge});
-
-  final IconData icon;
-  final String label;
-  final String? badge;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.fundus;
-    return Container(
-      height: 32,
-      padding: const EdgeInsets.symmetric(horizontal: FundusSpace.x3),
-      decoration: BoxDecoration(
-        borderRadius: FundusRadius.mdAll,
-        border: Border.fromBorderSide(BorderSide(color: tokens.divider)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: FundusIcons.sizeSm, color: tokens.textMuted),
-          const SizedBox(width: FundusSpace.x2),
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          if (badge != null) ...[
-            const SizedBox(width: FundusSpace.x2),
-            FundusTag(badge!, tone: FundusTagTone.accent),
-          ],
-        ],
       ),
     );
   }

@@ -8,6 +8,7 @@ import '../../app/fundus_scope.dart';
 import '../../data/media_type.dart';
 import '../../data/work_filter.dart';
 import '../../data/work_view.dart';
+import '../lists/lists_screen.dart';
 import '../work/bulk_metadata.dart';
 import 'stage_screen.dart';
 import 'work_grid.dart';
@@ -50,7 +51,7 @@ class LibraryScreen extends StatelessWidget {
               ? null
               : () => unawaited(_matchAll(context, scope, works)),
         ),
-        const _SavedViewBar(),
+        _ShelfBar(works: scope.library.works),
         Expanded(
           child: works.isEmpty
               ? _empty(context, scope)
@@ -302,25 +303,80 @@ class _GroupRow extends StatelessWidget {
 /// looks at their own library, one tap away and combinable. Several at once
 /// read as „and also". They live in the vault, so the phone has the same
 /// ones.
-class _SavedViewBar extends StatelessWidget {
-  const _SavedViewBar();
+/// Die Leiste über jedem Regal: filtern, ordnen, merken.
+///
+/// Sie steht hier und nicht in der Kopfzeile, weil sie zum Regal gehört —
+/// und weil eine Kopfzeile auf dem Handy keinen Platz dafür hat. Genau das
+/// fehlte dort bisher, obwohl „was liegt offline hier?" unterwegs die
+/// häufigste Frage ist.
+class _ShelfBar extends StatelessWidget {
+  const _ShelfBar({required this.works});
+
+  /// Alle Werke des Tresors — daraus kommen die Genres, die zur Auswahl
+  /// stehen. Gefiltert wird danach, nicht aus einer festen Liste: eine
+  /// Bibliothek weiß selbst am besten, was in ihr steht.
+  final List<WorkView> works;
 
   @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
-    final views = scope.savedViews;
     final tokens = context.fundus;
+    final filter = scope.filter;
+    final views = scope.savedViews;
     final canSave = scope.library.library?.isReadOnly == false;
-    if (views.isEmpty && !scope.filter.hasActiveFilters) {
-      return const SizedBox.shrink();
-    }
 
     return SizedBox(
-      height: 48,
+      height: 52,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: FundusSpace.x6),
         children: [
+          _OriginChip(filter: filter, onChanged: scope.setFilter),
+          const SizedBox(width: FundusSpace.x2),
+          _LabelChip(
+            filter: filter,
+            labels: _labels(works, filter),
+            onChanged: scope.setFilter,
+          ),
+          const SizedBox(width: FundusSpace.x2),
+          _SortChip(filter: filter, onChanged: scope.setFilter),
+          const SizedBox(width: FundusSpace.x2),
+          FilterChip(
+            selected: filter.favouritesOnly,
+            onSelected: (on) =>
+                scope.setFilter(filter.copyWith(favouritesOnly: on)),
+            avatar: Icon(
+              filter.favouritesOnly
+                  ? FundusIcons.favourite
+                  : FundusIcons.favourites,
+              size: FundusIcons.sizeSm,
+            ),
+            label: const Text('Favoriten'),
+          ),
+          // Die gewählten Genres stehen als eigene Chips daneben: sie sind
+          // das, was gerade gilt, und ein Tipp nimmt sie wieder weg.
+          for (final label in filter.tags) ...[
+            const SizedBox(width: FundusSpace.x2),
+            InputChip(
+              selected: true,
+              label: Text(label),
+              onSelected: (_) => scope.setFilter(
+                filter.copyWith(tags: {...filter.tags}..remove(label)),
+              ),
+              onDeleted: () => scope.setFilter(
+                filter.copyWith(tags: {...filter.tags}..remove(label)),
+              ),
+              deleteIcon: Icon(FundusIcons.close, size: FundusIcons.sizeSm),
+            ),
+          ],
+          if (views.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: FundusSpace.x3,
+                vertical: FundusSpace.x2,
+              ),
+              child: VerticalDivider(width: 1, color: tokens.divider),
+            ),
           for (final view in views) ...[
             FilterChip(
               selected: scope.activeViews.contains(view.id),
@@ -339,44 +395,180 @@ class _SavedViewBar extends StatelessWidget {
           ],
           // Was gerade auf dem Schirm steht, lässt sich behalten — das ist
           // der Weg, auf dem diese Reihe überhaupt entsteht.
-          if (canSave && scope.filter.hasActiveFilters)
+          if (canSave && filter.hasActiveFilters)
             ActionChip(
               avatar: Icon(FundusIcons.add, size: FundusIcons.sizeSm),
               label: const Text('Diese Ansicht merken'),
               onPressed: () => unawaited(_save(context, scope)),
             ),
+          if (filter.hasActiveFilters) ...[
+            const SizedBox(width: FundusSpace.x2),
+            ActionChip(
+              label: const Text('Zurücksetzen'),
+              onPressed: () => scope.setFilter(
+                WorkFilter(
+                  mediaTypeId: filter.mediaTypeId,
+                  sort: filter.sort,
+                  grouping: filter.grouping,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
+  /// Die Genres und Schlagworte, die in diesem Regal wirklich vorkommen,
+  /// die häufigsten zuerst.
+  ///
+  /// Eine feste Liste wäre geraten; eine Bibliothek weiß selbst, was in ihr
+  /// steht — und nur was vorkommt, kann auch etwas finden.
+  static List<String> _labels(List<WorkView> works, WorkFilter filter) {
+    final counts = <String, int>{};
+    for (final work in works) {
+      if (filter.mediaTypeId != null &&
+          work.mediaType?.id != filter.mediaTypeId) {
+        continue;
+      }
+      for (final label in WorkFilter.labelsOf(work)) {
+        final clean = label.trim();
+        if (clean.isEmpty) continue;
+        counts[clean] = (counts[clean] ?? 0) + 1;
+      }
+    }
+    final labels = counts.keys.toList()
+      ..sort((a, b) {
+        final byCount = counts[b]!.compareTo(counts[a]!);
+        return byCount != 0
+            ? byCount
+            : a.toLowerCase().compareTo(b.toLowerCase());
+      });
+    return labels.take(60).toList(growable: false);
+  }
+
   Future<void> _save(BuildContext context, FundusScopeState scope) async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Ansicht merken'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Name'),
-          onSubmitted: (value) => Navigator.of(context).pop(value),
+    final name = await askForListName(context, title: 'Ansicht merken');
+    if (name == null) return;
+    await scope.saveCurrentView(name);
+  }
+}
+
+/// „Wo liegt es?" — lokal, gestreamt, offline mitgenommen, nicht erreichbar.
+class _OriginChip extends StatelessWidget {
+  const _OriginChip({required this.filter, required this.onChanged});
+
+  final WorkFilter filter;
+  final void Function(WorkFilter) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    return PopupMenuButton<FundusOrigin>(
+      tooltip: 'Nach Herkunft filtern',
+      position: PopupMenuPosition.under,
+      color: tokens.surface,
+      onSelected: (origin) {
+        final origins = {...filter.origins};
+        origins.contains(origin) ? origins.remove(origin) : origins.add(origin);
+        onChanged(filter.copyWith(origins: origins));
+      },
+      itemBuilder: (context) => [
+        for (final origin in FundusOrigin.values)
+          CheckedPopupMenuItem(
+            value: origin,
+            checked: filter.origins.contains(origin),
+            child: FundusOriginMark(origin, showLabel: true),
+          ),
+      ],
+      child: FilterChip(
+        selected: filter.origins.isNotEmpty,
+        onSelected: null,
+        avatar: Icon(FundusIcons.filter, size: FundusIcons.sizeSm),
+        label: Text(
+          filter.origins.isEmpty
+              ? 'Herkunft'
+              : filter.origins.map((origin) => origin.label).join(', '),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Abbrechen'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Merken'),
-          ),
-        ],
       ),
     );
-    controller.dispose();
-    if (name == null || name.trim().isEmpty) return;
-    await scope.saveCurrentView(name);
+  }
+}
+
+/// Die Genres dieses Regals, zum Anhaken und Mischen.
+class _LabelChip extends StatelessWidget {
+  const _LabelChip({
+    required this.filter,
+    required this.labels,
+    required this.onChanged,
+  });
+
+  final WorkFilter filter;
+  final List<String> labels;
+  final void Function(WorkFilter) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    if (labels.isEmpty) return const SizedBox.shrink();
+    return PopupMenuButton<String>(
+      tooltip: 'Nach Genre filtern',
+      position: PopupMenuPosition.under,
+      color: tokens.surface,
+      constraints: const BoxConstraints(maxHeight: 420, minWidth: 220),
+      onSelected: (label) {
+        final tags = {...filter.tags};
+        tags.contains(label) ? tags.remove(label) : tags.add(label);
+        onChanged(filter.copyWith(tags: tags));
+      },
+      itemBuilder: (context) => [
+        for (final label in labels)
+          CheckedPopupMenuItem(
+            value: label,
+            checked: filter.tags.contains(label),
+            child: Text(label),
+          ),
+      ],
+      child: FilterChip(
+        selected: filter.tags.isNotEmpty,
+        onSelected: null,
+        avatar: Icon(FundusIcons.filter, size: FundusIcons.sizeSm),
+        label: const Text('Genre'),
+      ),
+    );
+  }
+}
+
+/// Wonach sortiert wird.
+class _SortChip extends StatelessWidget {
+  const _SortChip({required this.filter, required this.onChanged});
+
+  final WorkFilter filter;
+  final void Function(WorkFilter) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    return PopupMenuButton<WorkSort>(
+      tooltip: 'Sortierung',
+      position: PopupMenuPosition.under,
+      color: tokens.surface,
+      onSelected: (sort) => onChanged(filter.copyWith(sort: sort)),
+      itemBuilder: (context) => [
+        for (final sort in WorkSort.values)
+          CheckedPopupMenuItem(
+            value: sort,
+            checked: filter.sort == sort,
+            child: Text(sort.label),
+          ),
+      ],
+      child: FilterChip(
+        selected: false,
+        onSelected: null,
+        avatar: Icon(FundusIcons.sort, size: FundusIcons.sizeSm),
+        label: Text(filter.sort.label),
+      ),
+    );
   }
 }
 

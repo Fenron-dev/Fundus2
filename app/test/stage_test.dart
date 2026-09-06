@@ -73,18 +73,27 @@ void main() {
     expect(find.text('Abspielen'), findsOneWidget);
 
     // Der Rest steht darunter — eine Bühne baut nur, was zu sehen ist.
-    final page = find.byType(Scrollable).first;
+    // Die Bühne selbst, nicht die Filterleiste darüber: die ist auch eine
+    // Liste, nur eine liegende.
+    final page = find
+        .descendant(
+          of: find.byType(StageScreen),
+          matching: find.byType(Scrollable),
+        )
+        .first;
     for (final heading in const [
       'Zuletzt hinzugefügt',
       'Zufällig entdecken',
       'Alle Filme',
     ]) {
-      await tester.scrollUntilVisible(
-        find.text(heading),
-        400,
-        scrollable: page,
+      // Auf der Bühne gesucht, nicht in der Filterleiste: „Zuletzt
+      // hinzugefügt" steht dort auch, als Sortierung.
+      final onStage = find.descendant(
+        of: find.byType(StageScreen),
+        matching: find.text(heading),
       );
-      expect(find.text(heading), findsOneWidget);
+      await tester.scrollUntilVisible(onStage, 400, scrollable: page);
+      expect(onStage, findsOneWidget);
     }
   });
 
