@@ -79,6 +79,11 @@ class PlaybackController extends ChangeNotifier {
 
   /// Der Name der Liste, die läuft, oder null bei einem einzelnen Werk.
   String? _queueName;
+
+  /// Wo jede einzelne Datei dieses Werks steht — nur dort geführt, wo eine
+  /// Datei für sich steht.
+  Map<String, ({double position, double? total, DateTime updatedAt})> _perFile =
+      const {};
   List<bool> _resume = const [];
   List<LibraryPlaybackChapter> _chapters = const [];
   int _index = 0;
@@ -351,14 +356,21 @@ class PlaybackController extends ChangeNotifier {
           ? 0
           : _sources.indexWhere((s) => s.fileId == saved!.fileId);
       _index = startIndex < 0 ? 0 : startIndex;
-      await _openCurrent(
-        at: saved == null
-            ? Duration.zero
-            : Duration(
-                milliseconds: ((saved.position.numericValue ?? 0) * 1000)
-                    .round(),
-              ),
-      );
+      // Eine Folge, die jemand antippt, fängt dort an, wo er sie verlassen
+      // hat — dafür wird der Stand je Datei geführt.
+      if (work.mediaType?.keepsPositionPerFile ?? false) {
+        _perFile = library.filePositions(work.id);
+      } else {
+        _perFile = const {};
+      }
+      final resumeAt = chosen >= 0
+          ? _startOfFile(_sources[_index].fileId)
+          : saved == null
+          ? Duration.zero
+          : Duration(
+              milliseconds: ((saved.position.numericValue ?? 0) * 1000).round(),
+            );
+      await _openCurrent(at: resumeAt);
       if (autoplay) await _engine.play();
       span.done();
     } on Object catch (error) {
@@ -431,6 +443,16 @@ class PlaybackController extends ChangeNotifier {
   /// meint den Titel, nicht die Stelle. Ein ganzes Werk in einer Liste ist
   /// dagegen ein Hörbuch oder eine Folge, und die macht dort weiter, wo sie
   /// stand.
+  /// Wo eine Datei zuletzt stand. Ganz am Ende zählt als „von vorn": eine
+  /// zu Ende gehörte Folge noch einmal zu starten heißt, sie zu hören.
+  Duration _startOfFile(String fileId) {
+    final saved = _perFile[fileId];
+    if (saved == null || saved.position <= 0) return Duration.zero;
+    final total = saved.total;
+    if (total != null && total - saved.position < 15) return Duration.zero;
+    return Duration(milliseconds: (saved.position * 1000).round());
+  }
+
   Duration _startOf(int index) {
     final library = _library;
     final owner = ownerAt(index);
@@ -657,8 +679,10 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> jumpToTrack(int index) async {
     if (index < 0 || index >= _sources.length) return;
+    // Erst festhalten, wo die laufende Folge steht, dann wechseln.
+    saveProgress();
     _index = index;
-    await _openCurrent();
+    await _openCurrent(at: _startOfFile(_sources[index].fileId));
     await _engine.play();
     notifyListeners();
   }
@@ -849,6 +873,7 @@ class PlaybackController extends ChangeNotifier {
     _sources = const [];
     _owners = const [];
     _resume = const [];
+    _perFile = const {};
     _queueName = null;
     _order = const [];
     _chapters = const [];
@@ -879,6 +904,37 @@ class PlaybackController extends ChangeNotifier {
         finished: finished,
         deviceId: deviceId,
       );
+      // Und bei einer Folge zusätzlich dort, wo sie hingehört: an der Datei.
+      // Der Stand des Werks zeigt immer nur auf eine — wer zwischen zwei
+      // Folgen wechselt, verlöre sonst jedes Mal die andere.
+      if (work.mediaType?.keepsPositionPerFile ?? false) {
+        if (finished) {
+          library.clearFilePosition(workId: work.id, fileId: source.fileId);
+          _perFile = {..._perFile}..remove(source.fileId);
+        } else {
+          final seconds = _position.inMilliseconds / 1000;
+          final total = _duration == null
+              ? null
+              : _duration!.inMilliseconds / 1000;
+          library.saveFilePosition(
+            workId: work.id,
+            fileId: source.fileId,
+            position: seconds,
+            total: total,
+          );
+          // Auch hier behalten: wer innerhalb einer Sitzung zwischen zwei
+          // Folgen hin und her springt, soll nicht den Stand von vorhin
+          // wiederfinden.
+          _perFile = {
+            ..._perFile,
+            source.fileId: (
+              position: seconds,
+              total: total ?? _perFile[source.fileId]?.total,
+              updatedAt: DateTime.now().toUtc(),
+            ),
+          };
+        }
+      }
     } on Object {
       // Losing one autosave is not worth interrupting playback for; the next
       // tick writes again.

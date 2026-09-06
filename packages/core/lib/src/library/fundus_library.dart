@@ -1268,6 +1268,31 @@ final class FundusLibrary {
     int limit = 500,
   }) => _database.progressChangedSince(since, limit: limit);
 
+  /// Wo in jeder Datei eines Werks jemand steht — für Werke, deren Dateien
+  /// für sich stehen (eine Podcast-Folge, nicht das Kapitel eines Hörbuchs).
+  Map<String, ({double position, double? total, DateTime updatedAt})>
+  filePositions(String workId) => _database.filePositions(workId);
+
+  void saveFilePosition({
+    required String workId,
+    required String fileId,
+    required double position,
+    double? total,
+  }) {
+    if (isReadOnly) return;
+    _database.saveFilePosition(
+      workId: workId,
+      fileId: fileId,
+      position: position,
+      total: total,
+    );
+  }
+
+  void clearFilePosition({required String workId, required String fileId}) {
+    if (isReadOnly) return;
+    _database.clearFilePosition(workId: workId, fileId: fileId);
+  }
+
   List<LibraryPlaylist> listPlaylists() => _database.listPlaylists();
 
   LibraryPlaylist? loadPlaylist(String playlistId) =>

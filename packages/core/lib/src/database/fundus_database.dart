@@ -215,7 +215,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 14;
+  static const schemaVersion = 15;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -636,6 +636,74 @@ final class FundusDatabase {
       'ON CONFLICT(work_id, file_id, user_id) DO UPDATE SET '
       'finished = 1, updated_at = excluded.updated_at',
       [workId, fileId, userId, DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  /// Wo in jeder einzelnen Datei eines Werks jemand steht.
+  ///
+  /// Nur dort geführt, wo Dateien für sich stehen: eine Podcast-Folge hört
+  /// man zur Hälfte, hört dazwischen eine andere und kommt zurück. Ein Stand
+  /// pro Werk vergisst dabei jedes Mal die andere Folge.
+  Map<String, ({double position, double? total, DateTime updatedAt})>
+  filePositions(String workId, {String userId = 'default'}) {
+    if (!tableExists('file_progress')) return const {};
+    final rows = _database.select(
+      'SELECT file_id, position, total, updated_at FROM file_progress '
+      'WHERE work_id = ? AND user_id = ?',
+      [workId, userId],
+    );
+    return {
+      for (final row in rows)
+        row['file_id'] as String: (
+          position: (row['position'] as num).toDouble(),
+          total: (row['total'] as num?)?.toDouble(),
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(
+            row['updated_at'] as int,
+            isUtc: true,
+          ),
+        ),
+    };
+  }
+
+  void saveFilePosition({
+    required String workId,
+    required String fileId,
+    required double position,
+    double? total,
+    String userId = 'default',
+    DateTime? updatedAt,
+  }) {
+    if (!tableExists('file_progress')) return;
+    _database.execute(
+      'INSERT INTO file_progress (work_id, file_id, user_id, position, '
+      'total, updated_at) VALUES (?, ?, ?, ?, ?, ?) '
+      'ON CONFLICT(work_id, file_id, user_id) DO UPDATE SET '
+      'position = excluded.position, '
+      // Eine bekannte Länge geht nicht verloren, nur weil eine spätere
+      // Meldung keine mitbringt.
+      'total = COALESCE(excluded.total, file_progress.total), '
+      'updated_at = excluded.updated_at',
+      [
+        workId,
+        fileId,
+        userId,
+        position,
+        total,
+        (updatedAt ?? DateTime.now()).toUtc().millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  void clearFilePosition({
+    required String workId,
+    required String fileId,
+    String userId = 'default',
+  }) {
+    if (!tableExists('file_progress')) return;
+    _database.execute(
+      'DELETE FROM file_progress WHERE work_id = ? AND file_id = ? '
+      'AND user_id = ?',
+      [workId, fileId, userId],
     );
   }
 
@@ -2905,6 +2973,7 @@ final class FundusDatabase {
     if (_database.userVersion == 11 && !readOnly) _migrateToVersion12();
     if (_database.userVersion == 12 && !readOnly) _migrateToVersion13();
     if (_database.userVersion == 13 && !readOnly) _migrateToVersion14();
+    if (_database.userVersion == 14 && !readOnly) _migrateToVersion15();
   }
 
   void _migrateToVersion1() {
@@ -3197,6 +3266,26 @@ final class FundusDatabase {
         _database.execute('ALTER TABLE playlist_items ADD COLUMN file_id TEXT');
       }
       _database.userVersion = 14;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  /// Ein Stand je Datei, nicht nur je Werk.
+  ///
+  /// Ein Hörbuch wird von vorn nach hinten gehört — ein Stand genügt. Eine
+  /// Podcast-Folge ist dagegen für sich: man hört eine Stunde davon, hört
+  /// zwischendurch eine andere und kommt zurück. Ein einziger Stand pro Werk
+  /// vergisst dabei jedes Mal, wo man in der anderen Folge war.
+  void _migrateToVersion15() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      for (final statement in _version15Statements) {
+        _database.execute(statement);
+      }
+      _database.userVersion = 15;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -3685,6 +3774,20 @@ const _version12Statements = <String>[
     description TEXT,
     published_at INTEGER,
     PRIMARY KEY (work_id, file_id)
+  )
+  ''',
+];
+
+const _version15Statements = <String>[
+  '''
+  CREATE TABLE IF NOT EXISTS file_progress (
+    work_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    position REAL NOT NULL,
+    total REAL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (work_id, file_id, user_id)
   )
   ''',
 ];

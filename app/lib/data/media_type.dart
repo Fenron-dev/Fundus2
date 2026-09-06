@@ -127,6 +127,14 @@ final class MediaTypeDefinition {
   /// can be something.
   bool get hasChapterImages => id == 'podcast' || id == 'audiobook';
 
+  /// Ob jede Datei ihren eigenen Stand behält.
+  ///
+  /// Ein Hörbuch wird von vorn nach hinten gehört: ein Stand für das ganze
+  /// Werk ist genau richtig. Eine Podcast-Folge steht für sich — man hört
+  /// eine Stunde davon, dazwischen eine andere und kommt zurück. Bei Musik
+  /// ebenso: niemand setzt ein Lied fort, aber das Album ist keine Reihe.
+  bool get keepsPositionPerFile => id == 'podcast';
+
   /// Whether opening this kind of work shows a picture.
   ///
   /// It decides two things at once: that playing it should take the whole
