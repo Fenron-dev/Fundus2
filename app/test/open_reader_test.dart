@@ -11,6 +11,7 @@ import 'package:fundus/features/reader/reader_screen.dart';
 import 'package:fundus/media/reader_controller.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/media_type.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import 'playback_controller_test.dart' show FakeEngine;
@@ -125,6 +126,82 @@ void main() {
       const Duration(seconds: 5),
     );
     expect(reader.isZoomed, isFalse);
+
+    // Und ein zweites Öffnen holt nicht von selbst heran. Der Zähler stand
+    // schon auf zwei; ein frisches Fenster hielt das für einen Doppeltipp.
+    reader.close();
+    await tester.pump();
+    await tester.runAsync(() => scope.play(work));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(reader.isZoomed, isFalse);
+  });
+
+  /// Aus dem Betrieb: bei Bild vier hinaus und wieder hinein, und der Leser
+  /// stand auf Bild eins.
+  testWidgets('der Stand überlebt das Schließen', (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.runAsync(() async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+    });
+    final work = library.works.first;
+
+    late FundusScopeState scope;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: FundusTheme.dark(),
+        home: FundusScope(
+          settings: settings,
+          library: library,
+          player: player,
+          reader: reader,
+          child: Builder(
+            builder: (context) {
+              scope = FundusScope.of(context);
+              return const FundusShell();
+            },
+          ),
+        ),
+      ),
+    );
+    // Der Streifen ist der Fall, um den es geht: dort meldet die Liste, was
+    // sie sieht, und diese Meldung überschrieb den gespeicherten Stand.
+    await tester.runAsync(
+      () => reader.updateProfile(
+        const PublicationReaderProfile(
+          layout: PublicationReaderLayout.continuousVertical,
+        ),
+      ),
+    );
+    await tester.runAsync(() => scope.play(work));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.runAsync(() => reader.goToPage(3));
+    await tester.pump();
+    expect(reader.pageIndex, 3);
+
+    reader.close();
+    await tester.pump();
+    await tester.runAsync(() => scope.play(work));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(reader.pageIndex, 3, reason: 'Der Stand wurde überschrieben');
   });
 
   testWidgets('eine Light Novel öffnet den Textleser', (tester) async {

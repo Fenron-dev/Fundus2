@@ -64,22 +64,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
         type?.groupings ??
         const [GroupingMode.tiles, GroupingMode.table, GroupingMode.folder];
 
+    // Vor einem Regal steht der Vorschlag, nicht das Werkzeug.
+    //
+    // „Ordnen nach" und die Filterleiste gehören zu einer Liste; über einer
+    // Bühne sind sie zwei Zeilen, die niemand gerade braucht — auf einem
+    // Telefon ist das der halbe Bildschirm. Sie stehen deshalb dort, wo eine
+    // Liste steht: hinter „Alle Filme", „Zuletzt hinzugefügt", einer Gruppe
+    // oder einer Suche. Auf dem Schreibtisch ist Platz genug, dort bleiben
+    // sie stehen.
+    final onStage = _showsStage(context, scope, type);
+    final tools =
+        !onStage || FundusStageSize.of(context) != FundusStageSize.handset;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _GroupingBar(
-          title: section == null
-              ? (type?.label ?? 'Alle Werke')
-              : '${section.label} · ${type?.label ?? 'Alle Werke'}',
-          count: works.length,
-          groupings: groupings,
-          selected: grouping,
-          onSelect: (mode) => scope.setFilter(filter.copyWith(grouping: mode)),
-          onMatchAll: works.isEmpty
-              ? null
-              : () => unawaited(_matchAll(context, scope, works)),
-        ),
-        _ShelfBar(works: scope.library.works),
+        if (tools)
+          _GroupingBar(
+            // Auf der Bühne trägt die Pfadleiste oben den Namen schon; ihn
+            // hier zu wiederholen ist eine Zeile für nichts.
+            title: onStage
+                ? null
+                : section == null
+                ? (type?.label ?? 'Alle Werke')
+                : '${section.label} · ${type?.label ?? 'Alle Werke'}',
+            count: onStage ? null : works.length,
+            groupings: groupings,
+            selected: grouping,
+            onSelect: (mode) =>
+                scope.setFilter(filter.copyWith(grouping: mode)),
+            onMatchAll: works.isEmpty
+                ? null
+                : () => unawaited(_matchAll(context, scope, works)),
+          ),
+        if (tools) _ShelfBar(works: scope.library.works),
         Expanded(
           child: works.isEmpty
               ? _empty(context, scope)
@@ -101,6 +119,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ],
     );
   }
+
+  /// Ob hier die Bühne steht statt einer Liste.
+  ///
+  /// Auf einer Reihe steht die Reihe, in einer Gruppe die Gruppe, und wer
+  /// sucht, will die Antwort und keinen Vorschlag.
+  bool _showsStage(
+    BuildContext context,
+    FundusScopeState scope,
+    MediaTypeDefinition? type,
+  ) =>
+      StageScreen.suits(type) &&
+      route.section == null &&
+      route.group == null &&
+      scope.filter.text.isEmpty &&
+      scope.filter.grouping == GroupingMode.tiles;
 
   /// Fetching details for everything in view.
   ///
@@ -159,11 +192,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       // A shelf of films or series leads with something to watch rather than
       // with a wall of equal thumbnails. Drilled into a group, or filtered
       // down to a search, the stage would be in the way of the answer.
-      // Auf einer Reihe steht die Reihe, nicht die Bühne davor.
-      if (StageScreen.suits(type) &&
-          route.section == null &&
-          route.group == null &&
-          scope.filter.text.isEmpty) {
+      if (_showsStage(context, scope, type)) {
         return StageScreen(works: works, type: type, onOpen: open);
       }
       return WorkGrid(
@@ -727,8 +756,9 @@ class _GroupingBar extends StatelessWidget {
     this.onMatchAll,
   });
 
-  final String title;
-  final int count;
+  /// Null, wo die Pfadleiste oben den Namen schon trägt.
+  final String? title;
+  final int? count;
   final List<GroupingMode> groupings;
   final GroupingMode selected;
   final void Function(GroupingMode) onSelect;
@@ -746,18 +776,21 @@ class _GroupingBar extends StatelessWidget {
     final tokens = context.fundus;
 
     final heading = [
-      Flexible(
-        child: Text(
-          title,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.headlineMedium,
+      if (title case final name?) ...[
+        Flexible(
+          child: Text(
+            name,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.headlineMedium,
+          ),
         ),
-      ),
-      const SizedBox(width: FundusSpace.x3),
-      Text(
-        '$count',
-        style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
-      ),
+        const SizedBox(width: FundusSpace.x3),
+      ],
+      if (count case final many?)
+        Text(
+          '$many',
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+        ),
     ];
 
     final sorting = [
@@ -786,6 +819,12 @@ class _GroupingBar extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          if (heading.isEmpty) {
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: sorting),
+            );
+          }
           if (constraints.maxWidth >= _stackBelow) {
             return Row(children: [...heading, const Spacer(), ...sorting]);
           }

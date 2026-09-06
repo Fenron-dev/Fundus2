@@ -153,6 +153,52 @@ void main() {
     expect(find.textContaining('Zuletzt hinzugefügt · Filme'), findsWidgets);
   });
 
+  /// Vor einem Regal steht der Vorschlag, nicht das Werkzeug: „Ordnen nach"
+  /// und die Filterleiste sind auf einem Telefon der halbe Bildschirm.
+  testWidgets('auf dem Telefon steht über der Bühne keine Leiste', (
+    tester,
+  ) async {
+    await pump(tester, const Size(420, 900));
+
+    expect(find.byType(StageScreen), findsOneWidget);
+    expect(find.text('Ordnen nach'), findsNothing);
+    expect(find.text('Herkunft'), findsNothing);
+    // Und die Überschrift auch nicht: die Pfadleiste trägt sie schon.
+    expect(
+      find.descendant(
+        of: find.byType(StageScreen),
+        matching: find.text('Filme'),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('auf der Listenseite steht sie wieder da', (tester) async {
+    final scope = await pump(tester, const Size(420, 900));
+
+    scope.navigation.go(
+      LibraryRoute(
+        mediaTypeId: MediaTypes.movies.id,
+        section: ShelfSection.recent,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StageScreen), findsNothing);
+    expect(find.text('Ordnen nach'), findsOneWidget);
+    expect(find.textContaining('Zuletzt hinzugefügt · Filme'), findsWidgets);
+  });
+
+  testWidgets('auf dem Schreibtisch bleibt sie über der Bühne stehen', (
+    tester,
+  ) async {
+    await pump(tester, const Size(1400, 1200));
+
+    expect(find.byType(StageScreen), findsOneWidget);
+    // Dort ist Platz genug — nur die Überschrift ist überflüssig.
+    expect(find.text('Ordnen nach'), findsOneWidget);
+  });
+
   /// „Was jetzt?" ist bei Hörbüchern dieselbe Frage wie bei Filmen; eine Wand
   /// gleicher Kacheln ist überall ein Dateilisting.
   test('jedes Regal bekommt eine Bühne, die Gesamtansicht nicht', () {

@@ -127,11 +127,20 @@ final class FundusServerRequestEvent {
     required this.method,
     required this.resource,
     required this.statusCode,
+    this.workId,
   });
 
   final String method;
   final String resource;
   final int statusCode;
+
+  /// Um welches Werk es ging, wo die Adresse eines nennt.
+  ///
+  /// Damit weiß die Seite, die den Server hält, was sich unter ihr geändert
+  /// hat: ein Handy, das seinen Lesestand schickt, schreibt in dieselbe
+  /// Bibliothek, die auf dem Bildschirm steht — und die zeigte den alten
+  /// Stand, bis jemand von Hand aufgefrischt hat.
+  final String? workId;
 }
 
 typedef FundusServerRequestObserver =
@@ -290,11 +299,24 @@ final class FundusServerHandler {
             method: request.method,
             resource: _resourceType(request.url.pathSegments),
             statusCode: response.statusCode,
+            workId: _workIdIn(request.url.pathSegments),
           ),
         );
         return response;
       };
     };
+  }
+
+  /// Das Werk, um das es in einer Adresse geht.
+  ///
+  /// Die Adressen sind gleich gebaut: hinter „progress", „annotations" oder
+  /// „works" steht, wen es angeht.
+  static String? _workIdIn(List<String> segments) {
+    for (final marker in const ['progress', 'annotations', 'works']) {
+      final at = segments.indexOf(marker);
+      if (at >= 0 && at + 1 < segments.length) return segments[at + 1];
+    }
+    return null;
   }
 
   static String _resourceType(List<String> segments) {

@@ -300,6 +300,22 @@ class ServerHostController extends ChangeNotifier {
         'antwort': event.statusCode,
       },
     );
+    if (!failed) _followWrite(event);
+  }
+
+  /// Was ein gekoppeltes Gerät hierher geschrieben hat, steht danach auch auf
+  /// dem Bildschirm.
+  ///
+  /// Der Server schreibt in dieselbe Bibliothek, die hier offen ist — nur
+  /// wusste die Oberfläche nichts davon. Ein Lesestand vom Handy kam an und
+  /// war trotzdem nicht zu sehen, bis jemand von Hand aufgefrischt hat.
+  void _followWrite(FundusServerRequestEvent event) {
+    if (event.method == 'GET' || event.method == 'HEAD') return;
+    const watched = {'progress', 'annotations'};
+    if (!watched.contains(event.resource)) return;
+    final workId = event.workId;
+    if (workId == null) return;
+    library.refreshWork(workId);
   }
 
   /// Lets go of the shared library without closing it.

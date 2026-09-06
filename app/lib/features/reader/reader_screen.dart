@@ -311,12 +311,13 @@ class _ReaderSurface extends StatelessWidget {
         top: 0,
         bottom: 0,
         width: edge,
+        // Kein Doppeltipp an den Rändern: dort wird geblättert, und zwei
+        // Seiten schnell hintereinander sind zwei Tipps und kein Zoom.
         child: IgnorePointer(
           ignoring: reader.isZoomed,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onTap: leftGoesBack ? reader.previousPage : reader.nextPage,
-            onDoubleTap: reader.toggleZoom,
           ),
         ),
       ),
@@ -347,7 +348,6 @@ class _ReaderSurface extends StatelessWidget {
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onTap: leftGoesBack ? reader.nextPage : reader.previousPage,
-            onDoubleTap: reader.toggleZoom,
           ),
         ),
       ),
@@ -433,6 +433,14 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
   final _keys = <int, GlobalKey>{};
   int _jumpedTo = -1;
 
+  /// Ob der Streifen schon dort steht, wo zuletzt gelesen wurde.
+  ///
+  /// Bis dahin sagt er nichts. Eine Liste beginnt bei null, und die erste
+  /// Meldung „ich sehe Seite eins" kam, bevor der gespeicherte Stand
+  /// angesprungen war — sie überschrieb ihn. Aus Seite vier wurde so bei
+  /// jedem Öffnen wieder Seite eins.
+  bool _placed = false;
+
   @override
   void initState() {
     super.initState();
@@ -452,7 +460,7 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
   /// the screen, so this stays a handful of comparisons rather than a walk
   /// through a two-hundred-page volume.
   void _reportVisiblePage() {
-    if (!mounted) return;
+    if (!mounted || !_placed) return;
     final reader = FundusScope.of(context).reader;
     final viewport = context.findRenderObject();
     if (viewport is! RenderBox) return;
@@ -499,8 +507,11 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
         final box = key?.currentContext;
         if (box == null) return;
         _jumpedTo = target;
+        _placed = true;
         Scrollable.ensureVisible(box, alignment: 0);
       });
+    } else {
+      _placed = true;
     }
 
     // Hineinzoomen gehört zum Lesen: eine Fußnote in einem Scan, ein Schild
@@ -556,7 +567,15 @@ class _ZoomWindow extends StatefulWidget {
 
 class _ZoomWindowState extends State<_ZoomWindow> {
   final _view = TransformationController();
-  int _lastZoomRequest = 0;
+
+  /// Der Zählerstand, den dieses Fenster schon gesehen hat.
+  ///
+  /// Bei null zu beginnen hieß: ein Leser, der schon einmal herangeholt
+  /// wurde, zählt höher, und das neue Fenster hielt den alten Stand für einen
+  /// frischen Doppeltipp — beim Wiedereintritt war das Bild vergrößert, ohne
+  /// dass jemand etwas getan hätte. Übernommen wird deshalb, was schon
+  /// dasteht.
+  int? _lastZoomRequest;
 
   /// Wie weit ein Doppeltipp heranholt: genug, um eine Fußnote zu lesen,
   /// nicht so weit, dass man sich verliert.
@@ -597,7 +616,9 @@ class _ZoomWindowState extends State<_ZoomWindow> {
     final reader = FundusScope.of(context).reader;
     // Der Doppeltipp kommt von den Tippflächen darüber; hier wird er
     // beantwortet.
-    if (_lastZoomRequest != reader.zoomRequest) {
+    if (_lastZoomRequest == null) {
+      _lastZoomRequest = reader.zoomRequest;
+    } else if (_lastZoomRequest != reader.zoomRequest) {
       _lastZoomRequest = reader.zoomRequest;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _toggleZoom();
