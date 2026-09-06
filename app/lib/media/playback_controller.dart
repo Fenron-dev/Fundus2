@@ -540,8 +540,14 @@ class PlaybackController extends ChangeNotifier {
     _trackChapters = const [];
     _appliedPreference = false;
     _clearBetweenEpisodes();
+    // Stand und Länge gehören ab jetzt der neuen Datei. Vorher standen sie
+    // erst nach der Erreichbarkeitsfrage hier — scheiterte die, blieb der
+    // Stand des vorigen Titels stehen, und „abspielen" hätte die neue Datei
+    // mitten im Nichts geöffnet.
+    _duration = source.duration;
+    _position = at;
     final reach = Stopwatch()..start();
-    final reachable = await source.isReachable();
+    final reachable = await _reach(source);
     if (reach.elapsedMilliseconds > 200) {
       FundusLog.instance.write(LogLevel.warn, 'player.reachable.slow', {
         'file': source.title,
@@ -558,12 +564,6 @@ class PlaybackController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    // Erst der bekannte Stand, dann öffnen: die Engine meldet die Länge
-    // während des Öffnens, und eine Zuweisung danach hat sie bisher wieder
-    // auf null gesetzt — bei Video, wo der Index keine Länge kennt, blieb
-    // deshalb „--:--" stehen.
-    _duration = source.duration;
-    _position = at;
     final span = FundusLog.instance.start('player.file', {
       'file': source.title,
       'origin': source.origin.name,
@@ -577,6 +577,22 @@ class PlaybackController extends ChangeNotifier {
     // After playback has started, never before it: reading the chapters means
     // walking the file's tags, and nobody should wait for a picture.
     unawaited(_loadTrackChapters(source.fileId));
+  }
+
+  /// Fragt, ob die Datei da ist — und fragt notfalls ein zweites Mal.
+  ///
+  /// Aus dem Betrieb: ein Album lief, das Handy ging in die Sperre, das Lied
+  /// spielte zu Ende und das nächste kam nicht mehr. Ein Telefon, das gerade
+  /// erst wieder aufwacht, lässt die erste Anfrage über sein Funkgerät auch
+  /// mal ins Leere laufen. Einmal zu fragen heißt dann: aufgeben, obwohl der
+  /// Server einen Wimpernschlag später antwortet.
+  static const _secondTry = Duration(milliseconds: 1200);
+
+  Future<bool> _reach(MediaByteSource source) async {
+    if (await source.isReachable()) return true;
+    FundusLog.instance.warn('player.reachable.retry', {'file': source.title});
+    await Future<void>.delayed(_secondTry);
+    return source.isReachable();
   }
 
   /// Reads the chapters of the running file in the background.
@@ -691,7 +707,11 @@ class PlaybackController extends ChangeNotifier {
     }
     _index = target;
     await _openCurrent();
-    await _engine.play();
+    // Nur spielen, wenn wirklich etwas geöffnet wurde. Sonst hieße
+    // „abspielen" auf einer leeren Engine, dass der Player sich für laufend
+    // hält — und der nächste Druck auf den Knopf pausiert etwas, das nie
+    // angefangen hat.
+    if (_failure == null) await _engine.play();
     notifyListeners();
   }
 
@@ -704,7 +724,7 @@ class PlaybackController extends ChangeNotifier {
     }
     _index = _order[at - 1];
     await _openCurrent();
-    await _engine.play();
+    if (_failure == null) await _engine.play();
     notifyListeners();
   }
 
@@ -902,7 +922,7 @@ class PlaybackController extends ChangeNotifier {
   Future<void> _playIndex(int index) async {
     _index = index;
     await _openCurrent();
-    await _engine.play();
+    if (_failure == null) await _engine.play();
     notifyListeners();
   }
 

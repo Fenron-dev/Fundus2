@@ -23,6 +23,12 @@ void main() {
     final folder = Directory('${root.path}/Musik/Kraftwerk/Autobahn')
       ..createSync(recursive: true);
     await File('${folder.path}/01.mp3').writeAsBytes(List.filled(64, 1));
+    // Ein zweites Album, das wirklich zwei Titel hat.
+    final pair = Directory('${root.path}/Musik/Kraftwerk/Doppel')
+      ..createSync(recursive: true);
+    for (final track in ['01', '02']) {
+      await File('${pair.path}/$track.mp3').writeAsBytes(List.filled(64, 1));
+    }
     library = await FundusLibrary.create(root);
     await library.index().drain<void>();
     engine = FakeEngine();
@@ -35,7 +41,12 @@ void main() {
     await root.delete(recursive: true);
   });
 
-  WorkView album() => WorkView.fromSummary(library.listWorks().single);
+  WorkView workNamed(String title) => WorkView.fromSummary(
+    library.listWorks().firstWhere((work) => work.title == title),
+  );
+
+  WorkView album() => workNamed('Autobahn');
+  WorkView twoTracks() => workNamed('Doppel');
 
   test('ein Abriss mitten im Stück setzt dieselbe Stelle wieder auf', () async {
     await player.open(library, album());
@@ -98,4 +109,53 @@ void main() {
     expect(player.failure, isNull);
     expect(engine.playing, isTrue);
   });
+
+  /// Aus dem Betrieb: ein Album mit fünfzig Titeln, das Handy ging in die
+  /// Sperre, das Lied spielte zu Ende — und das nächste kam nicht mehr.
+  test('nach dem Lied kommt das nächste', () async {
+    await player.open(library, twoTracks());
+    engine.emitDuration(const Duration(minutes: 4));
+    engine.emitPosition(const Duration(minutes: 4));
+    await Future<void>.delayed(Duration.zero);
+
+    engine.emitCompleted();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(player.trackIndex, 1);
+    expect(player.currentSource?.title, contains('02'));
+    expect(engine.playing, isTrue);
+  });
+
+  test(
+    'kommt die nächste Datei nicht, steht der Stand trotzdem richtig',
+    () async {
+      await player.open(library, twoTracks());
+      engine.emitDuration(const Duration(minutes: 4));
+      engine.emitPosition(const Duration(minutes: 4));
+      await Future<void>.delayed(Duration.zero);
+
+      // Die zweite Datei ist weg, wenn die erste endet.
+      final second = File(
+        library.playbackTracks(twoTracks().id)[1].absolutePath,
+      );
+      final bytes = await second.readAsBytes();
+      await second.delete();
+      engine.emitCompleted();
+      // Gefragt wird zweimal, mit einer Pause dazwischen.
+      await Future<void>.delayed(const Duration(seconds: 2));
+
+      expect(player.failure, contains('nicht erreichbar'));
+      expect(player.trackIndex, 1);
+      // Und nicht mehr der Stand des vorigen Titels.
+      expect(player.position, Duration.zero);
+
+      // Ist sie wieder da, genügt ein Druck.
+      await second.writeAsBytes(bytes);
+      await player.playOrPause();
+
+      expect(player.failure, isNull);
+      expect(player.currentSource?.title, contains('02'));
+      expect(engine.playing, isTrue);
+    },
+  );
 }
