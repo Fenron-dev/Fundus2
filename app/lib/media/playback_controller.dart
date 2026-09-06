@@ -308,6 +308,7 @@ class PlaybackController extends ChangeNotifier {
     WorkView work, {
     bool autoplay = true,
     String? startAt,
+    Duration? at,
   }) async {
     _failure = null;
     _library = library;
@@ -363,13 +364,17 @@ class PlaybackController extends ChangeNotifier {
       } else {
         _perFile = const {};
       }
-      final resumeAt = chosen >= 0
-          ? _startOfFile(_sources[_index].fileId)
-          : saved == null
-          ? Duration.zero
-          : Duration(
-              milliseconds: ((saved.position.numericValue ?? 0) * 1000).round(),
-            );
+      // Eine angetippte Kapitelmarke ist die genaueste Ansage von allen.
+      final resumeAt =
+          at ??
+          (chosen >= 0
+              ? _startOfFile(_sources[_index].fileId)
+              : saved == null
+              ? Duration.zero
+              : Duration(
+                  milliseconds: ((saved.position.numericValue ?? 0) * 1000)
+                      .round(),
+                ));
       await _openCurrent(at: resumeAt);
       if (autoplay) await _engine.play();
       span.done();

@@ -572,7 +572,11 @@ class _ContextPanelState extends State<_ContextPanel> {
     final scope = FundusScope.of(context);
     final player = scope.player;
     final tokens = context.fundus;
-    final chapters = player.chapters;
+    // Die Marken *innerhalb* der laufenden Datei. Bei einer Podcast-Folge
+    // ist das der Weg zu den Stellen, um die es geht — die Werkkapitel sind
+    // dort nur die Folgen selbst.
+    final inside = player.trackChapters;
+    final chapters = inside.length > 1 ? inside : player.chapters;
     final tracks = player.sources;
     // Chapters only when they really are marks inside a file. A work made of
     // several files also yields one "chapter" per file, all sitting at
@@ -589,6 +593,9 @@ class _ContextPanelState extends State<_ContextPanel> {
         : player.showsVideo
         ? 'FOLGEN'
         : 'DATEIEN';
+    // Läuft eine Folge mit eigenen Marken, stehen die Folgen darunter — beides
+    // wird gebraucht: springen innerhalb, wechseln zwischen.
+    final alsoTracks = inside.length > 1 && tracks.length > 1;
     final count = useChapters ? chapters.length : tracks.length;
     final foldable = widget.shrinkWrap;
 
@@ -613,6 +620,22 @@ class _ContextPanelState extends State<_ContextPanel> {
             active: index == player.trackIndex,
             onTap: () => player.jumpToTrack(index),
           ),
+      if (alsoTracks) ...[
+        const SizedBox(height: FundusSpace.x3),
+        Text(
+          '${player.showsVideo ? 'FOLGEN' : 'DATEIEN'} · ${tracks.length}',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+        for (var index = 0; index < tracks.length; index++)
+          _Entry(
+            label: tracks[index].title,
+            trailing: tracks[index].duration == null
+                ? null
+                : formatPlaybackTime(tracks[index].duration!),
+            active: index == player.trackIndex,
+            onTap: () => player.jumpToTrack(index),
+          ),
+      ],
       if (tracks.isEmpty && chapters.isEmpty)
         Text(
           'Keine Titelliste vorhanden.',

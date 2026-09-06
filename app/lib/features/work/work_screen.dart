@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -715,6 +716,14 @@ class _FilesState extends State<_Files> {
   List<LibraryPlaybackTrack>? _tracks;
   Set<String> _finished = const {};
   Map<String, FileDetail> _details = const {};
+
+  /// Wo jede Folge steht — die Zeile sagt es, ohne dass man sie öffnet.
+  Map<String, ({double position, double? total, DateTime updatedAt})>
+  _positions = const {};
+
+  /// Die Marken innerhalb einer Folge, erst gelesen, wenn jemand sie
+  /// aufklappt: dafür muss die Datei angefasst werden.
+  final _chapters = <String, List<LibraryPlaybackChapter>>{};
   final _expanded = <String>{};
   String? _failure;
 
@@ -736,15 +745,45 @@ class _FilesState extends State<_Files> {
       final tracks = library.playbackTracks(widget.work.id);
       final finished = library.finishedFiles(widget.work.id);
       final details = library.fileDetails(widget.work.id);
+      final positions = library.filePositions(widget.work.id);
       setState(() {
         _tracks = tracks;
         _finished = finished;
         _details = details;
+        _positions = positions;
         _season ??= _seasons(tracks).firstOrNull;
       });
+      _fillMissingTexts(library, tracks, details);
     } on Object catch (failure) {
       setState(() => _failure = failure.toString());
     }
+  }
+
+  /// Holt die Texte, die in den Dateien selbst stehen.
+  ///
+  /// Ein Feed kennt nur seine eigene Sendung, und in einem Ordner liegen oft
+  /// mehrere. Der Text steht aber ohnehin in den Tags — also wird er hier
+  /// nachgelesen, sobald jemand die Folgenliste ansieht, und nur für die
+  /// Folgen, zu denen noch nichts dasteht.
+  void _fillMissingTexts(
+    FundusLibrary library,
+    List<LibraryPlaybackTrack> tracks,
+    Map<String, FileDetail> details,
+  ) {
+    if (!(widget.work.mediaType?.hasChapterImages ?? false)) return;
+    if (library.isReadOnly) return;
+    final missing = tracks.any(
+      (track) => !track.isRemote && details[track.fileId]?.description == null,
+    );
+    if (!missing) return;
+    unawaited(() async {
+      final added = await describeFromTags(
+        library: library,
+        workId: widget.work.id,
+      );
+      if (added == 0 || !mounted) return;
+      setState(() => _details = library.fileDetails(widget.work.id));
+    }());
   }
 
   /// The seasons this work has, in order. Empty where nothing says.
@@ -755,6 +794,32 @@ class _FilesState extends State<_Files> {
       if (number != null) seasons.add(number);
     }
     return seasons.toList()..sort();
+  }
+
+  /// Klappt eine Folge auf und liest dabei ihre Kapitelmarken.
+  ///
+  /// Erst hier, nicht beim Öffnen der Liste: die Marken stehen in der Datei,
+  /// und dreißig Dateien anzufassen, um eine Liste zu zeigen, wäre eine
+  /// Sekunde Warten für nichts.
+  Future<void> _toggleDetails(LibraryPlaybackTrack track) async {
+    final open = _expanded.contains(track.fileId);
+    setState(() {
+      if (open) {
+        _expanded.remove(track.fileId);
+      } else {
+        _expanded.add(track.fileId);
+      }
+    });
+    if (open || _chapters.containsKey(track.fileId)) return;
+    final library = FundusScope.of(context).library.library;
+    if (library == null || track.isRemote) return;
+    try {
+      final marks = await library.trackChapters(widget.work.id, track.fileId);
+      if (!mounted) return;
+      setState(() => _chapters[track.fileId] = marks);
+    } on Object {
+      if (mounted) setState(() => _chapters[track.fileId] = const []);
+    }
   }
 
   Future<void> _toggleFinished(LibraryPlaybackTrack track) async {
@@ -832,14 +897,16 @@ class _FilesState extends State<_Files> {
           gutter: gutter,
           finished: _finished.contains(track.fileId),
           detail: detail,
+          standing: _positions[track.fileId],
+          chapters: _chapters[track.fileId],
+          // Bei einer Sendung mit eigenem Innenleben führt ein Tipp auf die
+          // Zeile zu dem, was drinsteht — gestartet wird mit dem Knopf davor.
+          detailsFirst: widget.work.mediaType?.hasChapterImages ?? false,
           expanded: _expanded.contains(track.fileId),
-          onExpand: detail?.description == null
-              ? null
-              : () => setState(() {
-                  if (!_expanded.remove(track.fileId)) {
-                    _expanded.add(track.fileId);
-                  }
-                }),
+          onExpand: () => unawaited(_toggleDetails(track)),
+          onPlayChapter: (mark) => unawaited(
+            scope.play(widget.work, startAt: track.fileId, at: mark.position),
+          ),
           onPlay: () =>
               unawaited(scope.play(widget.work, startAt: track.fileId)),
           onToggle: () => unawaited(_toggleFinished(track)),
@@ -908,7 +975,11 @@ class _SeasonBar extends StatelessWidget {
   }
 }
 
-/// One episode: tap to start it, tick it off, see how long it is.
+/// Eine Folge: starten, nachlesen, abhaken.
+///
+/// Der Abspielknopf steht vorn. Ein Tipp auf die Zeile führt bei einer
+/// Sendung mit eigenem Innenleben nicht zum Start, sondern zu dem, was
+/// drinsteht — Text, Datum und die Marken innerhalb der Folge.
 class _EpisodeRow extends StatelessWidget {
   const _EpisodeRow({
     required this.track,
@@ -916,9 +987,13 @@ class _EpisodeRow extends StatelessWidget {
     required this.gutter,
     required this.finished,
     required this.detail,
+    required this.standing,
+    required this.chapters,
+    required this.detailsFirst,
     required this.expanded,
     required this.onExpand,
     required this.onPlay,
+    required this.onPlayChapter,
     required this.onToggle,
     required this.onAddToList,
   });
@@ -928,13 +1003,22 @@ class _EpisodeRow extends StatelessWidget {
   final double gutter;
   final bool finished;
 
-  /// What the show's feed says about this episode, where it said anything.
+  /// Was der Feed — oder die Datei selbst — über diese Folge sagt.
   final FileDetail? detail;
-  final bool expanded;
 
-  /// Null where there is nothing to unfold.
-  final VoidCallback? onExpand;
+  /// Wo diese Folge steht, wenn sie angefangen ist.
+  final ({double position, double? total, DateTime updatedAt})? standing;
+
+  /// Die Marken innerhalb der Folge, sobald sie gelesen sind. Null heißt
+  /// „noch nicht nachgesehen", leer heißt „es gibt keine".
+  final List<LibraryPlaybackChapter>? chapters;
+
+  /// Ob ein Tipp auf die Zeile die Folge zeigt, statt sie zu starten.
+  final bool detailsFirst;
+  final bool expanded;
+  final VoidCallback onExpand;
   final VoidCallback onPlay;
+  final void Function(LibraryPlaybackChapter chapter) onPlayChapter;
   final VoidCallback onToggle;
 
   /// Eine einzelne Folge in eine Liste legen — ein Album ist ein Werk mit
@@ -945,8 +1029,10 @@ class _EpisodeRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = context.fundus;
     final theme = Theme.of(context);
+    final left = _remaining;
+
     return InkWell(
-      onTap: onPlay,
+      onTap: detailsFirst ? onExpand : onPlay,
       hoverColor: tokens.hover,
       child: Container(
         padding: EdgeInsets.symmetric(
@@ -956,90 +1042,230 @@ class _EpisodeRow extends StatelessWidget {
         decoration: BoxDecoration(
           border: Border(bottom: BorderSide(color: tokens.divider)),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: 34,
-              child: Text(
-                '$position',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: tokens.textFaint,
-                ),
-              ),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    track.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: finished ? tokens.textMuted : tokens.text,
+            Row(
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: Text(
+                    '$position',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: tokens.textFaint,
                     ),
                   ),
-                  if (track.duration != null ||
-                      finished ||
-                      detail?.publishedAt != null)
-                    Text(
-                      [
-                        if (detail?.publishedAt case final date?)
-                          _formatDate(date),
-                        if (track.duration case final length?)
-                          _formatDuration(length),
-                        if (finished) 'gesehen',
-                      ].join(' · '),
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: tokens.textFaint,
+                ),
+                // Gestartet wird mit dem Knopf; alles andere an der Zeile ist
+                // Nachlesen.
+                IconButton(
+                  onPressed: onPlay,
+                  tooltip: 'Abspielen',
+                  icon: Icon(
+                    FundusIcons.play,
+                    size: FundusIcons.sizeMd,
+                    color: finished ? tokens.textFaint : tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: FundusSpace.x2),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        detail?.title ?? track.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: finished ? tokens.textMuted : tokens.text,
+                        ),
                       ),
-                    ),
-                  // Der Text steht erst da, wenn jemand ihn sehen will:
-                  // dreißig Folgenbeschreibungen untereinander sind keine
-                  // Liste mehr.
-                  if (expanded)
-                    if (detail?.description case final text?) ...[
-                      const SizedBox(height: FundusSpace.x3),
+                      Text(
+                        [
+                          if (detail?.publishedAt case final date?)
+                            _formatDate(date),
+                          if (left != null)
+                            'noch ${_formatDuration(left)}'
+                          else if (track.duration case final length?)
+                            _formatDuration(length),
+                          // „gesehen" für alles mit Bild, „gehört" für eine
+                          // Sendung, die man hört.
+                          if (finished) (detailsFirst ? 'gehört' : 'gesehen'),
+                        ].join(' · '),
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: tokens.textFaint,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: onExpand,
+                  tooltip: expanded ? 'Weniger' : 'Worum es geht',
+                  icon: Icon(
+                    expanded ? FundusIcons.collapse : FundusIcons.expand,
+                    size: FundusIcons.sizeMd,
+                    color: tokens.textFaint,
+                  ),
+                ),
+                IconButton(
+                  onPressed: onAddToList,
+                  tooltip: 'Zur Liste hinzufügen',
+                  icon: Icon(
+                    FundusIcons.lists,
+                    size: FundusIcons.sizeMd,
+                    color: tokens.textFaint,
+                  ),
+                ),
+                IconButton(
+                  onPressed: onToggle,
+                  tooltip: finished
+                      ? 'Als ungesehen markieren'
+                      : 'Als gesehen markieren',
+                  icon: Icon(
+                    finished ? FundusIcons.finished : FundusIcons.unfinished,
+                    size: FundusIcons.sizeMd,
+                    color: finished ? tokens.accent : tokens.textFaint,
+                  ),
+                ),
+              ],
+            ),
+            // Eine angefangene Folge zeigt, wie weit sie ist.
+            if (_progress case final share?)
+              Padding(
+                padding: const EdgeInsets.only(
+                  left: FundusSpace.x8,
+                  top: FundusSpace.x2,
+                  right: FundusSpace.x4,
+                ),
+                child: ClipRRect(
+                  borderRadius: FundusRadius.smAll,
+                  child: LinearProgressIndicator(
+                    value: share,
+                    minHeight: 3,
+                    backgroundColor: tokens.divider,
+                  ),
+                ),
+              ),
+            if (expanded)
+              Padding(
+                padding: const EdgeInsets.only(
+                  left: FundusSpace.x8,
+                  top: FundusSpace.x3,
+                  right: FundusSpace.x4,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (detail?.description case final text?)
                       Text(
                         text,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: tokens.textMuted,
                           height: 1.45,
                         ),
+                      )
+                    else
+                      Text(
+                        'Zu dieser Folge liegt kein Text vor.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: tokens.textFaint,
+                        ),
                       ),
-                    ],
-                ],
-              ),
-            ),
-            if (onExpand case final expand?)
-              IconButton(
-                onPressed: expand,
-                tooltip: expanded ? 'Text einklappen' : 'Worum es geht',
-                icon: Icon(
-                  expanded ? FundusIcons.collapse : FundusIcons.expand,
-                  size: FundusIcons.sizeMd,
-                  color: tokens.textFaint,
+                    if (chapters case final marks?)
+                      if (marks.isNotEmpty) ...[
+                        const SizedBox(height: FundusSpace.x3),
+                        Text(
+                          'KAPITEL · ${marks.length}',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: tokens.textFaint,
+                          ),
+                        ),
+                        for (final mark in marks)
+                          _ChapterLine(
+                            chapter: mark,
+                            onTap: () => onPlayChapter(mark),
+                          ),
+                      ],
+                  ],
                 ),
               ),
-            IconButton(
-              onPressed: onAddToList,
-              tooltip: 'Zur Liste hinzufügen',
-              icon: Icon(
-                FundusIcons.lists,
-                size: FundusIcons.sizeMd,
-                color: tokens.textFaint,
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Wie viel von der Folge noch aussteht.
+  Duration? get _remaining {
+    final saved = standing;
+    if (saved == null) return null;
+    final total = saved.total ?? _lengthInSeconds;
+    if (total == null || total <= 0) return null;
+    final left = total - saved.position;
+    return left <= 1 ? null : Duration(seconds: left.round());
+  }
+
+  double? get _lengthInSeconds {
+    final length = track.duration;
+    return length == null ? null : length.inMilliseconds / 1000;
+  }
+
+  /// Wie weit die Folge ist, als Anteil.
+  double? get _progress {
+    final saved = standing;
+    if (saved == null || saved.position <= 0) return null;
+    final total = saved.total ?? _lengthInSeconds;
+    if (total == null || total <= 0) return null;
+    return (saved.position / total).clamp(0.0, 1.0);
+  }
+}
+
+/// Eine Kapitelmarke innerhalb einer Folge, mit ihrem Bild, wo eines da ist.
+class _ChapterLine extends StatelessWidget {
+  const _ChapterLine({required this.chapter, required this.onTap});
+
+  final LibraryPlaybackChapter chapter;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: FundusRadius.smAll,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: FundusSpace.x2),
+        child: Row(
+          children: [
+            if (chapter.imagePath case final path?)
+              Padding(
+                padding: const EdgeInsets.only(right: FundusSpace.x3),
+                child: ClipRRect(
+                  borderRadius: FundusRadius.smAll,
+                  child: Image.file(
+                    File(path),
+                    width: 56,
+                    height: 32,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+            Expanded(
+              child: Text(
+                chapter.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
               ),
             ),
-            IconButton(
-              onPressed: onToggle,
-              tooltip: finished
-                  ? 'Als ungesehen markieren'
-                  : 'Als gesehen markieren',
-              icon: Icon(
-                finished ? FundusIcons.finished : FundusIcons.unfinished,
-                size: FundusIcons.sizeMd,
-                color: finished ? tokens.accent : tokens.textFaint,
+            Text(
+              _formatDuration(chapter.position),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: tokens.textFaint,
               ),
             ),
           ],

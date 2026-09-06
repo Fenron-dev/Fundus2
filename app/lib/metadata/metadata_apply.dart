@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fundus_core/fundus_core.dart';
@@ -199,7 +200,7 @@ Future<MetadataApplyResult> applyMetadata({
   // Texte — nie den Abgleich.
   var described = 0;
   final feedUrl = candidate.externalIds['feed'];
-  if (feedUrl != null) {
+  if (feedUrl != null || (work.mediaType?.id == 'podcast')) {
     described = await describeEpisodes(
       library: library,
       workId: work.id,
@@ -253,10 +254,68 @@ Future<Uint8List?> fetchCoverBytes(String url, {http.Client? client}) async {
 Future<int> describeEpisodes({
   required FundusLibrary library,
   required String workId,
-  required String feedUrl,
+  String? feedUrl,
   http.Client? client,
 }) async {
   if (library.isReadOnly) return 0;
+  final fromFeed = feedUrl == null
+      ? 0
+      : await _describeFromFeed(
+          library: library,
+          workId: workId,
+          feedUrl: feedUrl,
+          client: client,
+        );
+  // Ein Ordner enthält oft mehrere Sendungen desselben Hauses — ein Feed
+  // kann sie gar nicht alle kennen. Was er nicht beschrieben hat, bringt die
+  // Datei meistens selbst mit: jeder Downloader schreibt den Text der Folge
+  // in die Tags.
+  return fromFeed + await describeFromTags(library: library, workId: workId);
+}
+
+/// Nimmt die Texte, die in den Dateien selbst stehen.
+///
+/// Gefüllt wird nur, was noch leer ist: ein Text aus dem Feed ist der
+/// genauere, und ein von Hand gesetzter erst recht.
+Future<int> describeFromTags({
+  required FundusLibrary library,
+  required String workId,
+}) async {
+  if (library.isReadOnly) return 0;
+  const extractor = EmbeddedCoverExtractor();
+  final known = library.fileDetails(workId);
+  var described = 0;
+  for (final track in library.playbackTracks(workId)) {
+    if (track.isRemote || track.absolutePath.isEmpty) continue;
+    if (known[track.fileId]?.description != null) continue;
+    final file = File(track.absolutePath);
+    if (!file.existsSync()) continue;
+    try {
+      final tags = await extractor.extractMetadata(file);
+      if (tags.description == null && tags.publishedAt == null) continue;
+      library.setFileDetail(
+        workId: workId,
+        fileId: track.fileId,
+        title: known[track.fileId]?.title ?? tags.title,
+        description: tags.description,
+        publishedAt: known[track.fileId]?.publishedAt ?? tags.publishedAt,
+      );
+      described++;
+    } on Object {
+      // Eine Datei, die sich nicht lesen lässt, kostet ihren Text — nicht
+      // die der anderen.
+      continue;
+    }
+  }
+  return described;
+}
+
+Future<int> _describeFromFeed({
+  required FundusLibrary library,
+  required String workId,
+  required String feedUrl,
+  http.Client? client,
+}) async {
   final feed = PodcastFeed(client: client);
   try {
     final episodes = await feed.read(feedUrl);

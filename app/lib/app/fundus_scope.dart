@@ -691,7 +691,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// where the bytes come from.
   /// [startAt] names one file of the work — the episode somebody tapped.
   /// Without it the work opens where it was left.
-  Future<void> play(WorkView work, {String? startAt}) async {
+  /// [at] ist die Stelle, die jemand ausdrücklich gemeint hat — eine
+  /// Kapitelmarke etwa. Ohne sie entscheidet der gespeicherte Stand.
+  Future<void> play(WorkView work, {String? startAt, Duration? at}) async {
     final vault = library.library;
     if (vault == null) return;
     final span = FundusLog.instance.start('open', {
@@ -728,7 +730,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       span.done({'via': 'photos'});
       return;
     }
-    await player.open(vault, work, startAt: startAt);
+    await player.open(vault, work, startAt: startAt, at: at);
     if (player.failure == null) library.refreshWork(work.id);
     await _fillTheScreen(work, opened: player.failure == null);
     span.done({'via': 'player'});

@@ -41,6 +41,8 @@ final class EmbeddedAudioMetadata {
     this.series,
     this.part,
     this.language,
+    this.description,
+    this.publishedAt,
   });
 
   final String? title;
@@ -51,6 +53,16 @@ final class EmbeddedAudioMetadata {
   final double? part;
   final String? language;
 
+  /// Worum es in dieser Datei geht.
+  ///
+  /// Bei einer Podcast-Folge steht das im Kommentar oder in der eigens dafür
+  /// gedachten Beschreibung — ein heruntergeladener Podcast bringt seinen
+  /// Text also mit, auch wenn der Feed ihn längst nicht mehr führt.
+  final String? description;
+
+  /// Wann die Datei veröffentlicht wurde, soweit sie es sagt.
+  final DateTime? publishedAt;
+
   bool get isEmpty =>
       title == null &&
       album == null &&
@@ -58,7 +70,9 @@ final class EmbeddedAudioMetadata {
       albumArtist == null &&
       series == null &&
       part == null &&
-      language == null;
+      language == null &&
+      description == null &&
+      publishedAt == null;
 }
 
 /// Reads common embedded audiobook artwork without loading the complete audio
@@ -111,6 +125,8 @@ final class EmbeddedCoverExtractor {
         series: values['series'],
         part: _parsePart(values['part']),
         language: values['language'],
+        description: _asParagraph(values['description']),
+        publishedAt: _parseDate(values['date']),
       );
     } finally {
       await input.close();
@@ -153,6 +169,9 @@ final class EmbeddedCoverExtractor {
           '©ART' => 'artist',
           'aART' => 'album_artist',
           '©lan' => 'language',
+          'desc' => 'description',
+          'ldes' => 'description',
+          '©day' => 'date',
           _ => null,
         };
         if (key != null) {
@@ -261,8 +280,21 @@ final class EmbeddedCoverExtractor {
             ? _synchsafe(frameHeader, 4)
             : _uint32(frameHeader, 4);
         if (size <= 0 || size > remaining) break;
-        if (const {'TIT2', 'TALB', 'TPE1', 'TPE2', 'TLAN'}.contains(id) &&
-            size <= 4096) {
+        if (const {
+              'TIT2',
+              'TALB',
+              'TPE1',
+              'TPE2',
+              'TLAN',
+              // Wann die Folge erschienen ist, in der Reihenfolge, in der
+              // die Formate über die Jahre üblich waren.
+              'TDRL',
+              'TDRC',
+              'TYER',
+              // Der Text, den iTunes für Podcasts vorsieht.
+              'TDES',
+            }.contains(id) &&
+            size <= 16384) {
           final value = _decodeId3Text(await input.read(size));
           final key = switch (id) {
             'TIT2' => 'title',
@@ -270,9 +302,17 @@ final class EmbeddedCoverExtractor {
             'TPE1' => 'artist',
             'TPE2' => 'album_artist',
             'TLAN' => 'language',
-            _ => '',
+            'TDES' => 'description',
+            _ => 'date',
           };
           if (value != null) values.putIfAbsent(key, () => value);
+        } else if (id == 'COMM' && size <= 16384) {
+          // Der Kommentar ist bei fast jedem Podcast-Downloader die
+          // Beschreibung der Folge — und oft das Einzige, was da ist.
+          final value = _decodeId3Comment(await input.read(size));
+          if (value != null && value.trim().isNotEmpty) {
+            values.putIfAbsent('description', () => value);
+          }
         } else if (id == 'TXXX' && size <= 4096) {
           final value = _decodeId3UserText(await input.read(size));
           if (value != null) {
@@ -297,10 +337,79 @@ final class EmbeddedCoverExtractor {
         series: values['series'],
         part: _parsePart(values['part']),
         language: values['language'],
+        description: _asParagraph(values['description']),
+        publishedAt: _parseDate(values['date']),
       );
     } finally {
       await input.close();
     }
+  }
+
+  /// Der Text eines `COMM`-Rahmens, ohne Sprache und ohne die kurze
+  /// Überschrift davor.
+  static String? _decodeId3Comment(List<int> bytes) {
+    if (bytes.length < 5) return null;
+    final encoding = bytes.first;
+    // Ein Byte Kodierung, drei Bytes Sprache, dann eine kurze Beschreibung,
+    // die mit einer Null endet — erst danach steht der Text.
+    final rest = bytes.sublist(4);
+    final wide = encoding == 1 || encoding == 2;
+    var start = 0;
+    if (wide) {
+      for (var index = 0; index + 1 < rest.length; index += 2) {
+        if (rest[index] == 0 && rest[index + 1] == 0) {
+          start = index + 2;
+          break;
+        }
+      }
+    } else {
+      final zero = rest.indexOf(0);
+      if (zero >= 0) start = zero + 1;
+    }
+    if (start >= rest.length) return null;
+    return _decodeId3Text([encoding, ...rest.sublist(start)]);
+  }
+
+  /// Aus einem Text wird ein Absatz: Rohes HTML und harte Umbrüche machen
+  /// aus einer Folgenbeschreibung sonst eine Wand.
+  static String? _asParagraph(String? value) {
+    if (value == null) return null;
+    final clean = value
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n\n')
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll(RegExp(r'[ \t]+'), ' ')
+        // Ein Leerzeichen am Zeilenanfang ist ein Rest des Auszeichnens,
+        // kein Teil des Textes.
+        .replaceAll(RegExp(r' *\n *'), '\n')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+    return clean.isEmpty ? null : clean;
+  }
+
+  /// „2026-01-11", „2026" oder „11.01.2026" — was das Feld hergibt.
+  static DateTime? _parseDate(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final text = value.trim();
+    final iso = DateTime.tryParse(text);
+    if (iso != null) return DateTime.utc(iso.year, iso.month, iso.day);
+    final german = RegExp(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})').firstMatch(text);
+    if (german != null) {
+      return DateTime.utc(
+        int.parse(german.group(3)!),
+        int.parse(german.group(2)!),
+        int.parse(german.group(1)!),
+      );
+    }
+    final year = int.tryParse(text.substring(0, text.length.clamp(0, 4)));
+    if (year != null && year > 1900 && year < 2200) {
+      return DateTime.utc(year);
+    }
+    return null;
   }
 
   /// Reads Nero-style `chpl` chapter atoms used by M4A/M4B audiobooks.

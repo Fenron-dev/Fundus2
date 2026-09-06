@@ -489,6 +489,54 @@ void main() {
       },
     );
 
+    test('was der Feed nicht kennt, sagt die Datei selbst', () async {
+      // Der Fall aus dem Ordner: mehrere Sendungen desselben Hauses liegen
+      // beieinander, und ein Feed kennt immer nur seine eigene.
+      final show = Directory('${root.path}/Podcasts/Stay Forever');
+      await File('${show.path}/En Detail - Joel.mp3').writeAsBytes(
+        _mp3WithComment(
+          title: 'En Detail: Joel',
+          comment: 'Ein Rabenvater.',
+          date: '2026-04-30',
+        ),
+      );
+      await library.index().drain<void>();
+      const feed = '''
+<rss version="2.0"><channel>
+  <item>
+    <title>SF 100: Monkey Island</title>
+    <description>Ein Spiel und ein Affe.</description>
+    <enclosure url="https://stayforever.de/media/sf100.mp3"/>
+  </item>
+</channel></rss>''';
+      final client = FakeHttp(
+        (request) => request.url.host == 'stayforever.de'
+            ? http.Response(
+                feed,
+                200,
+                headers: {'content-type': 'application/rss+xml; charset=utf-8'},
+              )
+            : http.Response.bytes(List.filled(32, 7), 200),
+      );
+
+      final workId = library.listWorks().single.id;
+      final described = await describeEpisodes(
+        library: library,
+        workId: workId,
+        feedUrl: 'https://stayforever.de/feed.xml',
+        client: client,
+      );
+
+      expect(described, 2);
+      final tracks = library.playbackTracks(workId);
+      final details = library.fileDetails(workId);
+      final fromFeed = tracks.firstWhere((t) => t.title.contains('sf100'));
+      final fromTags = tracks.firstWhere((t) => t.title.contains('En Detail'));
+      expect(details[fromFeed.fileId]?.description, 'Ein Spiel und ein Affe.');
+      expect(details[fromTags.fileId]?.description, 'Ein Rabenvater.');
+      expect(details[fromTags.fileId]?.publishedAt, DateTime.utc(2026, 4, 30));
+    });
+
     test('ein Feed, der nicht antwortet, kostet nur die Texte', () async {
       final client = FakeHttp((_) => http.Response('kaputt', 500));
 
@@ -703,3 +751,44 @@ void main() {
     });
   });
 }
+
+/// Eine MP3, die ihren eigenen Text mitbringt — so, wie ein Downloader sie
+/// schreibt: Titel, Kommentar, Datum.
+List<int> _mp3WithComment({
+  required String title,
+  required String comment,
+  required String date,
+}) {
+  final frames = <int>[
+    ..._id3Frame('TIT2', [0, ...latin1.encode(title)]),
+    ..._id3Frame('COMM', [
+      0,
+      ...ascii.encode('deu'),
+      0,
+      ...latin1.encode(comment),
+    ]),
+    ..._id3Frame('TDRL', [0, ...latin1.encode(date)]),
+  ];
+  return [
+    ...ascii.encode('ID3'),
+    3,
+    0,
+    0,
+    (frames.length >> 21) & 0x7f,
+    (frames.length >> 14) & 0x7f,
+    (frames.length >> 7) & 0x7f,
+    frames.length & 0x7f,
+    ...frames,
+  ];
+}
+
+List<int> _id3Frame(String id, List<int> payload) => [
+  ...ascii.encode(id),
+  (payload.length >> 24) & 0xff,
+  (payload.length >> 16) & 0xff,
+  (payload.length >> 8) & 0xff,
+  payload.length & 0xff,
+  0,
+  0,
+  ...payload,
+];
