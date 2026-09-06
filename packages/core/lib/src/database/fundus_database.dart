@@ -644,6 +644,86 @@ final class FundusDatabase {
   /// Beides steht schon in der Dateitabelle; gefragt wird es auf der
   /// Detailseite, wo „2160p · 64,2 GB" die Frage beantwortet, ob man diese
   /// Fassung behalten will.
+  /// Wie viel Platz jede Art von Werk belegt.
+  ///
+  /// Eine Zeile je Art, damit die Wartungsseite sagen kann, wohin die
+  /// Terabyte gegangen sind. Gezählt werden nur Inhaltsdateien: Cover und
+  /// Beiwerk gehören zum Katalog, nicht zum Bestand.
+  List<({String kind, int works, int files, int bytes})> storageByKind() {
+    final rows = _database.select('''
+      SELECT w.kind AS kind,
+             COUNT(DISTINCT w.id) AS works,
+             COUNT(f.id) AS files,
+             COALESCE(SUM(f.size), 0) AS bytes
+      FROM works w
+      LEFT JOIN work_files wf ON wf.work_id = w.id AND wf.role = 'content'
+      LEFT JOIN files f ON f.id = wf.file_id
+      GROUP BY w.kind
+      ORDER BY bytes DESC
+      ''');
+    return [
+      for (final row in rows)
+        (
+          kind: row['kind'] as String,
+          works: (row['works'] as num?)?.round() ?? 0,
+          files: (row['files'] as num?)?.round() ?? 0,
+          bytes: (row['bytes'] as num?)?.round() ?? 0,
+        ),
+    ];
+  }
+
+  /// Was aufzuräumen wäre.
+  ///
+  /// Verwaist heißt: der Katalog kennt eine Datei, die es nicht mehr gibt,
+  /// oder ein Werk, zu dem keine Datei mehr gehört. Beides entsteht im
+  /// Betrieb — umbenannt, verschoben, gelöscht — und beides ist harmlos,
+  /// solange man es sieht.
+  ({int missingFiles, int emptyWorks}) orphanCount() {
+    final missing = _database.select(
+      "SELECT COUNT(*) AS count FROM files WHERE status = 'missing'",
+    );
+    final empty = _database.select('''
+      SELECT COUNT(*) AS count FROM works w
+      WHERE NOT EXISTS (
+        SELECT 1 FROM work_files wf
+        WHERE wf.work_id = w.id AND wf.role = 'content'
+      )
+      ''');
+    return (
+      missingFiles: (missing.first['count'] as num).round(),
+      emptyWorks: (empty.first['count'] as num).round(),
+    );
+  }
+
+  /// Räumt weg, was auf nichts mehr zeigt.
+  ///
+  /// Erst die Dateien, die als fehlend markiert sind, dann die Werke, die
+  /// danach keine Inhaltsdatei mehr haben. Der Stand eines Werks geht mit
+  /// ihm — deshalb steht die Zahl vorher da und der Schritt wird gefragt.
+  ({int files, int works}) removeOrphans() {
+    final files = orphanCount().missingFiles;
+    _database.execute("DELETE FROM files WHERE status = 'missing'");
+    // Erst danach steht fest, welche Werke leer zurückbleiben.
+    final works = orphanCount().emptyWorks;
+    _database.execute('''
+      DELETE FROM works WHERE id IN (
+        SELECT w.id FROM works w
+        WHERE NOT EXISTS (
+          SELECT 1 FROM work_files wf
+          WHERE wf.work_id = w.id AND wf.role = 'content'
+        )
+      )
+      ''');
+    return (files: files, works: works);
+  }
+
+  /// Verdichtet die Katalogdatei.
+  ///
+  /// Gelöschte Zeilen geben ihren Platz nicht von selbst zurück; nach einem
+  /// großen Aufräumen ist das spürbar. Der Server bleibt dabei erreichbar,
+  /// es ist eine Datei, kein Dienst.
+  void compact() => _database.execute('VACUUM');
+
   ({int bytes, int? width, int? height, int files}) workStorage(String workId) {
     final rows = _database.select(
       '''

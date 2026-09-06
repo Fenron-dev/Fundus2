@@ -26,6 +26,8 @@ import '../library/unassigned_folders_card.dart';
 import '../../media/playback_preference.dart';
 import '../../media/track_preference.dart';
 import 'settings_catalog.dart';
+import 'maintenance_page.dart';
+import 'settings_shell.dart';
 
 /// Settings, with the scope of each one visible.
 ///
@@ -46,7 +48,7 @@ class SettingsScreen extends StatelessWidget {
       'wiedergabe' => const _Playback(),
       'reader' => const _Reader(),
       'suche' => const _Search(),
-      'wartung' => const _Maintenance(),
+      'wartung' => const MaintenancePage(),
       'bibliotheken' => const _Libraries(),
       'synchronisation' => const _Sync(),
       'schutz' => const _Protection(),
@@ -81,7 +83,7 @@ class _ColourCard extends StatelessWidget {
     final tokens = context.fundus;
     final chosen = scope.settings.accentColor;
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -131,7 +133,7 @@ class _TextSizeCard extends StatelessWidget {
     final tokens = context.fundus;
     final scale = scope.settings.textScale;
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -182,7 +184,7 @@ class _ShelfOrderCard extends StatelessWidget {
     final tokens = context.fundus;
     final types = MediaTypes.ordered(scope.settings.mediaTypeOrder);
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -257,14 +259,14 @@ class _Index extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = context.fundus;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Einstellungen',
       subtitle:
           'Was hier steht, gilt für dieses Gerät. Was zur Bibliothek gehört, '
           'steht unter „Bibliotheken".',
       children: [
         for (final area in SettingsAreas.all)
-          _Card(
+          SettingsCard(
             child: InkWell(
               borderRadius: FundusRadius.mdAll,
               onTap: () =>
@@ -309,61 +311,6 @@ class _Index extends StatelessWidget {
   }
 }
 
-class _SettingsPage extends StatelessWidget {
-  const _SettingsPage({
-    required this.title,
-    required this.subtitle,
-    required this.children,
-  });
-
-  final String title;
-  final String subtitle;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.fundus;
-    final narrow =
-        MediaQuery.sizeOf(context).width < FundusShellMetrics.compactBreakpoint;
-    return ListView(
-      padding: EdgeInsets.all(narrow ? FundusSpace.x4 : FundusSpace.x10),
-      children: [
-        Text(title, style: Theme.of(context).textTheme.displayMedium),
-        const SizedBox(height: FundusSpace.x2),
-        Text(
-          subtitle,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: tokens.textMuted),
-        ),
-        const SizedBox(height: FundusSpace.x8),
-        ...children,
-      ],
-    );
-  }
-}
-
-class _Card extends StatelessWidget {
-  const _Card({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.fundus;
-    return Container(
-      margin: const EdgeInsets.only(bottom: FundusSpace.x4),
-      padding: const EdgeInsets.all(FundusSpace.x6),
-      decoration: BoxDecoration(
-        color: tokens.surface,
-        borderRadius: FundusRadius.lgAll,
-        border: Border.fromBorderSide(BorderSide(color: tokens.divider)),
-      ),
-      child: child,
-    );
-  }
-}
-
 class _Appearance extends StatelessWidget {
   const _Appearance();
 
@@ -372,13 +319,13 @@ class _Appearance extends StatelessWidget {
     final scope = FundusScope.of(context);
     final tokens = context.fundus;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Darstellung',
       subtitle:
           'Gilt für dieses Gerät. Die Werte reisen mit der Bibliothek, '
           'damit eine Neuinstallation sie nicht kostet.',
       children: [
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -400,7 +347,7 @@ class _Appearance extends StatelessWidget {
         const _ColourCard(),
         const _TextSizeCard(),
         const _ShelfOrderCard(),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -446,14 +393,14 @@ class _Libraries extends StatelessWidget {
     final tokens = context.fundus;
     final sources = scope.library.sources;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Bibliotheken',
       subtitle:
           'Die geöffnete Bibliothek ist selbst eine Quelle — gekoppelte Server '
           'erscheinen später in derselben Liste.',
       children: [
         const UnassignedFoldersCard(),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -498,7 +445,7 @@ class _Libraries extends StatelessWidget {
           ),
         ),
         for (final source in sources)
-          _Card(
+          SettingsCard(
             child: Row(
               children: [
                 FundusOriginMark(
@@ -531,7 +478,7 @@ class _Libraries extends StatelessWidget {
             ),
           ),
         const _ScanCard(),
-        _Card(
+        SettingsCard(
           child: Row(
             children: [
               Expanded(
@@ -582,7 +529,7 @@ class _ScanCardState extends State<_ScanCard> {
     final scanning = library.isScanning;
     final folders = _scanFolders(scope);
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -721,24 +668,24 @@ class _Diagnostics extends StatelessWidget {
     final scope = FundusScope.of(context);
     final library = scope.library.library;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Diagnose & Logging',
       subtitle:
           'Ohne absolute Medienpfade — Protokolle verlassen das Gerät '
           'nur, wenn du sie exportierst.',
       children: [
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _Fact('Bibliothek', library?.root.path ?? '—'),
-              _Fact(
+              SettingsFact('Bibliothek', library?.root.path ?? '—'),
+              SettingsFact(
                 'Formatversion',
                 '${library?.manifest.formatVersion ?? '—'}',
               ),
-              _Fact('Schemaversion', '${FundusDatabase.schemaVersion}'),
-              _Fact('Werke', '${scope.library.works.length}'),
-              _Fact('Quellen', '${scope.library.sources.length}'),
+              SettingsFact('Schemaversion', '${FundusDatabase.schemaVersion}'),
+              SettingsFact('Werke', '${scope.library.works.length}'),
+              SettingsFact('Quellen', '${scope.library.sources.length}'),
             ],
           ),
         ),
@@ -814,7 +761,7 @@ class _LogCardState extends State<_LogCard> {
     final tokens = context.fundus;
     final entries = _log.entries.reversed.toList(growable: false);
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -925,45 +872,6 @@ class _LogCardState extends State<_LogCard> {
 /// Two columns where there is room for two, one above the other where there
 /// is not. A fixed label column on a phone leaves so little for the value
 /// that a single word breaks across three lines.
-class _Fact extends StatelessWidget {
-  const _Fact(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  /// Below this a row of two columns stops being readable.
-  static const _stackBelow = 420.0;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.fundus;
-    final theme = Theme.of(context);
-    final name = Text(
-      label,
-      style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
-    );
-    final body = SelectableText(value, style: theme.textTheme.bodyMedium);
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: FundusSpace.x3),
-      child: LayoutBuilder(
-        builder: (context, constraints) => constraints.maxWidth < _stackBelow
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [name, body],
-              )
-            : Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(width: 160, child: name),
-                  Expanded(child: body),
-                ],
-              ),
-      ),
-    );
-  }
-}
-
 /// Speed, skip distances and the sleep timer.
 ///
 /// All three are habits rather than properties of a work — someone who
@@ -1026,7 +934,7 @@ class _LanguageCard extends StatelessWidget {
       if (language != null && language != wish) language,
     ];
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1159,13 +1067,13 @@ class _Playback extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = context.fundus;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Wiedergabe',
       subtitle:
           'Gilt für dieses Gerät und liegt bei der Bibliothek — nach einer '
           'Neuinstallation ist es wieder da.',
       children: [
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1187,7 +1095,7 @@ class _Playback extends StatelessWidget {
           ),
         ),
         const _LanguageCard(),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1239,7 +1147,7 @@ class _Playback extends StatelessWidget {
             ],
           ),
         ),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1287,7 +1195,7 @@ class _Playback extends StatelessWidget {
             ],
           ),
         ),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1329,7 +1237,7 @@ class _Playback extends StatelessWidget {
             ],
           ),
         ),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1413,14 +1321,14 @@ class _ProtectionState extends State<_Protection> {
     final theme = Theme.of(context);
     final tokens = context.fundus;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Schutzmodus',
       subtitle:
           'Gilt für dieses Gerät. Die PIN liegt hier und nicht in der '
           'Bibliothek — ein Bibliotheksordner wird geteilt, ein Schlüssel '
           'nicht.',
       children: [
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1450,7 +1358,7 @@ class _ProtectionState extends State<_Protection> {
             ],
           ),
         ),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1500,7 +1408,7 @@ class _ProtectionState extends State<_Protection> {
           ),
         ),
         if (protection.mode != ProtectionMode.off && protection.hasPin)
-          _Card(
+          SettingsCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1636,16 +1544,16 @@ class _ReaderState extends State<_Reader> {
     final pages = _pages;
     final text = _text;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Reader',
       subtitle:
           'Womit ein Werk aufgeht, das noch nie geöffnet wurde. Ein gelesenes '
           'Werk behält, was dort eingestellt wurde.',
       children: [
         if (_loading)
-          const _Card(child: LinearProgressIndicator())
+          const SettingsCard(child: LinearProgressIndicator())
         else if (pages == null || text == null)
-          _Card(
+          SettingsCard(
             child: Text(
               'Ohne geöffnete Bibliothek gibt es nichts einzustellen — die '
               'Voreinstellungen liegen bei der Bibliothek.',
@@ -1655,7 +1563,7 @@ class _ReaderState extends State<_Reader> {
             ),
           )
         else ...[
-          _Card(
+          SettingsCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1731,7 +1639,7 @@ class _ReaderState extends State<_Reader> {
               ],
             ),
           ),
-          _Card(
+          SettingsCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1881,13 +1789,13 @@ class _SearchState extends State<_Search> {
     final views = _views;
     final filter = scope.filter;
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Suche & Filter',
       subtitle:
           'Eine Ansicht ist ein Filter mit einem Namen. Sie liegt bei der '
           'Bibliothek, gilt also auf jedem Gerät, das sie öffnet.',
       children: [
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1935,7 +1843,7 @@ class _SearchState extends State<_Search> {
             ],
           ),
         ),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2027,183 +1935,6 @@ class _SearchState extends State<_Search> {
 /// fetched for reading, and the index of a paired library. Neither holds
 /// anything irreplaceable — that is the point of showing them together with
 /// a way to throw them away.
-class _Maintenance extends StatefulWidget {
-  const _Maintenance();
-
-  @override
-  State<_Maintenance> createState() => _MaintenanceState();
-}
-
-class _MaintenanceState extends State<_Maintenance> {
-  int? _cacheBytes;
-  bool _working = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_cacheBytes == null) unawaited(_measure());
-  }
-
-  Future<Directory> _cacheRoot() async {
-    final support = await getApplicationSupportDirectory();
-    return Directory(p.join(support.path, 'peer-cache'));
-  }
-
-  /// Measures the cache, and does not make a fuss if it cannot.
-  ///
-  /// Asking the platform where its storage is can fail — in a preview, in a
-  /// test, on a system that answers differently. A number nobody could
-  /// measure is worth a shrug, not an error screen over the settings.
-  Future<void> _measure() async {
-    var total = 0;
-    try {
-      final room = await _cacheRoot();
-      if (await room.exists()) {
-        await for (final entity in room.list(recursive: true)) {
-          if (entity is File) total += await entity.length();
-        }
-      }
-    } on Object {
-      total = 0;
-    }
-    if (!mounted) return;
-    setState(() => _cacheBytes = total);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scope = FundusScope.of(context);
-    final theme = Theme.of(context);
-    final tokens = context.fundus;
-    final vault = scope.library.library;
-    final peers = scope.peerLibraries.connected;
-
-    return _SettingsPage(
-      title: 'Serverwartung',
-      subtitle:
-          'Was sich mit der Zeit ansammelt, und wie man es wieder loswird. '
-          'Nichts davon ist unersetzlich.',
-      children: [
-        _Card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Zwischenspeicher', style: theme.textTheme.titleMedium),
-              const SizedBox(height: FundusSpace.x2),
-              Text(
-                'Seiten und Dateien, die zum Lesen von einem gekoppelten '
-                'Gerät geholt wurden. Heruntergeladene Werke gehören nicht '
-                'dazu — die stehen unter „Downloads" und bleiben.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: tokens.textMuted,
-                ),
-              ),
-              const SizedBox(height: FundusSpace.x4),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _cacheBytes == null
-                          ? 'wird gemessen …'
-                          : _size(_cacheBytes!),
-                      style: theme.textTheme.headlineMedium,
-                    ),
-                  ),
-                  OutlinedButton(
-                    onPressed: _working || (_cacheBytes ?? 0) == 0
-                        ? null
-                        : () async {
-                            setState(() => _working = true);
-                            final room = await _cacheRoot();
-                            if (await room.exists()) {
-                              await room.delete(recursive: true);
-                            }
-                            if (!mounted) return;
-                            setState(() {
-                              _working = false;
-                              _cacheBytes = 0;
-                            });
-                          },
-                    child: const Text('Leeren'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        _Card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Bestand', style: theme.textTheme.titleMedium),
-              const SizedBox(height: FundusSpace.x3),
-              _Fact('Werke im Index', '${scope.library.works.length}'),
-              _Fact('Quellen', '${scope.library.sources.length}'),
-              if (peers.isNotEmpty)
-                _Fact(
-                  'Gespiegelt von',
-                  peers.map((entry) => entry.peer.name).join(', '),
-                ),
-              if (vault != null) _Fact('Ordner', vault.root.path),
-            ],
-          ),
-        ),
-        _Card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Neu einlesen', style: theme.textTheme.titleMedium),
-              const SizedBox(height: FundusSpace.x2),
-              Text(
-                scope.peerLibraries.hasConnection
-                    ? 'Diese Bibliothek ist gespiegelt — eingelesen wird sie '
-                          'auf dem Gerät, dem sie gehört. Hier wird der '
-                          'Katalog neu geholt.'
-                    : 'Liest den Bibliotheksordner erneut ein. Nötig, wenn '
-                          'außerhalb von Fundus Dateien dazugekommen sind.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: tokens.textMuted,
-                ),
-              ),
-              const SizedBox(height: FundusSpace.x4),
-              if (scope.peerLibraries.hasConnection)
-                FilledButton.tonalIcon(
-                  onPressed: scope.peerLibraries.isBusy
-                      ? null
-                      : scope.peerLibraries.refresh,
-                  icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
-                  label: const Text('Katalog holen'),
-                )
-              else
-                FilledButton.tonalIcon(
-                  onPressed: scope.library.isScanning || vault == null
-                      ? null
-                      : scope.library.scan,
-                  icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
-                  label: Text(
-                    scope.library.isScanning ? 'Läuft …' : 'Jetzt einlesen',
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  static String _size(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    const units = ['kB', 'MB', 'GB', 'TB'];
-    var value = bytes / 1024;
-    var unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024;
-      unit++;
-    }
-    return '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
-  }
-}
-
 /// A category nothing claims.
 ///
 /// Every area in the catalogue has a page now, so this is reached only by an
@@ -2215,7 +1946,7 @@ class _Unknown extends StatelessWidget {
   final String category;
 
   @override
-  Widget build(BuildContext context) => _SettingsPage(
+  Widget build(BuildContext context) => SettingsPage(
     title: 'Einstellungen',
     subtitle: 'Den Bereich „$category" gibt es nicht.',
     children: const [],
@@ -2280,14 +2011,14 @@ class _SyncState extends State<_Sync> {
     final tokens = context.fundus;
     final theme = Theme.of(context);
 
-    return _SettingsPage(
+    return SettingsPage(
       title: 'Geräte & Abgleich',
       subtitle:
           'Zwei Geräte, dieselbe Bibliothek, derselbe Stand. Abgeglichen wird, '
           'was man mit sich trägt: wo man ist, und was man sich angestrichen '
           'hat. Dateien wandern nicht mit.',
       children: [
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2315,7 +2046,7 @@ class _SyncState extends State<_Sync> {
           ),
         ),
         _Sharing(host: scope.host),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2392,7 +2123,7 @@ class _SyncState extends State<_Sync> {
             ],
           ),
         ),
-        _Card(
+        SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2491,7 +2222,7 @@ class _SyncState extends State<_Sync> {
     final tokens = context.fundus;
     final peers = scope.peerLibraries.connected;
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2606,7 +2337,7 @@ class _SyncState extends State<_Sync> {
                   left.updatedAt ?? DateTime(0),
                 ),
               );
-        return _Card(
+        return SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2807,7 +2538,7 @@ class _JournalState extends State<_Journal> {
         ? all.take(30).toList()
         : conflicts.take(10).toList();
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2927,7 +2658,7 @@ class _Sharing extends StatelessWidget {
     final tokens = context.fundus;
     final session = host.pairingSession;
 
-    return _Card(
+    return SettingsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

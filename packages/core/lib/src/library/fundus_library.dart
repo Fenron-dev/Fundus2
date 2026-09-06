@@ -1277,6 +1277,29 @@ final class FundusLibrary {
     String workId,
   ) => _database.workStorage(workId);
 
+  /// Wohin die Terabyte gegangen sind — eine Zeile je Art von Werk.
+  List<({String kind, int works, int files, int bytes})> storageByKind() =>
+      _database.storageByKind();
+
+  /// Wie viel im Katalog auf nichts mehr zeigt.
+  ({int missingFiles, int emptyWorks}) orphanCount() => _database.orphanCount();
+
+  /// Räumt weg, was auf nichts mehr zeigt, und sagt, wie viel es war.
+  ({int files, int works}) removeOrphans() => _database.removeOrphans();
+
+  /// Wie groß die Katalogdatei selbst ist.
+  int catalogueBytes() {
+    final file = _databaseFile(root);
+    return file.existsSync() ? file.lengthSync() : 0;
+  }
+
+  /// Verdichtet die Katalogdatei und sagt, was das gebracht hat.
+  ({int before, int after}) compactCatalogue() {
+    final before = catalogueBytes();
+    _database.compact();
+    return (before: before, after: catalogueBytes());
+  }
+
   /// Wo in jeder Datei eines Werks jemand steht — für Werke, deren Dateien
   /// für sich stehen (eine Podcast-Folge, nicht das Kapitel eines Hörbuchs).
   Map<String, ({double position, double? total, DateTime updatedAt})>
