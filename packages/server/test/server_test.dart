@@ -118,6 +118,40 @@ void main() {
     expect(await response.read().expand((chunk) => chunk).toList(), [7, 7, 7]);
   });
 
+  test('one question answers which works moved', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    firstLibrary.saveProgress(
+      workId: work.id,
+      fileId: track.fileId,
+      position: const Duration(minutes: 4),
+      deviceId: 'mac',
+    );
+
+    Future<List<Object?>> changedSince(String? since) async {
+      final response = await server.handler(
+        Request(
+          'GET',
+          Uri.parse(
+            'http://localhost/v1/libraries/$libraryId/progress'
+            '${since == null ? '' : '?since=$since'}',
+          ),
+          headers: const {'authorization': 'Bearer secret'},
+        ),
+      );
+      expect(response.statusCode, 200);
+      return (await _json(response))['changed'] as List<Object?>;
+    }
+
+    final all = await changedSince(null);
+    expect(all, hasLength(1));
+    expect((all.single as Map)['work_id'], work.id);
+
+    // Und ab jetzt hat sich nichts mehr bewegt — das ist die Antwort, die
+    // dieses Fragen billig genug macht, um es von selbst zu tun.
+    final later = DateTime.now().toUtc().add(const Duration(seconds: 1));
+    expect(await changedSince(later.toIso8601String()), isEmpty);
+  });
+
   test('API rejects missing token', () async {
     final response = await server.handler(
       Request('GET', Uri.parse('http://localhost/v1/libraries')),

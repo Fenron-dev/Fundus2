@@ -268,6 +268,67 @@ class SyncController extends ChangeNotifier {
     }
   }
 
+  /// Holt nur, was sich drüben bewegt hat.
+  ///
+  /// Der große Abgleich fragt jedes Werk einzeln — bei zehntausend Werken
+  /// ist das anderthalb Minuten, und deshalb drückte man den Knopf von Hand
+  /// und wartete. Hier wird einmal gefragt, welche Werke einen neuen Stand
+  /// haben, und nur die werden abgeglichen. Das ist billig genug, um von
+  /// selbst zu laufen.
+  ///
+  /// Gibt die Werke zurück, die sich geändert haben — die Oberfläche frischt
+  /// genau diese Zeilen auf, statt die ganze Bibliothek neu zu lesen.
+  Future<Set<String>> pullRecent() async {
+    final vault = library.library;
+    if (vault == null || peers.isEmpty || _busy) return const {};
+    final touched = <String>{};
+    for (final peer in peers) {
+      final client = _connect(peer);
+      try {
+        final libraryId = await _libraryIdFor(peer, client, vault);
+        if (libraryId == null) continue;
+        final since = _lastPull[peer.serverId];
+        final changed = await client.progressChangedSince(
+          libraryId,
+          since: since,
+        );
+        // Der Zeitpunkt kommt von drüben: die Uhren zweier Geräte gehen
+        // verschieden, und ein „seit jetzt" nach der eigenen Uhr würde
+        // Stände überspringen.
+        final newest = changed.isEmpty
+            ? since
+            : changed
+                  .map((entry) => entry.updatedAt)
+                  .reduce((a, b) => a.isAfter(b) ? a : b);
+        if (changed.isEmpty) continue;
+        final ids = [for (final entry in changed) entry.workId];
+        final report = await FundusSync(
+          library: vault,
+          client: client,
+          libraryId: libraryId,
+          deviceId: settings.deviceKey,
+          peerName: peer.name,
+          baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
+        ).run(workIds: ids);
+        await _record(vault, peer, report);
+        if (newest != null) _lastPull[peer.serverId] = newest;
+        touched.addAll(ids);
+      } on Object {
+        // Ein Gerät, das gerade schläft, ist keine Meldung wert — dies läuft
+        // im Hintergrund, und der Knopf sagt es richtig, wenn jemand fragt.
+      } finally {
+        client.close();
+      }
+    }
+    if (touched.isNotEmpty) notifyListeners();
+    return touched;
+  }
+
+  /// Bis wann von jeder Gegenstelle schon geholt wurde. Nur für diese
+  /// Sitzung: beim Start einmal alles zu holen ist billiger, als sich zu
+  /// merken, was man verpasst haben könnte.
+  final Map<String, DateTime> _lastPull = {};
+
   Future<SyncReport?> syncAll() async {
     SyncReport? last;
     for (final peer in peers) {

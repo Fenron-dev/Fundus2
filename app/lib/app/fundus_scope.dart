@@ -206,6 +206,35 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
               job.state == DownloadState.queued,
         );
     WidgetsBinding.instance.addObserver(this);
+    _startCatchingUp();
+  }
+
+  /// Wie oft im Hintergrund gefragt wird, ob anderswo etwas weitergelaufen
+  /// ist. Selten genug, um niemandem im Weg zu stehen, oft genug, dass das
+  /// Handy in der Hand den Stand vom Mac schon kennt.
+  static const catchUpEvery = Duration(seconds: 45);
+  Timer? _catchUp;
+
+  /// Holt die Stände der anderen Geräte, ohne zu scannen.
+  ///
+  /// „Fortsetzen" von Hand aktualisieren zu müssen war der Fehler dahinter:
+  /// der Knopf las die ganze Bibliothek neu, und deshalb war er langsam und
+  /// deshalb drückte man ihn ungern. Hier wird nur gefragt, was sich bewegt
+  /// hat, und nur die betroffenen Zeilen werden aufgefrischt.
+  Future<void> catchUpWithPeers() async {
+    if (!mounted || settings.peers.isEmpty) return;
+    final touched = await sync.pullRecent();
+    if (!mounted || touched.isEmpty) return;
+    for (final workId in touched) {
+      library.refreshWork(workId);
+    }
+  }
+
+  void _startCatchingUp() {
+    _catchUp ??= Timer.periodic(
+      catchUpEvery,
+      (_) => unawaited(catchUpWithPeers()),
+    );
   }
 
   /// Coming back to the app is the moment to look for what changed.
@@ -225,6 +254,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       _pushOpenWork();
       return;
     }
+    // Zurück in der App: erst die Stände der anderen Geräte — das ist
+    // billig und beantwortet die Frage, die man beim Hinsehen hat —, und
+    // erst danach die Frage nach neuen Dateien.
+    unawaited(catchUpWithPeers());
     if (!settings.watchesLibrary) return;
     unawaited(library.checkForChanges());
   }
@@ -331,6 +364,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     protection.removeListener(_applyProtection);
     peerLibraries.removeListener(_wireSources);
     _pushTimer?.cancel();
+    _catchUp?.cancel();
     player.removeListener(_syncWhenClosed);
     reader.removeListener(_syncWhenClosed);
     textReader.removeListener(_syncWhenClosed);

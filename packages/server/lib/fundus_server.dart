@@ -187,6 +187,7 @@ final class FundusServerHandler {
       )
       ..get('/v1/libraries/<libraryId>/playback-session', _playbackSession)
       ..put('/v1/libraries/<libraryId>/playback-session', _savePlaybackSession)
+      ..get('/v1/libraries/<libraryId>/progress', _progressChanges)
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
       ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress)
       ..get('/v1/libraries/<libraryId>/annotations/<workId>', _annotations)
@@ -985,6 +986,37 @@ final class FundusServerHandler {
       workIds: [for (final entry in entries) entry.workId],
       entries: entries,
     );
+  }
+
+  /// Welche Werke seit einem Zeitpunkt einen neuen Stand haben.
+  ///
+  /// Eine Frage statt zehntausend: das andere Gerät holt sich hier die Liste
+  /// der Werke, die sich bewegt haben, und gleicht nur die ab. Ohne das
+  /// dauerte „aktualisieren" auf einer großen Bibliothek anderthalb Minuten,
+  /// und niemand drückt einen Knopf, der anderthalb Minuten dauert.
+  Response _progressChanges(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    final raw = request.url.queryParameters['since'];
+    final since = raw == null || raw.trim().isEmpty
+        ? null
+        : DateTime.tryParse(raw) ??
+              DateTime.fromMillisecondsSinceEpoch(
+                int.tryParse(raw) ?? 0,
+                isUtc: true,
+              );
+    final changed = entry.library.progressChangedSince(since);
+    return _json({
+      'library_id': libraryId,
+      'changed': [
+        for (final row in changed)
+          if (_canViewWorkId(request, entry, row.workId))
+            {
+              'work_id': row.workId,
+              'updated_at': row.updatedAt.toUtc().toIso8601String(),
+            },
+      ],
+    });
   }
 
   Response _progress(Request request, String libraryId, String workId) {

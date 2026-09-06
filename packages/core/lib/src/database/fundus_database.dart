@@ -1247,6 +1247,35 @@ final class FundusDatabase {
     }
   }
 
+  /// Welche Werke seit [since] einen neuen Stand bekommen haben.
+  ///
+  /// Eine Bibliothek hat zehntausend Werke und ein paar Dutzend Stände. Wer
+  /// wissen will, was sich geändert hat, fragt deshalb einmal danach statt
+  /// zehntausendmal nach einem einzelnen Werk — das ist der Unterschied
+  /// zwischen „das Regal ist gleich aktuell" und anderthalb Minuten Warten.
+  List<({String workId, DateTime updatedAt})> progressChangedSince(
+    DateTime? since, {
+    String userId = 'default',
+    int limit = 500,
+  }) {
+    final rows = _database.select(
+      'SELECT work_id, updated_at FROM progress '
+      'WHERE user_id = ? AND updated_at > ? '
+      'ORDER BY updated_at DESC LIMIT ?',
+      [userId, since?.toUtc().millisecondsSinceEpoch ?? 0, limit],
+    );
+    return [
+      for (final row in rows)
+        (
+          workId: row['work_id'] as String,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(
+            row['updated_at'] as int,
+            isUtc: true,
+          ),
+        ),
+    ];
+  }
+
   /// Every work that has an open question, for the one place that lists them.
   List<String> worksWithProgressChoices({String userId = 'default'}) {
     final rows = _database.select(

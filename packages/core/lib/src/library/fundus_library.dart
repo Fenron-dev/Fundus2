@@ -1261,6 +1261,13 @@ final class FundusLibrary {
   PlaybackSession? latestPlaybackSession({String userId = 'default'}) =>
       _database.latestPlaybackSession(userId: userId);
 
+  /// Welche Werke seit [since] einen neuen Stand haben — die eine Frage, mit
+  /// der ein Gerät herausfindet, was es nachziehen muss.
+  List<({String workId, DateTime updatedAt})> progressChangedSince(
+    DateTime? since, {
+    int limit = 500,
+  }) => _database.progressChangedSince(since, limit: limit);
+
   List<LibraryPlaylist> listPlaylists() => _database.listPlaylists();
 
   LibraryPlaylist? loadPlaylist(String playlistId) =>

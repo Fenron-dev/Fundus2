@@ -233,6 +233,45 @@ void main() {
     );
   });
 
+  test('nachgeholt wird nur, was sich drüben bewegt hat', () async {
+    await peers.connect(peer());
+    final workId = _audiobook(library).id;
+    final fileId = theirs.playbackTracks(workId).single.fileId;
+    final sync = SyncController(settings: settings, library: library);
+    addTearDown(sync.dispose);
+
+    // Beim ersten Mal ist alles neu — der Stand vom Mac kommt herüber.
+    theirs.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 12),
+      deviceId: 'mac',
+    );
+    final first = await sync.pullRecent();
+
+    expect(first, contains(workId));
+    expect(
+      library.library!.loadProgress(workId)!.position.numericValue,
+      closeTo(12 * 60, 0.001),
+    );
+
+    // Und ohne neue Bewegung wird nichts mehr geholt: das ist der Grund,
+    // warum das von selbst laufen darf.
+    expect(await sync.pullRecent(), isEmpty);
+
+    theirs.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 31),
+      deviceId: 'mac',
+    );
+    expect(await sync.pullRecent(), contains(workId));
+    expect(
+      library.library!.loadProgress(workId)!.position.numericValue,
+      closeTo(31 * 60, 0.001),
+    );
+  });
+
   test('der Zeitpunkt eines Standes überlebt die Reise', () async {
     await peers.connect(peer());
     final workId = _audiobook(library).id;

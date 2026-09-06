@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -358,7 +359,7 @@ class _Greeting extends StatelessWidget {
           IconButton(
             onPressed: scope.library.isScanning
                 ? scope.library.cancelScan
-                : scope.library.scan,
+                : () => _lookForNews(scope),
             tooltip: scope.library.isScanning
                 ? 'Abbrechen'
                 : 'Nach Neuem sehen',
@@ -371,7 +372,7 @@ class _Greeting extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: scope.library.isScanning
                 ? scope.library.cancelScan
-                : scope.library.scan,
+                : () => _lookForNews(scope),
             icon: Icon(
               scope.library.isScanning ? FundusIcons.close : FundusIcons.sync,
               size: FundusIcons.sizeSm,
@@ -380,6 +381,16 @@ class _Greeting extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  /// Erst die Stände der anderen Geräte, dann die Suche nach neuen Dateien.
+  ///
+  /// Beides heißt „nach Neuem sehen", aber das eine dauert einen Wimpernschlag
+  /// und beantwortet die Frage, die man beim Hinsehen hat; das andere liest
+  /// den Ordner und darf hinterherlaufen.
+  static void _lookForNews(FundusScopeState scope) {
+    unawaited(scope.catchUpWithPeers());
+    unawaited(scope.library.scan());
   }
 
   /// Twelve thousand works is „12 480", not „12480".

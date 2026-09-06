@@ -201,6 +201,34 @@ final class FundusRemoteClient {
   );
 
   /// The other side's reading position for a work, or null if it has none.
+  /// Welche Werke drüben seit [since] einen neuen Stand haben.
+  ///
+  /// Die eine Frage vor dem Abgleich: danach wird nur das nachgeholt, was
+  /// sich bewegt hat, statt jedes Werk einzeln zu erfragen.
+  Future<List<({String workId, DateTime updatedAt})>> progressChangedSince(
+    String libraryId, {
+    DateTime? since,
+  }) async {
+    final decoded = await _get(
+      '/v1/libraries/$libraryId/progress',
+      query: since == null
+          ? const {}
+          : {'since': since.toUtc().toIso8601String()},
+    );
+    final changed = decoded['changed'];
+    if (changed is! List) return const [];
+    return [
+      for (final entry in changed)
+        if (entry is Map && entry['work_id'] is String)
+          (
+            workId: entry['work_id'] as String,
+            updatedAt:
+                DateTime.tryParse('${entry['updated_at'] ?? ''}')?.toUtc() ??
+                DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          ),
+    ];
+  }
+
   Future<RemoteProgress?> progress(String libraryId, String workId) async {
     final decoded = await _get('/v1/libraries/$libraryId/progress/$workId');
     final progress = decoded['progress'];
@@ -423,12 +451,16 @@ final class FundusRemoteClient {
     return response.bodyBytes;
   }
 
-  Future<Map<String, Object?>> _get(String path) async {
+  Future<Map<String, Object?>> _get(
+    String path, {
+    Map<String, String> query = const {},
+  }) async {
     final http.Response response;
+    final uri = query.isEmpty
+        ? baseUri.resolve(path)
+        : baseUri.resolve(path).replace(queryParameters: query);
     try {
-      response = await _http
-          .get(baseUri.resolve(path), headers: _headers)
-          .timeout(timeout);
+      response = await _http.get(uri, headers: _headers).timeout(timeout);
     } on Object catch (error) {
       throw _unreachable(error);
     }
