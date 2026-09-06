@@ -11,6 +11,7 @@ import '../../data/work_view.dart';
 import '../lists/lists_screen.dart';
 import '../work/batch_editor.dart';
 import '../work/bulk_metadata.dart';
+import 'shelf_sections.dart';
 import 'stage_screen.dart';
 import 'work_grid.dart';
 import 'work_row.dart';
@@ -47,7 +48,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ? null
         : MediaTypes.byId(route.mediaTypeId!);
     final filter = scope.filter;
-    final works = filter.apply(scope.library.works);
+    // Eine Reihe von der Bühne, ganz: dieselben Werke, nur in der Ordnung,
+    // die ihre Überschrift versprochen hat.
+    final section = route.section;
+    final works = section == null
+        ? filter.apply(scope.library.works)
+        : worksInSection(
+            section,
+            filter.apply(scope.library.works),
+            seed: scope.suggestionSeed,
+          );
 
     final grouping = filter.grouping;
     final groupings =
@@ -58,7 +68,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _GroupingBar(
-          title: type?.label ?? 'Alle Werke',
+          title: section == null
+              ? (type?.label ?? 'Alle Werke')
+              : '${section.label} · ${type?.label ?? 'Alle Werke'}',
           count: works.length,
           groupings: groupings,
           selected: grouping,
@@ -147,7 +159,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       // A shelf of films or series leads with something to watch rather than
       // with a wall of equal thumbnails. Drilled into a group, or filtered
       // down to a search, the stage would be in the way of the answer.
+      // Auf einer Reihe steht die Reihe, nicht die Bühne davor.
       if (StageScreen.suits(type) &&
+          route.section == null &&
           route.group == null &&
           scope.filter.text.isEmpty) {
         return StageScreen(works: works, type: type, onOpen: open);

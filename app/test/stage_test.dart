@@ -7,6 +7,8 @@ import 'package:fundus/app/fundus_scope.dart';
 import 'package:fundus/app/shell/fundus_shell.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/media_type.dart';
+import 'package:fundus/app/app_navigation.dart';
+import 'package:fundus/features/library/shelf_sections.dart';
 import 'package:fundus/features/library/stage_screen.dart';
 import 'package:fundus/features/library/work_poster.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -121,10 +123,44 @@ void main() {
     expect(onTablet.first.width, greaterThan(phoneWidth));
   });
 
-  test('nur Filme und Serien bekommen eine Bühne', () {
+  /// Die Überschrift einer Reihe ist ein Versprechen: es gibt mehr davon als
+  /// die zwanzig, die nebeneinander passen. Sie führt auf die Seite dazu.
+  testWidgets('die Überschrift einer Reihe führt auf ihre Seite', (
+    tester,
+  ) async {
+    final scope = await pump(tester, const Size(1000, 1400));
+
+    final onStage = find.descendant(
+      of: find.byType(StageScreen),
+      matching: find.text('Zuletzt hinzugefügt'),
+    );
+    final page = find
+        .descendant(
+          of: find.byType(StageScreen),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(onStage, 400, scrollable: page);
+    await tester.tap(onStage);
+    await tester.pumpAndSettle();
+
+    final route = scope.navigation.current;
+    expect(route, isA<LibraryRoute>());
+    expect((route as LibraryRoute).section, ShelfSection.recent);
+    expect((route).mediaTypeId, MediaTypes.movies.id);
+    // Dort steht die Reihe ganz, und keine Bühne mehr davor.
+    expect(find.byType(StageScreen), findsNothing);
+    expect(find.textContaining('Zuletzt hinzugefügt · Filme'), findsWidgets);
+  });
+
+  /// „Was jetzt?" ist bei Hörbüchern dieselbe Frage wie bei Filmen; eine Wand
+  /// gleicher Kacheln ist überall ein Dateilisting.
+  test('jedes Regal bekommt eine Bühne, die Gesamtansicht nicht', () {
     expect(StageScreen.suits(MediaTypes.movies), isTrue);
     expect(StageScreen.suits(MediaTypes.series), isTrue);
-    expect(StageScreen.suits(MediaTypes.audiobook), isFalse);
+    expect(StageScreen.suits(MediaTypes.audiobook), isTrue);
+    expect(StageScreen.suits(MediaTypes.manga), isTrue);
+    // Ohne Medientyp steht da alles, was es gibt — dafür ist die Bühne nicht.
     expect(StageScreen.suits(null), isFalse);
   });
 }

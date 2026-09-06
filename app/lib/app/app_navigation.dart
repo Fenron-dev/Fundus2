@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../features/library/shelf_sections.dart';
+
 /// Where the content column currently is.
 ///
 /// Screens are values, not widget subtrees: the shell stays put, the content
@@ -20,7 +22,12 @@ final class DashboardRoute extends FundusRoute {
 }
 
 final class LibraryRoute extends FundusRoute {
-  const LibraryRoute({this.mediaTypeId, this.group, this.subgroup});
+  const LibraryRoute({
+    this.mediaTypeId,
+    this.group,
+    this.subgroup,
+    this.section,
+  });
 
   /// Null shows everything the vault holds.
   final String? mediaTypeId;
@@ -34,6 +41,13 @@ final class LibraryRoute extends FundusRoute {
   /// walking: an author's shelf is series and single books, and a series is
   /// its volumes in order. Everywhere else this stays null.
   final String? subgroup;
+
+  /// Eine der Reihen von der Bühne, ganz statt angeschnitten.
+  ///
+  /// Die Überschrift einer Reihe ist ein Versprechen: „Zuletzt hinzugefügt"
+  /// heißt, dass es mehr davon gibt als die zwanzig, die nebeneinander
+  /// passen. Sie führt hierher.
+  final ShelfSection? section;
 
   LibraryRoute withGroup(String? value) =>
       LibraryRoute(mediaTypeId: mediaTypeId, group: value);

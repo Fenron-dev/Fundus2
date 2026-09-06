@@ -7,6 +7,7 @@ import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/media_type.dart';
 import '../../data/work_view.dart';
+import 'shelf_sections.dart';
 import 'work_poster.dart';
 import 'work_spotlight.dart';
 
@@ -35,9 +36,12 @@ class StageScreen extends StatefulWidget {
 
   /// Which shelves get a stage. The others keep the plain grid until their
   /// own arrangement has been thought about.
-  static bool suits(MediaTypeDefinition? type) =>
-      type != null &&
-      (type.id == MediaTypes.movies.id || type.id == MediaTypes.series.id);
+  /// Welche Regale eine Bühne bekommen: alle.
+  ///
+  /// Sie war für Filme und Serien gedacht und hat sich dort bewährt — aber
+  /// „was jetzt?" ist bei Hörbüchern, Mangas und Musik dieselbe Frage, und
+  /// eine Wand gleicher Kacheln ist überall ein Dateilisting.
+  static bool suits(MediaTypeDefinition? type) => type != null;
 
   @override
   State<StageScreen> createState() => _StageScreenState();
@@ -49,34 +53,20 @@ class _StageScreenState extends State<StageScreen> {
   /// A suggestion that changes under your hand while you are reading it is
   /// not a suggestion. „Neu würfeln" is the way to change it, on purpose.
 
-  List<WorkView> get _continuing {
-    final open = widget.works
-        .where((work) => work.hasProgress && !work.finished)
-        .toList();
-    open.sort((left, right) {
-      final leftAt = left.summary.lastListenedAt;
-      final rightAt = right.summary.lastListenedAt;
-      if (leftAt == null && rightAt == null) return 0;
-      if (leftAt == null) return 1;
-      if (rightAt == null) return -1;
-      return rightAt.compareTo(leftAt);
-    });
-    return open.take(20).toList(growable: false);
-  }
+  /// Wie viele Werke in einer Reihe stehen. Der Rest ist einen Tipp auf die
+  /// Überschrift entfernt.
+  static const _railLength = 20;
 
-  List<WorkView> get _recent {
-    final all = [...widget.works]
-      ..sort(
-        (left, right) => right.summary.addedAt.compareTo(left.summary.addedAt),
-      );
-    return all.take(20).toList(growable: false);
-  }
+  List<WorkView> _section(ShelfSection section) => worksInSection(
+    section,
+    widget.works,
+    seed: FundusScope.of(context).suggestionSeed,
+    limit: _railLength,
+  );
 
-  List<WorkView> get _surprise {
-    final seed = FundusScope.of(context).suggestionSeed;
-    final all = [...widget.works]..shuffle(Random(seed));
-    return all.take(20).toList(growable: false);
-  }
+  List<WorkView> get _continuing => _section(ShelfSection.continuing);
+  List<WorkView> get _recent => _section(ShelfSection.recent);
+  List<WorkView> get _surprise => _section(ShelfSection.surprise);
 
   WorkView? get _feature {
     if (widget.works.isEmpty) return null;
@@ -88,6 +78,11 @@ class _StageScreenState extends State<StageScreen> {
       FundusScope.of(context).suggestionSeed,
     ).nextInt(pool.length)];
   }
+
+  /// Führt auf die Seite, die diese Reihe ganz zeigt.
+  void _showAll(ShelfSection section) => FundusScope.of(
+    context,
+  ).navigation.go(LibraryRoute(mediaTypeId: widget.type?.id, section: section));
 
   @override
   Widget build(BuildContext context) {
@@ -112,26 +107,29 @@ class _StageScreenState extends State<StageScreen> {
         if (continuing.isNotEmpty)
           SliverToBoxAdapter(
             child: _Rail(
-              title: 'Weiterschauen',
+              title: ShelfSection.continuing.label,
               works: continuing,
               stage: stage,
               onOpen: widget.onOpen,
+              onMore: () => _showAll(ShelfSection.continuing),
             ),
           ),
         SliverToBoxAdapter(
           child: _Rail(
-            title: 'Zuletzt hinzugefügt',
+            title: ShelfSection.recent.label,
             works: recent,
             stage: stage,
             onOpen: widget.onOpen,
+            onMore: () => _showAll(ShelfSection.recent),
           ),
         ),
         SliverToBoxAdapter(
           child: _Rail(
-            title: 'Zufällig entdecken',
+            title: ShelfSection.surprise.label,
             works: _surprise,
             stage: stage,
             onOpen: widget.onOpen,
+            onMore: () => _showAll(ShelfSection.surprise),
             // Auf dem Telefon ist „Neu mischen" ein Zeichen: nebeneinander
             // blieb von der Überschrift „Zufällig en…" übrig.
             action: stage == FundusStageSize.handset
@@ -157,6 +155,7 @@ class _StageScreenState extends State<StageScreen> {
             child: _RailHeading(
               title: 'Alle ${widget.type?.label ?? 'Werke'}',
               count: widget.works.length,
+              onMore: () => _showAll(ShelfSection.all),
             ),
           ),
         ),
@@ -186,6 +185,7 @@ class _Rail extends StatelessWidget {
     required this.stage,
     required this.onOpen,
     this.action,
+    this.onMore,
   });
 
   final String title;
@@ -193,6 +193,9 @@ class _Rail extends StatelessWidget {
   final FundusStageSize stage;
   final void Function(WorkView) onOpen;
   final Widget? action;
+
+  /// Die Überschrift führt auf die Seite, die diese Reihe ganz zeigt.
+  final VoidCallback? onMore;
 
   @override
   Widget build(BuildContext context) {
@@ -207,7 +210,7 @@ class _Rail extends StatelessWidget {
             stage.gutter,
             FundusSpace.x3,
           ),
-          child: _RailHeading(title: title, action: action),
+          child: _RailHeading(title: title, action: action, onMore: onMore),
         ),
         SizedBox(
           // Room for the poster and the two lines under it.
@@ -233,27 +236,51 @@ class _Rail extends StatelessWidget {
 }
 
 class _RailHeading extends StatelessWidget {
-  const _RailHeading({required this.title, this.count, this.action});
+  const _RailHeading({
+    required this.title,
+    this.count,
+    this.action,
+    this.onMore,
+  });
 
   final String title;
   final int? count;
   final Widget? action;
 
+  /// Wo die Überschrift hinführt, wenn es mehr gibt als die Reihe zeigt.
+  final VoidCallback? onMore;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tokens = context.fundus;
+    final label = Text(
+      title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+    );
     return Row(
       children: [
         Flexible(
-          child: Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          child: onMore == null
+              ? label
+              : InkWell(
+                  onTap: onMore,
+                  borderRadius: FundusRadius.smAll,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(child: label),
+                      const SizedBox(width: FundusSpace.x1),
+                      Icon(
+                        FundusIcons.forward,
+                        size: FundusIcons.sizeSm,
+                        color: tokens.textFaint,
+                      ),
+                    ],
+                  ),
+                ),
         ),
         if (count != null) ...[
           const SizedBox(width: FundusSpace.x2),
