@@ -1268,6 +1268,10 @@ final class FundusLibrary {
     int limit = 500,
   }) => _database.progressChangedSince(since, limit: limit);
 
+  /// Welche Werke überhaupt etwas haben, das sich abgleichen ließe — ein
+  /// Stand, eine Notiz, ein Lesezeichen, ein Schlagwort.
+  Set<String> worksWorthSyncing() => _database.worksWorthSyncing();
+
   /// Was ein Werk belegt und wie groß sein Bild ist.
   ({int bytes, int? width, int? height, int files}) workStorage(
     String workId,

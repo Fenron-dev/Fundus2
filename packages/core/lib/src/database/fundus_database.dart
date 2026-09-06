@@ -1370,6 +1370,47 @@ final class FundusDatabase {
     ];
   }
 
+  /// Welche Werke überhaupt etwas haben, das sich abgleichen ließe.
+  ///
+  /// Ein Werk, das nie jemand geöffnet und nie jemand beschriftet hat, hat
+  /// keinen Stand, keine Notiz, kein Lesezeichen und kein Schlagwort — es
+  /// abzugleichen ist eine Anfrage, deren Antwort feststeht. Bei zehntausend
+  /// Werken sind das zehntausend Anfragen für nichts, und genau daran ist der
+  /// erste Abgleich nach dem Koppeln erstickt.
+  Set<String> worksWorthSyncing({String userId = 'default'}) {
+    final found = <String>{};
+    void collect(String sql, [List<Object?> values = const []]) {
+      for (final row in _database.select(sql, values)) {
+        final workId = row['work_id'];
+        if (workId is String) found.add(workId);
+      }
+    }
+
+    collect('SELECT DISTINCT work_id FROM progress WHERE user_id = ?', [
+      userId,
+    ]);
+    collect(
+      'SELECT DISTINCT work_id FROM notes WHERE work_id IS NOT NULL '
+      'AND user_id = ?',
+      [userId],
+    );
+    collect('SELECT DISTINCT work_id FROM bookmarks WHERE user_id = ?', [
+      userId,
+    ]);
+    collect('SELECT DISTINCT work_id FROM work_tags');
+    if (tableExists('highlights')) {
+      collect('SELECT DISTINCT work_id FROM highlights WHERE user_id = ?', [
+        userId,
+      ]);
+    }
+    if (tableExists('watched_files')) {
+      collect('SELECT DISTINCT work_id FROM watched_files WHERE user_id = ?', [
+        userId,
+      ]);
+    }
+    return found;
+  }
+
   /// Every work that has an open question, for the one place that lists them.
   List<String> worksWithProgressChoices({String userId = 'default'}) {
     final rows = _database.select(

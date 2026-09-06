@@ -187,6 +187,7 @@ final class FundusServerHandler {
       )
       ..get('/v1/libraries/<libraryId>/playback-session', _playbackSession)
       ..put('/v1/libraries/<libraryId>/playback-session', _savePlaybackSession)
+      ..get('/v1/libraries/<libraryId>/sync-index', _syncIndex)
       ..get('/v1/libraries/<libraryId>/progress', _progressChanges)
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
       ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress)
@@ -986,6 +987,24 @@ final class FundusServerHandler {
       workIds: [for (final entry in entries) entry.workId],
       entries: entries,
     );
+  }
+
+  /// Welche Werke hier überhaupt etwas haben, das sich abgleichen ließe.
+  ///
+  /// Ein Werk ohne Stand, ohne Notiz, ohne Lesezeichen und ohne Schlagwort
+  /// hat nichts zu vergleichen. Es trotzdem einzeln zu erfragen sind bei
+  /// zehntausend Werken zehntausend Anfragen, deren Antwort feststeht — daran
+  /// ist der erste Abgleich nach dem Koppeln erstickt.
+  Response _syncIndex(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    return _json({
+      'library_id': libraryId,
+      'works': [
+        for (final workId in entry.library.worksWorthSyncing())
+          if (_canViewWorkId(request, entry, workId)) workId,
+      ],
+    });
   }
 
   /// Welche Werke seit einem Zeitpunkt einen neuen Stand haben.

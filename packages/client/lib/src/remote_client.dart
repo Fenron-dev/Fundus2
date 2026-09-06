@@ -201,6 +201,24 @@ final class FundusRemoteClient {
   );
 
   /// The other side's reading position for a work, or null if it has none.
+  /// Welche Werke drüben überhaupt etwas haben, das sich abgleichen ließe.
+  ///
+  /// Eine Gegenstelle, die das noch nicht kennt, antwortet mit einem Fehler;
+  /// dann bleibt es bei dem, was diese Seite für abgleichenswert hält.
+  Future<Set<String>> worksWorthSyncing(String libraryId) async {
+    try {
+      final decoded = await _get('/v1/libraries/$libraryId/sync-index');
+      final works = decoded['works'];
+      if (works is! List) return const {};
+      return {
+        for (final id in works)
+          if (id is String) id,
+      };
+    } on FundusRemoteException {
+      return const {};
+    }
+  }
+
   /// Welche Werke drüben seit [since] einen neuen Stand haben.
   ///
   /// Die eine Frage vor dem Abgleich: danach wird nur das nachgeholt, was

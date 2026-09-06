@@ -134,7 +134,7 @@ class SyncController extends ChangeNotifier {
         deviceId: settings.deviceKey,
         peerName: peer.name,
         baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
-      ).run(workIds: _worksOf(vault, peer));
+      ).run(workIds: await _worthSyncing(vault, peer, client, libraryId));
       await _record(vault, peer, report);
 
       await settings.savePeer(
@@ -417,6 +417,34 @@ class SyncController extends ChangeNotifier {
       last = await syncWith(peer) ?? last;
     }
     return last;
+  }
+
+  /// Welche Werke dieser Abgleich anfasst.
+  ///
+  /// Nicht alle: ein Werk, das nie jemand geöffnet und nie jemand
+  /// beschriftet hat, hat auf keiner Seite einen Stand, eine Notiz oder ein
+  /// Schlagwort — es abzugleichen ist eine Anfrage, deren Antwort feststeht.
+  /// Bei zehntausend Werken sind das zehntausend Anfragen für nichts, und
+  /// genau daran ist der erste Abgleich nach dem Koppeln erstickt.
+  ///
+  /// Gefragt werden beide Seiten, sonst käme ein Lesezeichen, das drüben
+  /// gesetzt wurde, nie herüber.
+  Future<Iterable<String>> _worthSyncing(
+    FundusLibrary vault,
+    PeerConnection peer,
+    FundusRemoteClient client,
+    String libraryId,
+  ) async {
+    final worth = <String>{
+      ...vault.worksWorthSyncing(),
+      ...await client.worksWorthSyncing(libraryId),
+    };
+    // Und davon nur, wofür diese Gegenstelle zuständig ist: eine andere nach
+    // den Werken einer dritten zu fragen wäre eine Runde 404er.
+    final domain = _worksOf(vault, peer);
+    if (domain == null) return worth;
+    final allowed = domain.toSet();
+    return worth.where(allowed.contains);
   }
 
   /// Which works this peer answers for.

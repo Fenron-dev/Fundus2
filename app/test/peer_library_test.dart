@@ -279,6 +279,39 @@ void main() {
     );
   });
 
+  test('der volle Abgleich fasst nur an, was etwas hat', () async {
+    // Der Fall aus dem Protokoll: nach dem Koppeln fragte der Abgleich jedes
+    // einzelne Werk nach Stand und Notizen — bei zehntausend Werken
+    // stundenlang. Ein Werk, das niemand geöffnet hat, hat aber nichts zu
+    // vergleichen.
+    await peers.connect(peer());
+    final workId = _audiobook(library).id;
+    final fileId = theirs.playbackTracks(workId).single.fileId;
+    theirs.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 9),
+      deviceId: 'mac',
+    );
+    // Der Manga daneben wurde nie angefasst.
+    expect(library.works.length, greaterThan(1));
+
+    final sync = SyncController(settings: settings, library: library);
+    addTearDown(sync.dispose);
+    requests.clear();
+
+    await sync.syncWith(settings.peers.single);
+
+    // Ein Werk hat einen Stand, also wird genau eines abgeglichen — nicht
+    // jedes Werk der Bibliothek.
+    expect(requests.where((entry) => entry == 'GET progress'), hasLength(1));
+    expect(requests.where((entry) => entry == 'GET annotations'), hasLength(1));
+    expect(
+      library.library!.loadProgress(workId)!.position.numericValue,
+      closeTo(9 * 60, 1),
+    );
+  });
+
   test('ein Auffrischen ohne Neues kostet eine einzige Frage', () async {
     // Der Fall aus dem Protokoll: acht Anfragen pro Sekunde über Minuten.
     // Der Grund war, dass jeder Lauf alles holte *und* zurückschob — und
