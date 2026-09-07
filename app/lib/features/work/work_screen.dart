@@ -1830,6 +1830,7 @@ class _DevicesState extends State<_Devices> {
         fileId: progress.fileId ?? progress.position.fileId ?? '',
         finished: progress.finished,
         deviceId: scope.settings.deviceKey,
+        deviceName: scope.settings.deviceName,
         updatedAt: progress.updatedAt,
         checkpoint: true,
       );
@@ -1856,6 +1857,7 @@ class _DevicesState extends State<_Devices> {
         position: revision.position,
         finished: revision.finished,
         deviceId: scope.settings.deviceKey,
+        deviceName: scope.settings.deviceName,
         updatedAt: revision.createdAt,
         checkpoint: true,
       );
@@ -1948,7 +1950,9 @@ class _DevicesState extends State<_Devices> {
                     (answer) => answer.progress.deviceId == entry.key,
                   ))
                 _DeviceRow(
-                  name: entry.key,
+                  name: entry.value.deviceName.trim().isEmpty
+                      ? entry.key
+                      : entry.value.deviceName,
                   icon: FundusIcons.devices,
                   position: _positionLabel(
                     entry.value.position,

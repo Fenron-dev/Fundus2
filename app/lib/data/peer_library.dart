@@ -182,6 +182,16 @@ class PeerLibraries extends ChangeNotifier {
 
   /// Connects to one machine and fetches its catalogue.
   Future<bool> connect(PeerConnection peer, {bool mirror = true}) async {
+    final current = _connected[peer.serverId];
+    if (current != null &&
+        current.connection == FundusConnectionState.connected) {
+      // Tapping an already-open peer must not replace the proxy that a player
+      // is using. Replacing it closes the old loopback socket and makes an
+      // otherwise healthy stream look like „Nicht erreichbar“.
+      library.library?.setSourceReachable(current.sourceId, reachable: true);
+      library.refresh();
+      return true;
+    }
     _busy = true;
     _failure = null;
     notifyListeners();
@@ -269,12 +279,18 @@ class PeerLibraries extends ChangeNotifier {
         await _mirror(entry);
         entry.lastContactAt = DateTime.now();
         entry.refused = false;
+        library.library?.setSourceReachable(entry.sourceId, reachable: true);
       } on FundusRemoteException catch (error) {
         _failure = error.message;
         entry.refused = error.statusCode == 401 || error.statusCode == 403;
-        library.library?.setSourceReachable(entry.sourceId, reachable: false);
+        if (entry.connection != FundusConnectionState.connected) {
+          library.library?.setSourceReachable(entry.sourceId, reachable: false);
+        }
       } on Object catch (error) {
         _failure = 'Der Katalog von „${entry.peer.name}" kam nicht: $error';
+        if (entry.connection != FundusConnectionState.connected) {
+          library.library?.setSourceReachable(entry.sourceId, reachable: false);
+        }
       }
     }
     library.refresh();
@@ -338,6 +354,7 @@ class PeerLibraries extends ChangeNotifier {
     _stopPulse();
     for (final entry in _connected.values) {
       await entry.close();
+      library.library?.setSourceReachable(entry.sourceId, reachable: false);
     }
     _connected.clear();
     notifyListeners();
@@ -354,7 +371,15 @@ class PeerLibraries extends ChangeNotifier {
 
   void _markUnreachable(PeerConnection peer, {required bool refused}) {
     final entry = _connected[peer.serverId];
-    if (entry != null) entry.refused = refused;
+    if (entry != null) {
+      entry.refused = refused;
+      // A failed re-open is not proof that the already-running connection is
+      // gone. Keep its source available until its own heartbeat goes stale.
+      if (entry.connection == FundusConnectionState.connected) {
+        library.refresh();
+        return;
+      }
+    }
     library.library?.setSourceReachable(sourceIdFor(peer), reachable: false);
     library.refresh();
   }
@@ -369,6 +394,9 @@ class PeerLibraries extends ChangeNotifier {
         if (await entry.client.ping()) {
           entry.lastContactAt = DateTime.now();
           entry.refused = false;
+          library.library?.setSourceReachable(entry.sourceId, reachable: true);
+        } else if (entry.connection != FundusConnectionState.connected) {
+          library.library?.setSourceReachable(entry.sourceId, reachable: false);
         }
       }
       notifyListeners();
@@ -384,12 +412,9 @@ class PeerLibraries extends ChangeNotifier {
     PeerConnection peer,
     FundusRemoteClient client,
   ) async {
+    if (peer.libraryId.isNotEmpty) return peer.libraryId;
     final libraries = await client.libraries();
     if (libraries.isEmpty) return null;
-    if (peer.libraryId.isNotEmpty &&
-        libraries.any((entry) => entry.id == peer.libraryId)) {
-      return peer.libraryId;
-    }
     return libraries.first.id;
   }
 }

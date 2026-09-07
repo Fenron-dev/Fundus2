@@ -1339,12 +1339,15 @@ final class FundusDatabase {
       [workId, 'default', row['revision']],
     );
     var checkpoint = false;
+    var deviceName = '';
     if (latestRevision.isNotEmpty) {
       try {
-        checkpoint =
-            (jsonDecode(latestRevision.first['snapshot_json'] as String)
-                as Map)['checkpoint'] ==
-            true;
+        final snapshot =
+            jsonDecode(latestRevision.first['snapshot_json'] as String) as Map;
+        checkpoint = snapshot['checkpoint'] == true;
+        deviceName = snapshot['device_name'] is String
+            ? snapshot['device_name'] as String
+            : '';
       } on Object {
         checkpoint = false;
       }
@@ -1368,6 +1371,7 @@ final class FundusDatabase {
       revision: row['revision'] as int,
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
       deviceId: row['device_id'] as String,
+      deviceName: deviceName,
       operationId: row['operation_id'] as String,
       checkpoint: checkpoint,
     );
@@ -1579,6 +1583,7 @@ final class FundusDatabase {
     required String workId,
     required int revision,
     required String deviceId,
+    String deviceName = '',
     required String operationId,
   }) {
     final selected = listProgressRevisions(
@@ -1593,6 +1598,7 @@ final class FundusDatabase {
       position: selected.position,
       finished: selected.finished,
       deviceId: deviceId,
+      deviceName: deviceName,
       operationId: operationId,
     );
   }
@@ -1612,6 +1618,9 @@ final class FundusDatabase {
       deviceId: snapshot['device_id'] is String
           ? snapshot['device_id'] as String
           : 'unknown',
+      deviceName: snapshot['device_name'] is String
+          ? snapshot['device_name'] as String
+          : '',
       operationId: row['operation_id'] as String,
       checkpoint: snapshot['checkpoint'] == true,
     );
@@ -1624,6 +1633,7 @@ final class FundusDatabase {
     Duration? duration,
     required bool finished,
     required String deviceId,
+    String deviceName = '',
     required String operationId,
     bool checkpoint = false,
   }) => saveMediaProgress(
@@ -1637,6 +1647,7 @@ final class FundusDatabase {
     ),
     finished: finished,
     deviceId: deviceId,
+    deviceName: deviceName,
     operationId: operationId,
     checkpoint: checkpoint,
   );
@@ -1647,6 +1658,7 @@ final class FundusDatabase {
     required MediaPosition position,
     required bool finished,
     required String deviceId,
+    String deviceName = '',
     required String operationId,
     DateTime? updatedAt,
     bool checkpoint = false,
@@ -1699,6 +1711,7 @@ final class FundusDatabase {
         'position': mediaPosition.toJson(),
         'finished': finished,
         'device_id': deviceId,
+        'device_name': deviceName,
         'checkpoint': checkpoint,
       });
       _database.execute(

@@ -287,6 +287,7 @@ final class FundusRemoteClient {
     required MediaPosition position,
     required bool finished,
     required String deviceId,
+    String deviceName = '',
     String? operationId,
     DateTime? updatedAt,
     bool checkpoint = false,
@@ -298,6 +299,7 @@ final class FundusRemoteClient {
         'position': position.toJson(),
         'finished': finished,
         'device_id': deviceId,
+        if (deviceName.trim().isNotEmpty) 'device_name': deviceName.trim(),
         // Wann der Stand entstanden ist, nicht wann er ankam. Eine
         // Gegenstelle, die das nicht kennt, ignoriert das Feld.
         if (updatedAt != null)

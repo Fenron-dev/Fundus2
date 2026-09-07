@@ -20,8 +20,11 @@ import 'track_preference.dart';
 /// Streaming and offline copies join by adding an implementation of that
 /// interface, not by growing a second controller.
 class PlaybackController extends ChangeNotifier {
-  PlaybackController({PlaybackEngine? engine, this.deviceId = 'device'})
-    : _engineOrNull = engine;
+  PlaybackController({
+    PlaybackEngine? engine,
+    this.deviceId = 'device',
+    this.deviceName = '',
+  }) : _engineOrNull = engine;
 
   /// How this device plays — speed, skip distances, the sleep timer. Kept by
   /// the scope in the vault's device profile.
@@ -66,6 +69,12 @@ class PlaybackController extends ChangeNotifier {
   PlaybackEngine get _engine => _engineOrNull ??= MediaKitEngine();
 
   final String deviceId;
+  String deviceName;
+
+  void updateDeviceName(String value) {
+    final name = value.trim();
+    if (name.isNotEmpty) deviceName = name;
+  }
 
   final List<StreamSubscription<Object?>> _subscriptions = [];
   Timer? _saveTimer;
@@ -1066,6 +1075,7 @@ class PlaybackController extends ChangeNotifier {
         duration: _duration,
         finished: finished,
         deviceId: deviceId,
+        deviceName: deviceName,
         checkpoint: checkpoint,
       );
       // Und bei einer Folge zusätzlich dort, wo sie hingehört: an der Datei.

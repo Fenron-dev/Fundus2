@@ -18,7 +18,10 @@ Future<void> main() async {
   final settings = await AppSettings.load();
   // Der Player entsteht hier, nicht erst in der Shell: die Medien-Sitzung für
   // die Hintergrundwiedergabe muss ihn vor dem ersten Bild kennen.
-  final player = PlaybackController(deviceId: settings.deviceKey);
+  final player = PlaybackController(
+    deviceId: settings.deviceKey,
+    deviceName: settings.deviceName,
+  );
   await FundusAudioHandler.attach(player);
   runApp(
     FundusApp(settings: settings, library: LibraryController(), player: player),

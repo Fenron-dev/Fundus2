@@ -65,6 +65,7 @@ final class LibraryPlaybackProgress {
     required this.revision,
     required this.updatedAt,
     this.deviceId = 'unknown',
+    this.deviceName = '',
     this.operationId,
     this.checkpoint = false,
   });
@@ -76,6 +77,13 @@ final class LibraryPlaybackProgress {
   final int revision;
   final DateTime updatedAt;
   final String deviceId;
+
+  /// The human-readable name of the device that wrote this position.
+  ///
+  /// The id remains the stable identity used for syncing; the name is kept
+  /// alongside it so a mirrored progress row can still be shown as
+  /// „S21 FE“ instead of exposing an opaque generated id.
+  final String deviceName;
   final String? operationId;
   final bool checkpoint;
 }
@@ -128,6 +136,7 @@ final class LibraryPlaybackRevision {
     required this.createdAt,
     required this.deviceId,
     required this.operationId,
+    this.deviceName = '',
     this.checkpoint = false,
   });
 
@@ -138,6 +147,7 @@ final class LibraryPlaybackRevision {
   final int revision;
   final DateTime createdAt;
   final String deviceId;
+  final String deviceName;
   final String operationId;
 
   /// True when somebody stopped or closed playback; false for an autosave.

@@ -132,12 +132,19 @@ final class FileTextSource implements TextSource {
 class TextReaderController extends ChangeNotifier {
   TextReaderController({
     this.deviceId = 'device',
+    this.deviceName = '',
     TextSource Function(String path, String name)? openSource,
   }) : _openSource =
            openSource ?? ((path, name) => FileTextSource(path, name: name));
 
   final TextSource Function(String path, String name) _openSource;
   final String deviceId;
+  String deviceName;
+
+  void updateDeviceName(String value) {
+    final name = value.trim();
+    if (name.isNotEmpty) deviceName = name;
+  }
 
   FundusLibrary? _library;
   WorkView? _work;
@@ -684,6 +691,7 @@ class TextReaderController extends ChangeNotifier {
         position: _position(),
         finished: finished,
         deviceId: deviceId,
+        deviceName: deviceName,
         checkpoint: checkpoint,
       );
     } on Object {

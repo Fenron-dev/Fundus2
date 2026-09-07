@@ -22,6 +22,8 @@ class LibraryController extends ChangeNotifier {
   ScanCancellationToken? _scanToken;
 
   LibraryStatus _status = LibraryStatus.idle;
+  Future<void> _openQueue = Future<void>.value();
+  int _openGeneration = 0;
   String? _error;
   List<WorkView> _works = const [];
   List<LibrarySource> _sources = const [];
@@ -132,7 +134,19 @@ class LibraryController extends ChangeNotifier {
   /// thing an opening library can look like.
   static const reachTimeout = Duration(seconds: 6);
 
-  Future<void> open(Directory root, {bool createIfMissing = false}) async {
+  Future<void> open(Directory root, {bool createIfMissing = false}) {
+    // A shell-vault connection and a user tapping a recent vault can arrive
+    // at the same time. Serialising them prevents the second open from
+    // closing the database while the first mirror is still using it.
+    final operation = _openQueue.then(
+      (_) => _openNow(root, createIfMissing: createIfMissing),
+    );
+    _openQueue = operation.catchError((_) {});
+    return operation;
+  }
+
+  Future<void> _openNow(Directory root, {required bool createIfMissing}) async {
+    final generation = ++_openGeneration;
     _status = LibraryStatus.opening;
     _error = null;
     notifyListeners();
@@ -146,12 +160,29 @@ class LibraryController extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      _library?.close();
-      _library =
+      // Re-opening the same vault is a no-op. In particular, tapping a peer
+      // twice must not close the live database just to create an identical
+      // second handle.
+      if (_library != null && _library!.root.path == root.path) {
+        _reload();
+        _status = LibraryStatus.ready;
+        notifyListeners();
+        return;
+      }
+      final opened =
           await (createIfMissing
                   ? FundusLibrary.create(root)
                   : FundusLibrary.open(root))
               .timeout(reachTimeout);
+      // `close()` may have been requested while the filesystem was opening.
+      // Do not install a handle after that request; close only the newly
+      // opened instance and leave the controller empty.
+      if (generation != _openGeneration) {
+        opened.close();
+        return;
+      }
+      _library?.close();
+      _library = opened;
       _reload();
       _status = LibraryStatus.ready;
     } on TimeoutException {
@@ -191,6 +222,7 @@ class LibraryController extends ChangeNotifier {
       'öffnen genügt.';
 
   void close() {
+    _openGeneration++;
     _scanToken?.cancel();
     _library?.close();
     _library = null;

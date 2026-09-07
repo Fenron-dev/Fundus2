@@ -127,12 +127,23 @@ class FundusScope extends StatefulWidget {
 class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   final navigation = AppNavigation();
   late final PlaybackController player =
-      widget.player ?? PlaybackController(deviceId: widget.settings.deviceKey);
+      widget.player ??
+      PlaybackController(
+        deviceId: widget.settings.deviceKey,
+        deviceName: widget.settings.deviceName,
+      );
   late final ReaderController reader =
-      widget.reader ?? ReaderController(deviceId: widget.settings.deviceKey);
+      widget.reader ??
+      ReaderController(
+        deviceId: widget.settings.deviceKey,
+        deviceName: widget.settings.deviceName,
+      );
   late final TextReaderController textReader =
       widget.textReader ??
-      TextReaderController(deviceId: widget.settings.deviceKey);
+      TextReaderController(
+        deviceId: widget.settings.deviceKey,
+        deviceName: widget.settings.deviceName,
+      );
   late final FullscreenController fullscreen =
       widget.fullscreen ?? FullscreenController();
   late final SyncController sync =
@@ -177,6 +188,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     super.initState();
     navigation.addListener(_bump);
     settings.addListener(_bump);
+    settings.addListener(_syncDeviceName);
     library.addListener(_bump);
     player.addListener(_bump);
     reader.addListener(_bump);
@@ -207,6 +219,13 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         );
     WidgetsBinding.instance.addObserver(this);
     _startCatchingUp();
+  }
+
+  void _syncDeviceName() {
+    final name = settings.deviceName;
+    player.updateDeviceName(name);
+    reader.updateDeviceName(name);
+    textReader.updateDeviceName(name);
   }
 
   /// Wie oft im Hintergrund gefragt wird, ob anderswo etwas weitergelaufen
@@ -355,6 +374,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     navigation.removeListener(_bump);
     settings.removeListener(_bump);
+    settings.removeListener(_syncDeviceName);
     library.removeListener(_bump);
     player.removeListener(_bump);
     reader.removeListener(_bump);
@@ -830,7 +850,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         pieces > 1 &&
         _sameFile(mine.position, other.position)) {
       if (comparePositions(other.position, mine.position) > 0) {
-        vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
+        vault.takeProgressChoice(
+          work.id,
+          deviceId: settings.deviceKey,
+          deviceName: settings.deviceName,
+        );
       } else {
         vault.clearProgressChoice(work.id);
       }
@@ -847,7 +871,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
           mine == null ||
           comparePositions(other.position, mine.position, fileOrder: order) > 0;
       if (furthest) {
-        vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
+        vault.takeProgressChoice(
+          work.id,
+          deviceId: settings.deviceKey,
+          deviceName: settings.deviceName,
+        );
       } else {
         vault.clearProgressChoice(work.id);
       }
@@ -869,7 +897,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       await settings.setAlwaysFurthestPosition(true);
     }
     if (answer?.takeOther ?? false) {
-      vault.takeProgressChoice(work.id, deviceId: settings.deviceKey);
+      vault.takeProgressChoice(
+        work.id,
+        deviceId: settings.deviceKey,
+        deviceName: settings.deviceName,
+      );
     } else {
       vault.clearProgressChoice(work.id);
       // Staying here is a decision the other machine has to hear about, or

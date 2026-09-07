@@ -31,6 +31,7 @@ const _readableExtensions = {'.cbz', '.zip', '.pdf'};
 class ReaderController extends ChangeNotifier {
   ReaderController({
     this.deviceId = 'device',
+    this.deviceName = '',
     ComicPageSource Function(String path, String name)? openSource,
   }) : _openSource = openSource ?? _sourceFor;
 
@@ -45,6 +46,12 @@ class ReaderController extends ChangeNotifier {
   /// tested without building a real CBZ for every case.
   final ComicPageSource Function(String path, String name) _openSource;
   final String deviceId;
+  String deviceName;
+
+  void updateDeviceName(String value) {
+    final name = value.trim();
+    if (name.isNotEmpty) deviceName = name;
+  }
 
   FundusLibrary? _library;
   WorkView? _work;
@@ -576,6 +583,7 @@ class ReaderController extends ChangeNotifier {
         position: _positionOfCurrentPage(),
         finished: finished,
         deviceId: deviceId,
+        deviceName: deviceName,
         checkpoint: checkpoint,
       );
     } on Object {

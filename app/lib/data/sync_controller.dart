@@ -132,6 +132,7 @@ class SyncController extends ChangeNotifier {
         client: client,
         libraryId: libraryId,
         deviceId: settings.deviceKey,
+        deviceName: settings.deviceName,
         peerName: peer.name,
         baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
       ).run(workIds: await _worthSyncing(vault, peer, client, libraryId));
@@ -321,6 +322,7 @@ class SyncController extends ChangeNotifier {
           client: client,
           libraryId: libraryId,
           deviceId: settings.deviceKey,
+          deviceName: settings.deviceName,
           peerName: peer.name,
           baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
         ).run(workIds: [workId]);
@@ -435,6 +437,30 @@ class SyncController extends ChangeNotifier {
         order.length > 1 &&
         mine.position.fileId != null &&
         mine.position.fileId == theirs.position.fileId;
+    // Background catch-up must not silently turn another device's current
+    // position into this device's position. Keep the local row untouched and
+    // leave a choice for the next explicit play; otherwise dragging on the
+    // phone immediately overwrites the Mac's visible stand (and vice versa).
+    if (mine != null &&
+        theirs.deviceId.isNotEmpty &&
+        mine.deviceId != theirs.deviceId &&
+        !_samePosition(mine, theirs)) {
+      vault.recordProgressChoice(
+        LibraryProgressChoice(
+          workId: theirs.workId,
+          position: theirs.position,
+          fileId: theirs.fileId,
+          finished: theirs.finished,
+          deviceId: theirs.deviceId,
+          deviceName: theirs.deviceName.trim().isEmpty
+              ? peer.name
+              : theirs.deviceName,
+          updatedAt: theirs.updatedAt,
+          recordedAt: DateTime.now().toUtc(),
+        ),
+      );
+      return false;
+    }
     if (furtherHere && sameFile) return false;
     if (furtherHere) {
       vault.recordProgressChoice(
@@ -444,7 +470,9 @@ class SyncController extends ChangeNotifier {
           fileId: theirs.fileId,
           finished: theirs.finished,
           deviceId: theirs.deviceId,
-          deviceName: peer.name,
+          deviceName: theirs.deviceName.trim().isEmpty
+              ? peer.name
+              : theirs.deviceName,
           updatedAt: theirs.updatedAt,
           recordedAt: DateTime.now().toUtc(),
         ),
@@ -456,11 +484,26 @@ class SyncController extends ChangeNotifier {
       fileId: theirs.fileId ?? theirs.position.fileId ?? '',
       position: theirs.position,
       finished: theirs.finished,
-      deviceId: settings.deviceKey,
+      deviceId: theirs.deviceId.isEmpty ? settings.deviceKey : theirs.deviceId,
+      deviceName: theirs.deviceName.trim().isEmpty
+          ? (theirs.deviceId == settings.deviceKey
+                ? settings.deviceName
+                : peer.name)
+          : theirs.deviceName,
       updatedAt: theirs.updatedAt,
     );
     return true;
   }
+
+  static bool _samePosition(
+    LibraryPlaybackProgress mine,
+    RemoteProgress theirs,
+  ) =>
+      mine.fileId == theirs.fileId &&
+      mine.finished == theirs.finished &&
+      mine.position.kind == theirs.position.kind &&
+      mine.position.elementId == theirs.position.elementId &&
+      (mine.position.numericValue ?? 0) == (theirs.position.numericValue ?? 0);
 
   /// Bis wann von jeder Gegenstelle schon geholt wurde. Nur für diese
   /// Sitzung: beim Start einmal alles zu prüfen ist billiger, als sich zu
@@ -584,6 +627,11 @@ class SyncController extends ChangeNotifier {
         deviceId: theirs.deviceId.isEmpty
             ? settings.deviceKey
             : theirs.deviceId,
+        deviceName: theirs.deviceName.trim().isEmpty
+            ? (theirs.deviceId == settings.deviceKey
+                  ? settings.deviceName
+                  : peer.name)
+            : theirs.deviceName,
       );
       // The baseline must forget this work, or the next run would call the
       // change a conflict with itself.
@@ -630,6 +678,10 @@ class SyncController extends ChangeNotifier {
     FundusRemoteClient client,
     FundusLibrary vault,
   ) async {
+    // The pairing remembers the selected library. Re-querying the full
+    // library list for every progress check is needlessly expensive on a
+    // sleeping Mac and was the source of the 20-second mobile timeout.
+    if (peer.libraryId.isNotEmpty) return peer.libraryId;
     final mirrored = vault
         .listSources()
         .where((source) => source.id == 'peer-${peer.serverId}')

@@ -1401,9 +1401,20 @@ final class FundusServerHandler {
         .tracksFor(workId)
         .any((track) => track.fileId == fileId);
     if (!validTrack) return _badRequest('file_not_in_work');
-    final deviceId = decoded['device_id'] is String
-        ? decoded['device_id'] as String
-        : 'remote-peer';
+    // A paired token already identifies the caller. Do not let a client
+    // overwrite another device's row (or its displayed name) by sending a
+    // made-up id; the server-side pairing record is authoritative.
+    final authenticatedDevice = request.context['fundus_device_id'] as String?;
+    final deviceId =
+        authenticatedDevice ??
+        (decoded['device_id'] is String
+            ? decoded['device_id'] as String
+            : 'remote-peer');
+    final deviceName = authenticatedDevice == null
+        ? (decoded['device_name'] is String
+              ? decoded['device_name'] as String
+              : _deviceName(deviceId))
+        : _deviceName(authenticatedDevice);
     final checkpoint = decoded['checkpoint'] == true;
     // Wann der Stand entstanden ist. Eine Zahl, die vor dem Jahr 2000 oder in
     // der Zukunft liegt, ist eine falsch gestellte Uhr und wird verworfen —
@@ -1442,6 +1453,7 @@ final class FundusServerHandler {
         position: mediaPosition,
         finished: decoded['finished'] == true,
         deviceId: deviceId,
+        deviceName: deviceName,
         operationId: operationId,
         updatedAt: updatedAt,
         checkpoint: checkpoint,
@@ -1461,6 +1473,7 @@ final class FundusServerHandler {
             : null,
         finished: decoded['finished'] == true,
         deviceId: deviceId,
+        deviceName: deviceName,
         operationId: operationId,
       );
     }
@@ -1509,13 +1522,23 @@ final class FundusServerHandler {
     if (operationId is! String || operationId.trim().isEmpty) {
       return _badRequest('invalid_progress_revision');
     }
+    final authenticatedDevice = request.context['fundus_device_id'] as String?;
+    final deviceId =
+        authenticatedDevice ??
+        (decoded['device_id'] is String
+            ? decoded['device_id'] as String
+            : 'remote-peer');
+    final deviceName = authenticatedDevice == null
+        ? (decoded['device_name'] is String
+              ? decoded['device_name'] as String
+              : _deviceName(deviceId))
+        : _deviceName(authenticatedDevice);
     try {
       final restored = entry.library.restoreProgressRevision(
         workId: workId,
         revision: parsedRevision,
-        deviceId: decoded['device_id'] is String
-            ? decoded['device_id'] as String
-            : 'remote-peer',
+        deviceId: deviceId,
+        deviceName: deviceName,
         operationId: operationId,
       );
       return _json(_progressJson(restored));
@@ -1741,7 +1764,9 @@ final class FundusServerHandler {
     'revision': progress.revision,
     'updated_at': progress.updatedAt.toUtc().toIso8601String(),
     'device_id': progress.deviceId,
-    'device_name': _deviceName(progress.deviceId),
+    'device_name': progress.deviceName.trim().isEmpty
+        ? _deviceName(progress.deviceId)
+        : progress.deviceName,
   };
 
   Map<String, Object?> _progressRevisionJson(
@@ -1754,7 +1779,9 @@ final class FundusServerHandler {
     'revision': revision.revision,
     'created_at': revision.createdAt.toUtc().toIso8601String(),
     'device_id': revision.deviceId,
-    'device_name': _deviceName(revision.deviceId),
+    'device_name': revision.deviceName.trim().isEmpty
+        ? _deviceName(revision.deviceId)
+        : revision.deviceName,
     'checkpoint': revision.checkpoint,
   };
 

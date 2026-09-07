@@ -1067,6 +1067,7 @@ final class FundusLibrary {
   LibraryPlaybackProgress? takeProgressChoice(
     String workId, {
     String deviceId = 'desktop-local',
+    String deviceName = '',
     String? userId,
   }) {
     _ensureWritable();
@@ -1081,6 +1082,7 @@ final class FundusLibrary {
       position: choice.position,
       finished: choice.finished,
       deviceId: deviceId,
+      deviceName: deviceName,
       operationId: FundusId.generate(),
     );
   }
@@ -1089,6 +1091,7 @@ final class FundusLibrary {
     required String workId,
     required int revision,
     String deviceId = 'desktop-local',
+    String deviceName = '',
     String? operationId,
   }) {
     _ensureWritable();
@@ -1096,6 +1099,7 @@ final class FundusLibrary {
       workId: workId,
       revision: revision,
       deviceId: deviceId,
+      deviceName: deviceName,
       operationId: operationId ?? FundusId.generate(),
     );
   }
@@ -1166,6 +1170,7 @@ final class FundusLibrary {
     Duration? duration,
     bool finished = false,
     String deviceId = 'desktop-local',
+    String deviceName = '',
     String? operationId,
     bool checkpoint = false,
   }) => _database.saveProgress(
@@ -1175,6 +1180,7 @@ final class FundusLibrary {
     duration: duration,
     finished: finished,
     deviceId: deviceId,
+    deviceName: deviceName,
     operationId: operationId ?? FundusId.generate(),
     checkpoint: checkpoint,
   );
@@ -1185,6 +1191,7 @@ final class FundusLibrary {
     required MediaPosition position,
     bool finished = false,
     String deviceId = 'desktop-local',
+    String deviceName = '',
     String? operationId,
     DateTime? updatedAt,
     bool checkpoint = false,
@@ -1194,6 +1201,7 @@ final class FundusLibrary {
     position: position,
     finished: finished,
     deviceId: deviceId,
+    deviceName: deviceName,
     operationId: operationId ?? FundusId.generate(),
     updatedAt: updatedAt,
     checkpoint: checkpoint,

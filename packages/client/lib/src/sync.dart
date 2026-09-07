@@ -97,6 +97,7 @@ final class FundusSync {
     required this.client,
     required this.libraryId,
     required this.deviceId,
+    this.deviceName = '',
     this.peerName = '',
     this.baseline = const SyncBaseline({}),
   }) : _agreed = Map.of(baseline.marks);
@@ -112,6 +113,10 @@ final class FundusSync {
   /// The library on the other side that answers for this vault.
   final String libraryId;
   final String deviceId;
+
+  /// Human-readable name sent with local writes and retained when a remote
+  /// position is mirrored into this vault.
+  final String deviceName;
 
   /// What the machine on the other side calls itself.
   ///
@@ -294,7 +299,11 @@ final class FundusSync {
         fileId: value.fileId,
         finished: value.finished,
         deviceId: value.deviceId,
-        deviceName: value.deviceId == deviceId ? 'dieses Gerät' : '',
+        deviceName: value.deviceName.trim().isNotEmpty
+            ? value.deviceName
+            : value.deviceId == deviceId
+            ? deviceName
+            : '',
         updatedAt: value.updatedAt,
         recordedAt: DateTime.now().toUtc(),
       ),
@@ -304,7 +313,9 @@ final class FundusSync {
         fileId: value.fileId,
         finished: value.finished,
         deviceId: value.deviceId.isEmpty ? libraryId : value.deviceId,
-        deviceName: peerName,
+        deviceName: value.deviceName.trim().isEmpty
+            ? peerName
+            : value.deviceName,
         updatedAt: value.updatedAt,
         recordedAt: DateTime.now().toUtc(),
       ),
@@ -415,6 +426,9 @@ final class FundusSync {
       // The write keeps the name of the device it came from, so the history
       // still shows where a jump came from.
       deviceId: theirs.deviceId.isEmpty ? deviceId : theirs.deviceId,
+      deviceName: theirs.deviceName.trim().isEmpty
+          ? peerName
+          : theirs.deviceName,
       // Und mit dem Zeitpunkt, an dem der Stand entstanden ist. Sonst sieht
       // jedes Gerät seine eigene Reihenfolge unter „Zuletzt gesehen": nicht
       // wann etwas lief, sondern wann es hier ankam.
@@ -430,6 +444,7 @@ final class FundusSync {
         position: mine.position,
         finished: mine.finished,
         deviceId: deviceId,
+        deviceName: deviceName,
         updatedAt: mine.updatedAt,
         checkpoint: mine.checkpoint,
       );

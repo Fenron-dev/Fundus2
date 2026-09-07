@@ -119,6 +119,17 @@ void main() {
     expect(library.works.first.summary.sourceId, 'peer-server-test');
   });
 
+  test(
+    'paralleles Öffnen des Shell-Vaults schließt die Datenbank nicht',
+    () async {
+      await Future.wait([peers.ensureShellVault(), peers.ensureShellVault()]);
+
+      expect(library.isOpen, isTrue);
+      expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
+      expect(library.works, isNotEmpty);
+    },
+  );
+
   test('das Werk sagt, dass es von woanders kommt', () async {
     await peers.connect(peer());
 
@@ -384,10 +395,11 @@ void main() {
     },
   );
 
-  /// Bei einem Album ist dieselbe Datei ein Titel unter vielen. Zwei
-  /// Sekundenangaben im selben Lied sind dann keine Frage, sondern nur die
-  /// Frage danach, wer weiter ist — und genau das wanderte nicht mit.
-  test('im selben Titel gewinnt die weitere Stelle ohne Frage', () async {
+  /// Bei einem Album ist dieselbe Datei ein Titel unter vielen. Auch dort
+  /// bleiben die Stände verschiedener Geräte getrennt; die Auswahl kommt
+  /// beim nächsten Öffnen und darf nicht durch den Hintergrundabgleich
+  /// entschieden werden.
+  test('im selben Titel bleiben fremde Geräte-Stände getrennt', () async {
     await peers.connect(peer());
     final album = library.works.firstWhere((work) => work.title == 'Autobahn');
     final tracks = theirs.playbackTracks(album.id);
@@ -413,40 +425,46 @@ void main() {
 
     expect(
       library.library!.loadProgress(album.id)!.position.numericValue,
-      closeTo(160, 1),
+      closeTo(80, 1),
     );
-    expect(library.library!.progressChoice(album.id), isNull);
+    expect(library.library!.progressChoice(album.id), isNotNull);
   });
 
-  test('im selben Titel bleibt die weitere Stelle auch stehen', () async {
-    await peers.connect(peer());
-    final album = library.works.firstWhere((work) => work.title == 'Autobahn');
-    final fileId = theirs.playbackTracks(album.id).first.fileId;
+  test(
+    'im selben Titel bleibt der lokale Stand mit fremdem Stand stehen',
+    () async {
+      await peers.connect(peer());
+      final album = library.works.firstWhere(
+        (work) => work.title == 'Autobahn',
+      );
+      final fileId = theirs.playbackTracks(album.id).first.fileId;
 
-    library.library!.saveProgress(
-      workId: album.id,
-      fileId: fileId,
-      position: const Duration(seconds: 160),
-      deviceId: 'handy',
-    );
-    theirs.saveProgress(
-      workId: album.id,
-      fileId: fileId,
-      position: const Duration(seconds: 80),
-      deviceId: 'mac',
-    );
-    final sync = SyncController(settings: settings, library: library);
-    addTearDown(sync.dispose);
+      library.library!.saveProgress(
+        workId: album.id,
+        fileId: fileId,
+        position: const Duration(seconds: 160),
+        deviceId: 'handy',
+      );
+      theirs.saveProgress(
+        workId: album.id,
+        fileId: fileId,
+        position: const Duration(seconds: 80),
+        deviceId: 'mac',
+      );
+      final sync = SyncController(settings: settings, library: library);
+      addTearDown(sync.dispose);
 
-    await sync.pullRecent();
+      await sync.pullRecent();
 
-    expect(
-      library.library!.loadProgress(album.id)!.position.numericValue,
-      closeTo(160, 1),
-    );
-    // Und gefragt wird auch nicht: es gibt nichts zu entscheiden.
-    expect(library.library!.progressChoice(album.id), isNull);
-  });
+      expect(
+        library.library!.loadProgress(album.id)!.position.numericValue,
+        closeTo(160, 1),
+      );
+      // Auch ein kürzerer fremder Stand wird nicht stillschweigend verworfen;
+      // beim nächsten Öffnen kann man bewusst entscheiden.
+      expect(library.library!.progressChoice(album.id), isNotNull);
+    },
+  );
 
   test('der Zeitpunkt eines Standes überlebt die Reise', () async {
     await peers.connect(peer());

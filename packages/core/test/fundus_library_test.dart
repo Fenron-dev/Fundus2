@@ -77,16 +77,19 @@ void main() {
       position: const Duration(minutes: 2),
       operationId: 'playback-operation-2',
       deviceId: 'phone-test',
+      deviceName: 'S21 FE',
     );
     expect(later.revision, 2);
     final revisions = library.listProgressRevisions(works.single.id);
     expect(revisions.map((item) => item.revision), [2, 1]);
     expect(revisions.first.deviceId, 'phone-test');
+    expect(revisions.first.deviceName, 'S21 FE');
     final restoredRevision = library.restoreProgressRevision(
       workId: works.single.id,
       revision: 1,
       operationId: 'restore-operation-1',
       deviceId: 'desktop-test',
+      deviceName: 'Mac',
     );
     expect(restoredRevision.revision, 3);
     expect(restoredRevision.position.displayValue, '00:12:07');
@@ -95,6 +98,7 @@ void main() {
       revision: 1,
       operationId: 'restore-operation-1',
       deviceId: 'desktop-test',
+      deviceName: 'Mac',
     );
     expect(repeatedRestore.revision, 3);
     library.close();
@@ -114,6 +118,7 @@ void main() {
     expect(resumed.fileId, tracks[1].fileId);
     expect(resumed.position.displayValue, '00:12:07');
     expect(resumed.revision, 3);
+    expect(resumed.deviceName, 'Mac');
   });
 
   test('persists named library views portably', () async {
