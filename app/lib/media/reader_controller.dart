@@ -562,7 +562,7 @@ class ReaderController extends ChangeNotifier {
 
   /// Writes the page back. A page and a title are two different kinds of
   /// truth; metadata is never touched here.
-  void saveProgress({bool finished = false}) {
+  void saveProgress({bool finished = false, bool checkpoint = false}) {
     final library = _library;
     final work = _work;
     final volume = currentVolume;
@@ -576,6 +576,7 @@ class ReaderController extends ChangeNotifier {
         position: _positionOfCurrentPage(),
         finished: finished,
         deviceId: deviceId,
+        checkpoint: checkpoint,
       );
     } on Object {
       // Losing one autosave is not worth interrupting reading for; the next
@@ -585,14 +586,14 @@ class ReaderController extends ChangeNotifier {
 
   /// Leaves the reader, keeping the work so the shell can show where it was.
   void close() {
-    saveProgress();
+    saveProgress(checkpoint: true);
     _open = false;
     notifyListeners();
   }
 
   @override
   void dispose() {
-    saveProgress();
+    saveProgress(checkpoint: true);
     unawaited(_source?.dispose());
     super.dispose();
   }

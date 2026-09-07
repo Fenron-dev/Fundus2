@@ -53,8 +53,12 @@ final class NativeFullscreenMode implements FullscreenMode {
         SystemUiMode.edgeToEdge,
         overlays: SystemUiOverlay.values,
       );
-      // Whatever it was turned to, the phone decides again afterwards.
-      await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      // Video fullscreen deliberately locks to landscape. Leaving it must
+      // return to the information layout instead of leaving the phone in an
+      // arbitrary orientation chosen by the last sensor event.
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+      ]);
       return;
     }
     await defaultExitNativeFullscreen();

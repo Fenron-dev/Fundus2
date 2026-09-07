@@ -262,14 +262,14 @@ class _RailHeading extends StatelessWidget {
     );
     return Row(
       children: [
-        Flexible(
+        Expanded(
           child: onMore == null
               ? label
               : InkWell(
                   onTap: onMore,
                   borderRadius: FundusRadius.smAll,
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisSize: MainAxisSize.max,
                     children: [
                       Flexible(child: label),
                       const SizedBox(width: FundusSpace.x1),
@@ -291,8 +291,7 @@ class _RailHeading extends StatelessWidget {
             ),
           ),
         ],
-        const Spacer(),
-        ?action,
+        if (action != null) ...[const SizedBox(width: FundusSpace.x2), action!],
       ],
     );
   }

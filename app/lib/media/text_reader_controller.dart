@@ -671,7 +671,7 @@ class TextReaderController extends ChangeNotifier {
     );
   }
 
-  void saveProgress({bool finished = false}) {
+  void saveProgress({bool finished = false, bool checkpoint = false}) {
     final library = _library;
     final work = _work;
     final volume = currentVolume;
@@ -684,6 +684,7 @@ class TextReaderController extends ChangeNotifier {
         position: _position(),
         finished: finished,
         deviceId: deviceId,
+        checkpoint: checkpoint,
       );
     } on Object {
       // Losing one autosave is not worth interrupting reading for.
@@ -691,7 +692,7 @@ class TextReaderController extends ChangeNotifier {
   }
 
   void close() {
-    saveProgress();
+    saveProgress(checkpoint: true);
     _saveTimer?.cancel();
     _open = false;
     notifyListeners();
@@ -699,7 +700,7 @@ class TextReaderController extends ChangeNotifier {
 
   @override
   void dispose() {
-    saveProgress();
+    saveProgress(checkpoint: true);
     _saveTimer?.cancel();
     super.dispose();
   }

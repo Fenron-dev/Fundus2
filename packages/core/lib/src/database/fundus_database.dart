@@ -1333,6 +1333,22 @@ final class FundusDatabase {
     );
     if (rows.isEmpty) return null;
     final row = rows.first;
+    final latestRevision = _database.select(
+      'SELECT snapshot_json FROM progress_revisions '
+      'WHERE work_id = ? AND user_id = ? AND revision = ? LIMIT 1',
+      [workId, 'default', row['revision']],
+    );
+    var checkpoint = false;
+    if (latestRevision.isNotEmpty) {
+      try {
+        checkpoint =
+            (jsonDecode(latestRevision.first['snapshot_json'] as String)
+                as Map)['checkpoint'] ==
+            true;
+      } on Object {
+        checkpoint = false;
+      }
+    }
     return LibraryPlaybackProgress(
       workId: workId,
       fileId: row['file_id'] as String?,
@@ -1353,6 +1369,7 @@ final class FundusDatabase {
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
       deviceId: row['device_id'] as String,
       operationId: row['operation_id'] as String,
+      checkpoint: checkpoint,
     );
   }
 
@@ -1541,6 +1558,23 @@ final class FundusDatabase {
     return [for (final row in rows) _progressRevisionFromRow(workId, row)];
   }
 
+  /// Intentional stop points, newest first, limited per device.
+  List<LibraryPlaybackRevision> listCheckpointRevisions(
+    String workId, {
+    int perDevice = 3,
+  }) {
+    final counts = <String, int>{};
+    final result = <LibraryPlaybackRevision>[];
+    for (final revision in listProgressRevisions(workId)) {
+      if (!revision.checkpoint) continue;
+      final count = counts[revision.deviceId] ?? 0;
+      if (count >= perDevice) continue;
+      counts[revision.deviceId] = count + 1;
+      result.add(revision);
+    }
+    return result;
+  }
+
   LibraryPlaybackProgress restoreProgressRevision({
     required String workId,
     required int revision,
@@ -1579,6 +1613,7 @@ final class FundusDatabase {
           ? snapshot['device_id'] as String
           : 'unknown',
       operationId: row['operation_id'] as String,
+      checkpoint: snapshot['checkpoint'] == true,
     );
   }
 
@@ -1590,6 +1625,7 @@ final class FundusDatabase {
     required bool finished,
     required String deviceId,
     required String operationId,
+    bool checkpoint = false,
   }) => saveMediaProgress(
     workId: workId,
     fileId: fileId,
@@ -1602,6 +1638,7 @@ final class FundusDatabase {
     finished: finished,
     deviceId: deviceId,
     operationId: operationId,
+    checkpoint: checkpoint,
   );
 
   LibraryPlaybackProgress saveMediaProgress({
@@ -1612,6 +1649,7 @@ final class FundusDatabase {
     required String deviceId,
     required String operationId,
     DateTime? updatedAt,
+    bool checkpoint = false,
   }) {
     return transaction(() {
       final processed = _database.select(
@@ -1661,6 +1699,7 @@ final class FundusDatabase {
         'position': mediaPosition.toJson(),
         'finished': finished,
         'device_id': deviceId,
+        'checkpoint': checkpoint,
       });
       _database.execute(
         '''

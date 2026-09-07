@@ -2010,6 +2010,7 @@ class _SyncState extends State<_Sync> {
     final sync = scope.sync;
     final tokens = context.fundus;
     final theme = Theme.of(context);
+    final handset = FundusStageSize.of(context) == FundusStageSize.handset;
 
     return SettingsPage(
       title: 'Geräte & Abgleich',
@@ -2050,7 +2051,10 @@ class _SyncState extends State<_Sync> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Gerät koppeln', style: theme.textTheme.titleMedium),
+              Text(
+                handset ? 'Server verbinden' : 'Gerät koppeln',
+                style: theme.textTheme.titleMedium,
+              ),
               const SizedBox(height: FundusSpace.x2),
               Text(
                 'Lass dir auf dem anderen Gerät den Kopplungscode zeigen — '
@@ -2063,10 +2067,31 @@ class _SyncState extends State<_Sync> {
               ),
               if (scope.scanner.isAvailable) ...[
                 const SizedBox(height: FundusSpace.x4),
-                FilledButton.tonalIcon(
-                  onPressed: sync.isBusy ? null : () => _scan(scope.scanner),
-                  icon: Icon(FundusIcons.scan, size: FundusIcons.sizeSm),
-                  label: const Text('QR-Code scannen'),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: tokens.surface,
+                    borderRadius: FundusRadius.mdAll,
+                    border: Border.all(color: tokens.divider),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: FundusSpace.x3,
+                    ),
+                    leading: Icon(
+                      FundusIcons.qrCode,
+                      color: tokens.accent,
+                      size: FundusIcons.sizeLg,
+                    ),
+                    title: const Text('QR-Code vom Server scannen'),
+                    subtitle: const Text('Danach nur noch die PIN eingeben.'),
+                    trailing: FilledButton.tonalIcon(
+                      onPressed: sync.isBusy
+                          ? null
+                          : () => _scan(scope.scanner),
+                      icon: Icon(FundusIcons.scan, size: FundusIcons.sizeSm),
+                      label: const Text('Scannen'),
+                    ),
+                  ),
                 ),
               ],
               const SizedBox(height: FundusSpace.x4),
@@ -2196,7 +2221,11 @@ class _SyncState extends State<_Sync> {
               Text(
                 'Das Zugangstoken liegt bei diesem Gerät, nicht in der '
                 'Bibliothek — ein Bibliotheksordner wird geteilt, ein Schlüssel '
-                'nicht. Eine Neuinstallation kostet daher die Kopplung.',
+                'nicht. Eine Neuinstallation kostet daher die Kopplung. '
+                'Offline-Kopien und noch nicht synchronisierte lokale '
+                'Fortschritte liegen im App-Speicher und können bei einer '
+                'Deinstallation verloren gehen; vor einem Update deshalb '
+                'einmal verbinden und „Jetzt abgleichen“ ausführen.',
                 style: theme.textTheme.labelMedium?.copyWith(
                   color: tokens.textFaint,
                 ),

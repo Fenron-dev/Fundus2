@@ -431,6 +431,7 @@ final class FundusSync {
         finished: mine.finished,
         deviceId: deviceId,
         updatedAt: mine.updatedAt,
+        checkpoint: mine.checkpoint,
       );
 
   Future<SyncReport> _syncMarks(String workId, SyncReport report) async {

@@ -491,7 +491,7 @@ class PlaybackController extends ChangeNotifier {
   /// dem neuen Namen zu speichern wäre schlimmer als ihn zu verlieren.
   Future<void> _stopWhatIsPlaying() async {
     if (_work == null && _sources.isEmpty) return;
-    saveProgress();
+    saveProgress(checkpoint: true);
     _saveTimer?.cancel();
     _clearBetweenEpisodes();
     await _engineOrNull?.stop();
@@ -644,7 +644,7 @@ class PlaybackController extends ChangeNotifier {
       }),
       _engine.playingStream.listen((value) {
         _playing = value;
-        if (!value) saveProgress();
+        if (!value) saveProgress(checkpoint: true);
         notifyListeners();
       }),
       _engine.completedStream.listen((value) {
@@ -1051,7 +1051,7 @@ class PlaybackController extends ChangeNotifier {
   ///
   /// Metadata is never touched here: a position and a title are two different
   /// kinds of truth and must not share a transaction.
-  void saveProgress({bool finished = false}) {
+  void saveProgress({bool finished = false, bool checkpoint = false}) {
     final library = _library;
     final work = _work;
     final source = currentSource;
@@ -1066,6 +1066,7 @@ class PlaybackController extends ChangeNotifier {
         duration: _duration,
         finished: finished,
         deviceId: deviceId,
+        checkpoint: checkpoint,
       );
       // Und bei einer Folge zusätzlich dort, wo sie hingehört: an der Datei.
       // Der Stand des Werks zeigt immer nur auf eine — wer zwischen zwei
@@ -1120,7 +1121,7 @@ class PlaybackController extends ChangeNotifier {
 
   @override
   void dispose() {
-    saveProgress();
+    saveProgress(checkpoint: true);
     _saveTimer?.cancel();
     _sleepTimer?.cancel();
     _sleepTick?.cancel();

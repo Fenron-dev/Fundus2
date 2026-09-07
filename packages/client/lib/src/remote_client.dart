@@ -254,6 +254,32 @@ final class FundusRemoteClient {
     return RemoteProgress.fromJson(Map<String, Object?>.from(progress));
   }
 
+  /// All remembered device positions for the work, newest first.
+  ///
+  /// The single `/progress` resource is intentionally still the compatibility
+  /// value used for conflict resolution. The device view needs the journal so
+  /// a Mac, phone and tablet can be shown side by side instead of one silently
+  /// replacing the other.
+  Future<List<RemoteProgress>> progressRevisions(
+    String libraryId,
+    String workId,
+  ) async {
+    final decoded = await _get(
+      '/v1/libraries/$libraryId/progress/$workId/revisions',
+    );
+    final revisions = decoded['revisions'];
+    if (revisions is! List) return const [];
+    final result = <RemoteProgress>[];
+    for (final value in revisions) {
+      if (value is! Map) continue;
+      final progress = RemoteProgress.fromJson(
+        Map<String, Object?>.from(value),
+      );
+      if (progress.checkpoint) result.add(progress);
+    }
+    return result;
+  }
+
   Future<RemoteProgress?> saveProgress({
     required String libraryId,
     required String workId,
@@ -263,6 +289,7 @@ final class FundusRemoteClient {
     required String deviceId,
     String? operationId,
     DateTime? updatedAt,
+    bool checkpoint = false,
   }) async {
     final decoded = await _put(
       '/v1/libraries/$libraryId/progress/$workId',
@@ -279,6 +306,7 @@ final class FundusRemoteClient {
         // Stand zweimal gesendet soll einmal zählen, nicht zweimal in der
         // Historie stehen.
         'operation_id': operationId ?? FundusId.generate(),
+        'checkpoint': checkpoint,
       },
     );
     return RemoteProgress.fromJson(decoded);
@@ -720,6 +748,7 @@ final class RemoteProgress {
     required this.updatedAt,
     this.fileId,
     this.deviceId = '',
+    this.checkpoint = false,
   });
 
   factory RemoteProgress.fromJson(Map<String, Object?> value) {
@@ -735,9 +764,12 @@ final class RemoteProgress {
           ? (value['revision'] as num).round()
           : 0,
       updatedAt:
-          DateTime.tryParse('${value['updated_at'] ?? ''}')?.toUtc() ??
+          DateTime.tryParse(
+            '${value['updated_at'] ?? value['created_at'] ?? ''}',
+          )?.toUtc() ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       deviceId: '${value['device_id'] ?? ''}',
+      checkpoint: value['checkpoint'] == true,
     );
   }
 
@@ -748,6 +780,7 @@ final class RemoteProgress {
   final int revision;
   final DateTime updatedAt;
   final String deviceId;
+  final bool checkpoint;
 }
 
 /// The marks and notes the other side keeps for a work.

@@ -606,10 +606,33 @@ class _Actions extends StatelessWidget {
           children: [
             _ListButton(work: work),
             _OfflineButton(work: work),
+            _MoreDetailsButton(work: work),
             _MetadataButtons(work: work),
           ],
         ),
       ],
+    );
+  }
+}
+
+/// On a phone the desktop metadata column lives in the properties tab. Keep
+/// that tab one obvious tap away so genres, tags, external sources and the
+/// per-file seen controls are not mistaken for missing functionality.
+class _MoreDetailsButton extends StatelessWidget {
+  const _MoreDetailsButton({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) {
+    final tabs =
+        work.mediaType?.tabs ?? const [WorkTab.files, WorkTab.properties];
+    final index = tabs.indexOf(WorkTab.properties);
+    if (index < 0) return const SizedBox.shrink();
+    return OutlinedButton.icon(
+      onPressed: () => DefaultTabController.of(context).animateTo(index),
+      icon: Icon(FundusIcons.note, size: FundusIcons.sizeSm),
+      label: const Text('Details & Status'),
     );
   }
 }
@@ -1808,11 +1831,35 @@ class _DevicesState extends State<_Devices> {
         finished: progress.finished,
         deviceId: scope.settings.deviceKey,
         updatedAt: progress.updatedAt,
+        checkpoint: true,
       );
       scope.library.refreshWork(widget.work.id);
     } on Object {
       // Ein Stand, der sich nicht schreiben lässt, ist kein Grund, die Seite
       // zu verlieren; der Knopf bleibt stehen.
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _takeRevision(LibraryPlaybackRevision revision) async {
+    final scope = FundusScope.of(context);
+    final vault = scope.library.library;
+    if (vault == null || vault.isReadOnly || _busy || revision.fileId == null) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      vault.saveMediaProgress(
+        workId: widget.work.id,
+        fileId: revision.fileId!,
+        position: revision.position,
+        finished: revision.finished,
+        deviceId: scope.settings.deviceKey,
+        updatedAt: revision.createdAt,
+        checkpoint: true,
+      );
+      scope.library.refreshWork(widget.work.id);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1824,6 +1871,16 @@ class _DevicesState extends State<_Devices> {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     final mine = scope.library.library?.loadProgress(widget.work.id);
+    final latestByDevice = <String, LibraryPlaybackRevision>{};
+    for (final revision
+        in scope.library.library?.listCheckpointRevisions(widget.work.id) ??
+            const <LibraryPlaybackRevision>[]) {
+      final previous = latestByDevice[revision.deviceId];
+      if (previous == null || revision.createdAt.isAfter(previous.createdAt)) {
+        latestByDevice[revision.deviceId] = revision;
+      }
+    }
+    final localDevice = latestByDevice[scope.settings.deviceKey];
     final order = [
       for (final track
           in scope.library.library?.playbackTracks(widget.work.id) ??
@@ -1872,13 +1929,45 @@ class _DevicesState extends State<_Devices> {
             _DeviceRow(
               name: '${scope.settings.deviceName} · dieses Gerät',
               icon: FundusIcons.devices,
-              position: mine == null
+              position: localDevice != null
+                  ? _positionLabel(localDevice.position, localDevice.finished)
+                  : mine == null
                   ? null
                   : _positionLabel(mine.position, mine.finished),
-              fraction: mine == null ? null : _fraction(mine.position),
-              when: mine?.updatedAt,
+              fraction: localDevice != null
+                  ? _fraction(localDevice.position)
+                  : mine == null
+                  ? null
+                  : _fraction(mine.position),
+              when: localDevice?.createdAt ?? mine?.updatedAt,
               action: null,
             ),
+            for (final entry in latestByDevice.entries)
+              if (entry.key != scope.settings.deviceKey &&
+                  !answers.any(
+                    (answer) => answer.progress.deviceId == entry.key,
+                  ))
+                _DeviceRow(
+                  name: entry.key,
+                  icon: FundusIcons.devices,
+                  position: _positionLabel(
+                    entry.value.position,
+                    entry.value.finished,
+                  ),
+                  fraction: _fraction(entry.value.position),
+                  when: entry.value.createdAt,
+                  ahead:
+                      mine == null ||
+                      comparePositions(
+                            entry.value.position,
+                            mine.position,
+                            fileOrder: order,
+                          ) >
+                          0,
+                  action: _busy
+                      ? null
+                      : () => unawaited(_takeRevision(entry.value)),
+                ),
             for (final answer in answers)
               _DeviceRow(
                 name: answer.peerName,

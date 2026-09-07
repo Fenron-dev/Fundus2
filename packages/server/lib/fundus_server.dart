@@ -1404,6 +1404,7 @@ final class FundusServerHandler {
     final deviceId = decoded['device_id'] is String
         ? decoded['device_id'] as String
         : 'remote-peer';
+    final checkpoint = decoded['checkpoint'] == true;
     // Wann der Stand entstanden ist. Eine Zahl, die vor dem Jahr 2000 oder in
     // der Zukunft liegt, ist eine falsch gestellte Uhr und wird verworfen —
     // der Katalog stempelt dann selbst.
@@ -1443,6 +1444,7 @@ final class FundusServerHandler {
         deviceId: deviceId,
         operationId: operationId,
         updatedAt: updatedAt,
+        checkpoint: checkpoint,
       );
     } else {
       final total = decoded['duration_seconds'];
@@ -1753,6 +1755,7 @@ final class FundusServerHandler {
     'created_at': revision.createdAt.toUtc().toIso8601String(),
     'device_id': revision.deviceId,
     'device_name': _deviceName(revision.deviceId),
+    'checkpoint': revision.checkpoint,
   };
 
   String _deviceName(String deviceId) {

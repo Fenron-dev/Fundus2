@@ -432,6 +432,8 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
   final _scroll = ScrollController();
   final _keys = <int, GlobalKey>{};
   int _jumpedTo = -1;
+  int _placingTarget = -1;
+  int _placementAttempt = 0;
 
   /// Ob der Streifen schon dort steht, wo zuletzt gelesen wurde.
   ///
@@ -491,6 +493,83 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
     }
   }
 
+  /// Materialises and reaches a saved page in the lazy strip.
+  ///
+  /// `ensureVisible` cannot help until the target child exists. On a long
+  /// webtoon the saved page is normally outside the first cache window, so
+  /// the old one-shot callback silently did nothing: the footer said 5/25
+  /// while the viewport still showed page 1. First move to an estimated
+  /// offset (which causes SliverList to build the target), then anchor to the
+  /// measured child on a later frame.
+  void _placeTarget(int target) {
+    if (!mounted) return;
+    final reader = FundusScope.of(context).reader;
+    if (target != reader.pageIndex ||
+        target < 0 ||
+        target >= reader.pageCount) {
+      return;
+    }
+    final key = _keys[target];
+    final box = key?.currentContext;
+    if (box != null) {
+      _jumpedTo = target;
+      _placingTarget = -1;
+      _placed = true;
+      Scrollable.ensureVisible(box, alignment: 0, duration: Duration.zero);
+      return;
+    }
+
+    if (_scroll.hasClients && reader.pageCount > 1) {
+      final max = _scroll.position.maxScrollExtent;
+      if (max > 0) {
+        final estimated = (max * target / (reader.pageCount - 1)).clamp(
+          0.0,
+          max,
+        );
+        if ((_scroll.offset - estimated).abs() > 1) {
+          _scroll.jumpTo(estimated);
+        }
+      }
+    }
+    if (_placementAttempt++ < 24) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _placeTarget(target));
+    } else {
+      // Do not let the first visible item overwrite a valid saved position.
+      _jumpedTo = target;
+      _placingTarget = -1;
+      _placed = true;
+    }
+  }
+
+  /// Keeps the reading anchor stable when an image replaces its placeholder.
+  ///
+  /// The measured aspect can make a page above the viewport taller or shorter.
+  /// Without compensating for that delta, the next edge tap appears to turn
+  /// two pages: the tap is correct, but the strip moved underneath it while
+  /// the image decoded.
+  void _preserveAnchor(int index, double nextAspect) {
+    if (!mounted || !_scroll.hasClients) return;
+    final reader = FundusScope.of(context).reader;
+    final previousAspect = reader.aspectOf(index);
+    if (previousAspect == null || previousAspect == nextAspect) return;
+    if (reader.profile.layout != PublicationReaderLayout.continuousVertical &&
+        reader.profile.layout != PublicationReaderLayout.webtoon) {
+      return;
+    }
+    if (index >= reader.pageIndex) return;
+    final viewportWidth = context.size?.width ?? 0;
+    if (viewportWidth <= 0) return;
+    final delta = viewportWidth * (1 / nextAspect - 1 / previousAspect);
+    if (!delta.isFinite || delta == 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final position = _scroll.position;
+      _scroll.jumpTo(
+        (position.pixels + delta).clamp(0.0, position.maxScrollExtent),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final reader = FundusScope.of(context).reader;
@@ -499,19 +578,13 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
 
     // A jump from outside — bookmark, overview, chapter — has to move the
     // list; a scroll of the user's own must not be answered with one.
-    if (_jumpedTo != reader.pageIndex) {
-      final target = reader.pageIndex;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _jumpedTo == target) return;
-        final key = _keys[target];
-        final box = key?.currentContext;
-        if (box == null) return;
-        _jumpedTo = target;
-        _placed = true;
-        Scrollable.ensureVisible(box, alignment: 0);
-      });
-    } else {
-      _placed = true;
+    if (_jumpedTo != reader.pageIndex && _placingTarget != reader.pageIndex) {
+      _placingTarget = reader.pageIndex;
+      _placementAttempt = 0;
+      _placed = false;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _placeTarget(reader.pageIndex),
+      );
     }
 
     // Hineinzoomen gehört zum Lesen: eine Fußnote in einem Scan, ein Schild
@@ -538,7 +611,13 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
             ),
             // Eine Seite, die die Spalte nicht ausfüllt, gehört in die Mitte —
             // links angeschlagen liest sich ein Band schief.
-            child: Center(child: _Page(index: index, continuous: true)),
+            child: Center(
+              child: _Page(
+                index: index,
+                continuous: true,
+                onMeasured: (value) => _preserveAnchor(index, value),
+              ),
+            ),
           );
         },
       ),
@@ -637,10 +716,11 @@ class _ZoomWindowState extends State<_ZoomWindow> {
 
 /// One page, scaled the way the reader was told to scale it.
 class _Page extends StatelessWidget {
-  const _Page({required this.index, this.continuous = false});
+  const _Page({required this.index, this.continuous = false, this.onMeasured});
 
   final int index;
   final bool continuous;
+  final ValueChanged<double>? onMeasured;
 
   @override
   Widget build(BuildContext context) {
@@ -692,7 +772,10 @@ class _Page extends StatelessWidget {
         PublicationPageScale.fitScreen => _MeasuredPage(
           file: file,
           aspect: reader.aspectOf(index),
-          onMeasured: (value) => reader.rememberAspect(index, value),
+          onMeasured: (value) {
+            onMeasured?.call(value);
+            reader.rememberAspect(index, value);
+          },
         ),
         PublicationPageScale.fitHeight => SizedBox(
           height: MediaQuery.sizeOf(context).height,

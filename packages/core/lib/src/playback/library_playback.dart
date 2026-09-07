@@ -66,6 +66,7 @@ final class LibraryPlaybackProgress {
     required this.updatedAt,
     this.deviceId = 'unknown',
     this.operationId,
+    this.checkpoint = false,
   });
 
   final String workId;
@@ -76,6 +77,7 @@ final class LibraryPlaybackProgress {
   final DateTime updatedAt;
   final String deviceId;
   final String? operationId;
+  final bool checkpoint;
 }
 
 /// A position from somewhere else that was not taken.
@@ -126,6 +128,7 @@ final class LibraryPlaybackRevision {
     required this.createdAt,
     required this.deviceId,
     required this.operationId,
+    this.checkpoint = false,
   });
 
   final String workId;
@@ -136,4 +139,7 @@ final class LibraryPlaybackRevision {
   final DateTime createdAt;
   final String deviceId;
   final String operationId;
+
+  /// True when somebody stopped or closed playback; false for an autosave.
+  final bool checkpoint;
 }

@@ -1040,6 +1040,11 @@ final class FundusLibrary {
   List<LibraryPlaybackRevision> listProgressRevisions(String workId) =>
       _database.listProgressRevisions(workId);
 
+  List<LibraryPlaybackRevision> listCheckpointRevisions(
+    String workId, {
+    int perDevice = 3,
+  }) => _database.listCheckpointRevisions(workId, perDevice: perDevice);
+
   /// The position from elsewhere that is waiting to be answered, if any.
   LibraryProgressChoice? progressChoice(String workId, {String? userId}) =>
       _database.progressChoice(workId, userId: userId ?? 'default');
@@ -1162,6 +1167,7 @@ final class FundusLibrary {
     bool finished = false,
     String deviceId = 'desktop-local',
     String? operationId,
+    bool checkpoint = false,
   }) => _database.saveProgress(
     workId: workId,
     fileId: fileId,
@@ -1170,6 +1176,7 @@ final class FundusLibrary {
     finished: finished,
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),
+    checkpoint: checkpoint,
   );
 
   LibraryPlaybackProgress saveMediaProgress({
@@ -1180,6 +1187,7 @@ final class FundusLibrary {
     String deviceId = 'desktop-local',
     String? operationId,
     DateTime? updatedAt,
+    bool checkpoint = false,
   }) => _database.saveMediaProgress(
     workId: workId,
     fileId: fileId,
@@ -1188,6 +1196,7 @@ final class FundusLibrary {
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),
     updatedAt: updatedAt,
+    checkpoint: checkpoint,
   );
 
   /// Wer an einem Werk beteiligt ist, mit Bild, wo eines da ist.

@@ -224,19 +224,60 @@ class SyncController extends ChangeNotifier {
     final vault = library.library;
     if (vault == null || peers.isEmpty) return const [];
     final asked = await Future.wait([
-      for (final peer in peers)
-        _askOne(peer, vault, workId).then(
-          (answer) => answer == null
-              ? null
-              : (
-                  peerName: peer.name,
-                  serverId: peer.serverId,
-                  progress: answer.progress,
-                ),
-        ),
+      for (final peer in peers) _askMany(peer, vault, workId),
     ]);
-    return [for (final answer in asked) ?answer];
+    return [
+      for (var peerIndex = 0; peerIndex < asked.length; peerIndex++)
+        for (final progress in asked[peerIndex])
+          (
+            peerName: peerNameForProgress(peers[peerIndex], progress),
+            serverId: peers[peerIndex].serverId,
+            progress: progress,
+          ),
+    ];
   }
+
+  /// Reads the per-device journal exposed by a paired server. A server may
+  /// have several clients (phone, tablet, desktop); asking only for its
+  /// current row made the last writer hide all the others.
+  Future<List<RemoteProgress>> _askMany(
+    PeerConnection peer,
+    FundusLibrary vault,
+    String workId,
+  ) async {
+    final client = _connect(peer);
+    try {
+      final libraryId = await _libraryIdFor(
+        peer,
+        client,
+        vault,
+      ).timeout(askTimeout);
+      if (libraryId == null) return const [];
+      final revisions = await client
+          .progressRevisions(libraryId, workId)
+          .timeout(askTimeout);
+      // One row per device: revisions are deliberately a history, while the
+      // device screen answers the question „where does each stand now?".
+      final latest = <String, RemoteProgress>{};
+      for (final revision in revisions) {
+        final previous = latest[revision.deviceId];
+        if (previous == null ||
+            revision.updatedAt.isAfter(previous.updatedAt)) {
+          latest[revision.deviceId] = revision;
+        }
+      }
+      return latest.values.toList(growable: false);
+    } on Object {
+      return const [];
+    } finally {
+      client.close();
+    }
+  }
+
+  String peerNameForProgress(PeerConnection peer, RemoteProgress progress) =>
+      progress.deviceId.isEmpty || progress.deviceId == peer.serverId
+      ? peer.name
+      : '${peer.name} · ${progress.deviceId}';
 
   Future<({RemoteProgress progress, String peerName})?> _askOne(
     PeerConnection peer,
