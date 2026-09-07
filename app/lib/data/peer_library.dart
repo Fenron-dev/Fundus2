@@ -283,14 +283,10 @@ class PeerLibraries extends ChangeNotifier {
       } on FundusRemoteException catch (error) {
         _failure = error.message;
         entry.refused = error.statusCode == 401 || error.statusCode == 403;
-        if (entry.connection != FundusConnectionState.connected) {
-          library.library?.setSourceReachable(entry.sourceId, reachable: false);
-        }
+        library.library?.setSourceReachable(entry.sourceId, reachable: false);
       } on Object catch (error) {
         _failure = 'Der Katalog von „${entry.peer.name}" kam nicht: $error';
-        if (entry.connection != FundusConnectionState.connected) {
-          library.library?.setSourceReachable(entry.sourceId, reachable: false);
-        }
+        library.library?.setSourceReachable(entry.sourceId, reachable: false);
       }
     }
     library.refresh();
@@ -395,7 +391,7 @@ class PeerLibraries extends ChangeNotifier {
           entry.lastContactAt = DateTime.now();
           entry.refused = false;
           library.library?.setSourceReachable(entry.sourceId, reachable: true);
-        } else if (entry.connection != FundusConnectionState.connected) {
+        } else {
           library.library?.setSourceReachable(entry.sourceId, reachable: false);
         }
       }
