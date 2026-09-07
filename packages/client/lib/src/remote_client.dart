@@ -748,6 +748,7 @@ final class RemoteProgress {
     required this.updatedAt,
     this.fileId,
     this.deviceId = '',
+    this.deviceName = '',
     this.checkpoint = false,
   });
 
@@ -769,6 +770,7 @@ final class RemoteProgress {
           )?.toUtc() ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       deviceId: '${value['device_id'] ?? ''}',
+      deviceName: '${value['device_name'] ?? ''}',
       checkpoint: value['checkpoint'] == true,
     );
   }
@@ -780,6 +782,7 @@ final class RemoteProgress {
   final int revision;
   final DateTime updatedAt;
   final String deviceId;
+  final String deviceName;
   final bool checkpoint;
 }
 

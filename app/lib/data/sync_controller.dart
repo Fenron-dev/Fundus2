@@ -275,7 +275,9 @@ class SyncController extends ChangeNotifier {
   }
 
   String peerNameForProgress(PeerConnection peer, RemoteProgress progress) =>
-      progress.deviceId.isEmpty || progress.deviceId == peer.serverId
+      progress.deviceName.trim().isNotEmpty
+      ? progress.deviceName
+      : progress.deviceId.isEmpty || progress.deviceId == peer.serverId
       ? peer.name
       : '${peer.name} · ${progress.deviceId}';
 
