@@ -225,7 +225,7 @@ class SyncController extends ChangeNotifier {
     final vault = library.library;
     if (vault == null || peers.isEmpty) return const [];
     final asked = await Future.wait([
-      for (final peer in peers) _askMany(peer, vault, workId),
+      for (final peer in peers) _progressForPeer(peer, vault, workId),
     ]);
     return [
       for (var peerIndex = 0; peerIndex < asked.length; peerIndex++)
@@ -236,6 +236,37 @@ class SyncController extends ChangeNotifier {
             progress: progress,
           ),
     ];
+  }
+
+  /// A device tab is rebuilt when the surrounding scope receives a progress
+  /// tick. Rebuilding must not start another network round for the same work;
+  /// otherwise opening the tab can create a burst of identical 20-second
+  /// requests while the connection indicator still looks green.
+  final _progressInFlight = <String, Future<List<RemoteProgress>>>{};
+  final _progressCache =
+      <String, ({DateTime at, List<RemoteProgress> value})>{};
+
+  Future<List<RemoteProgress>> _progressForPeer(
+    PeerConnection peer,
+    FundusLibrary vault,
+    String workId,
+  ) {
+    final key = '${peer.serverId}:$workId';
+    final cached = _progressCache[key];
+    if (cached != null &&
+        DateTime.now().difference(cached.at) < const Duration(seconds: 3)) {
+      return Future.value(cached.value);
+    }
+    final running = _progressInFlight[key];
+    if (running != null) return running;
+    final request = _askMany(peer, vault, workId);
+    _progressInFlight[key] = request;
+    return request
+        .then((value) {
+          _progressCache[key] = (at: DateTime.now(), value: value);
+          return value;
+        })
+        .whenComplete(() => _progressInFlight.remove(key));
   }
 
   /// Reads the per-device journal exposed by a paired server. A server may
@@ -363,7 +394,10 @@ class SyncController extends ChangeNotifier {
   ///
   /// Gibt die Werke zurück, die sich geändert haben — die Oberfläche frischt
   /// genau diese Zeilen auf, statt die ganze Bibliothek neu zu lesen.
-  Future<Set<String>> pullRecent() async {
+  Future<Set<String>> pullRecent() =>
+      _pullInFlight ??= _pullRecent().whenComplete(() => _pullInFlight = null);
+
+  Future<Set<String>> _pullRecent() async {
     final vault = library.library;
     if (vault == null || peers.isEmpty || _busy) return const {};
     final touched = <String>{};
@@ -509,6 +543,7 @@ class SyncController extends ChangeNotifier {
   /// Sitzung: beim Start einmal alles zu prüfen ist billiger, als sich zu
   /// merken, was man verpasst haben könnte.
   final Map<String, DateTime> _lastPull = {};
+  Future<Set<String>>? _pullInFlight;
 
   Future<SyncReport?> syncAll() async {
     SyncReport? last;

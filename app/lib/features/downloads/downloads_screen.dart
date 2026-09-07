@@ -49,8 +49,21 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final offline = scope.library.works
         .where((work) => work.origin == FundusOrigin.offline)
         .toList(growable: false);
+    final partial = scope.library.works
+        .where(
+          (work) =>
+              work.origin != FundusOrigin.offline &&
+              scope.downloads.hasOfflineFiles(work.id),
+        )
+        .toList(growable: false);
+    final history = scope.downloads.jobs
+        .where((job) => job.state == DownloadState.done)
+        .toList(growable: false);
 
-    if (running.isEmpty && offline.isEmpty) {
+    if (running.isEmpty &&
+        offline.isEmpty &&
+        partial.isEmpty &&
+        history.isEmpty) {
       return FundusEmptyState(
         title: 'Nichts heruntergeladen',
         reason: scope.peerLibraries.hasConnection
@@ -118,6 +131,52 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                     }),
                     onOpen: () => scope.navigation.go(WorkRoute(work.id)),
                   ),
+              if (partial.isNotEmpty) ...[
+                const SizedBox(height: FundusSpace.x8),
+                Text(
+                  'TEILWEISE AUF DIESEM GERÄT',
+                  style: theme.textTheme.labelSmall,
+                ),
+                const SizedBox(height: FundusSpace.x3),
+                for (final work in partial)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: FundusOriginMark(work.origin),
+                    title: Text(
+                      work.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '${scope.downloads.offlineFileCount(work.id)} Datei(en) gesichert · Download fortsetzen',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                    onTap: () => scope.navigation.go(WorkRoute(work.id)),
+                  ),
+              ],
+              if (history.isNotEmpty) ...[
+                const SizedBox(height: FundusSpace.x8),
+                Text('ABGESCHLOSSEN', style: theme.textTheme.labelSmall),
+                const SizedBox(height: FundusSpace.x3),
+                for (final job in history)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(FundusIcons.check, color: tokens.success),
+                    title: Text(
+                      job.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '${job.total} Datei(en) vollständig gesichert',
+                    ),
+                    onTap: () => scope.navigation.go(WorkRoute(job.workId)),
+                  ),
+              ],
             ],
           ),
         ),

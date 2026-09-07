@@ -1609,6 +1609,19 @@ class _ReaderState extends State<_Reader> {
                       ),
                   ],
                 ),
+                _Choices(
+                  label: 'Seitliches Tippen',
+                  children: [
+                    for (final navigation in PublicationTapNavigation.values)
+                      ChoiceChip(
+                        selected: pages.tapNavigation == navigation,
+                        onSelected: (_) => _savePages(
+                          pages.copyWith(tapNavigation: navigation),
+                        ),
+                        label: Text(navigation.label),
+                      ),
+                  ],
+                ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   value: pages.firstPageIsCover,
@@ -2130,7 +2143,12 @@ class _SyncState extends State<_Sync> {
                             _pinController.clear();
                             // Gekoppelt und dann nichts zu sehen wäre die
                             // halbe Antwort: der Katalog kommt gleich mit.
-                            await scope.connectPairedMachines();
+                            // Der Katalog soll sofort sichtbar sein; der
+                            // vollständige Positionsabgleich bleibt eine
+                            // bewusste Aktion und blockiert das Handy nicht.
+                            await scope.connectPairedMachines(
+                              withProgress: false,
+                            );
                           },
                     child: const Text('Koppeln'),
                   ),
@@ -2166,7 +2184,8 @@ class _SyncState extends State<_Sync> {
                       // Werk, das dieses Gerät nicht kennt, hat kein Ziel.
                       onPressed: sync.isBusy || scope.peerLibraries.isBusy
                           ? null
-                          : () => scope.connectPairedMachines(),
+                          : () =>
+                                scope.connectPairedMachines(withProgress: true),
                       icon: Icon(FundusIcons.sync, size: FundusIcons.sizeSm),
                       label: const Text('Jetzt abgleichen'),
                     ),

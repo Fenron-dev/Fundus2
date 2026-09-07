@@ -43,6 +43,22 @@ enum PublicationChapterTransition { confirm, automatic }
 
 enum PublicationProgressPlacement { automatic, bottom, left, right }
 
+/// What a tap in the side zones does.
+///
+/// Keeping this separate from the reading direction matters on phones: some
+/// users want the physical left side to mean "back" even for RTL material,
+/// while others want side taps disabled so a scroll never turns a page.
+enum PublicationTapNavigation {
+  automatic('Leserichtung'),
+  leftPrevious('Links zurück · rechts vor'),
+  leftNext('Links vor · rechts zurück'),
+  disabled('Seitlich nicht blättern');
+
+  const PublicationTapNavigation(this.label);
+
+  final String label;
+}
+
 final class PublicationReaderProfile {
   const PublicationReaderProfile({
     this.layout = PublicationReaderLayout.singlePage,
@@ -56,12 +72,13 @@ final class PublicationReaderProfile {
     this.preloadCount = 2,
     this.chapterTransition = PublicationChapterTransition.confirm,
     this.progressPlacement = PublicationProgressPlacement.automatic,
+    this.tapNavigation = PublicationTapNavigation.automatic,
   }) : assert(pageGap >= 0 && pageGap <= 64),
        assert(readerWidth >= .4 && readerWidth <= 1),
        assert(tapZoneWidth >= .15 && tapZoneWidth <= .45),
        assert(preloadCount >= 0 && preloadCount <= 8);
 
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
 
   final PublicationReaderLayout layout;
   final PublicationReadingDirection readingDirection;
@@ -74,6 +91,7 @@ final class PublicationReaderProfile {
   final int preloadCount;
   final PublicationChapterTransition chapterTransition;
   final PublicationProgressPlacement progressPlacement;
+  final PublicationTapNavigation tapNavigation;
 
   PublicationReaderProfile copyWith({
     PublicationReaderLayout? layout,
@@ -87,6 +105,7 @@ final class PublicationReaderProfile {
     int? preloadCount,
     PublicationChapterTransition? chapterTransition,
     PublicationProgressPlacement? progressPlacement,
+    PublicationTapNavigation? tapNavigation,
   }) => PublicationReaderProfile(
     layout: layout ?? this.layout,
     readingDirection: readingDirection ?? this.readingDirection,
@@ -99,6 +118,7 @@ final class PublicationReaderProfile {
     preloadCount: preloadCount ?? this.preloadCount,
     chapterTransition: chapterTransition ?? this.chapterTransition,
     progressPlacement: progressPlacement ?? this.progressPlacement,
+    tapNavigation: tapNavigation ?? this.tapNavigation,
   );
 
   Map<String, Object?> toJson() => {
@@ -114,6 +134,7 @@ final class PublicationReaderProfile {
     'preload_count': preloadCount,
     'chapter_transition': chapterTransition.name,
     'progress_placement': progressPlacement.name,
+    'tap_navigation': tapNavigation.name,
   };
 
   factory PublicationReaderProfile.fromJson(Map<String, Object?> json) {
@@ -121,6 +142,7 @@ final class PublicationReaderProfile {
     if (version != 1 &&
         version != 2 &&
         version != 3 &&
+        version != 4 &&
         version != schemaVersion) {
       throw const FormatException('Nicht unterstütztes Reader-Profil.');
     }
@@ -134,16 +156,22 @@ final class PublicationReaderProfile {
     final invertTapZones = version == 1
         ? false
         : json['invert_tap_zones'] as bool? ?? false;
-    final chapterTransition = version == 3 || version == schemaVersion
+    final chapterTransition =
+        version == 3 || version == 4 || version == schemaVersion
         ? PublicationChapterTransition.values.byName(
             json['chapter_transition'] as String,
           )
         : PublicationChapterTransition.confirm;
-    final progressPlacement = version == schemaVersion
+    final progressPlacement = version == 4 || version == schemaVersion
         ? PublicationProgressPlacement.values.byName(
             json['progress_placement'] as String,
           )
         : PublicationProgressPlacement.automatic;
+    final tapNavigation = version == schemaVersion
+        ? PublicationTapNavigation.values.byName(
+            json['tap_navigation'] as String,
+          )
+        : PublicationTapNavigation.automatic;
     final preloadCount = json['preload_count'];
     if (pageGap == null ||
         !pageGap.isFinite ||
@@ -178,6 +206,7 @@ final class PublicationReaderProfile {
       preloadCount: preloadCount,
       chapterTransition: chapterTransition,
       progressPlacement: progressPlacement,
+      tapNavigation: tapNavigation,
     );
   }
 }

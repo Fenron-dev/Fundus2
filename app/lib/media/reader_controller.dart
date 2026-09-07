@@ -74,6 +74,7 @@ class ReaderController extends ChangeNotifier {
   List<LibraryBookmark> _bookmarks = const [];
 
   bool _busy = false;
+  bool _turnInProgress = false;
   bool _open = false;
   bool _chrome = true;
   String? _failure;
@@ -435,6 +436,16 @@ class ReaderController extends ChangeNotifier {
 
   /// Forward by one unit — a page, or a whole spread in double-page layout.
   Future<void> nextPage() async {
+    if (_turnInProgress) return;
+    _turnInProgress = true;
+    try {
+      await _nextPage();
+    } finally {
+      _turnInProgress = false;
+    }
+  }
+
+  Future<void> _nextPage() async {
     final groups = pageGroups;
     if (groups.isEmpty) return goToPage(_pageIndex + 1);
     final unit = comicPageGroupIndex(groups, _pageIndex);
@@ -443,6 +454,16 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> previousPage() async {
+    if (_turnInProgress) return;
+    _turnInProgress = true;
+    try {
+      await _previousPage();
+    } finally {
+      _turnInProgress = false;
+    }
+  }
+
+  Future<void> _previousPage() async {
     final groups = pageGroups;
     if (groups.isEmpty) return goToPage(_pageIndex - 1);
     final unit = comicPageGroupIndex(groups, _pageIndex);

@@ -299,10 +299,43 @@ class _ReaderSurface extends StatelessWidget {
 
   List<Widget> _tapZones(ReaderController reader, double width) {
     final edge = width * reader.profile.tapZoneWidth;
-    // On the screen, left is back and right is forward — unless the work is
-    // read right to left, or the zones were deliberately swapped.
-    var leftGoesBack = !reader.isRightToLeft;
-    if (reader.profile.invertTapZones) leftGoesBack = !leftGoesBack;
+    // The choice is explicit so a side tap cannot accidentally turn a page
+    // while somebody is trying to scroll a continuous manga. The old
+    // invertTapZones flag remains the compatibility switch for automatic
+    // mode; explicit choices always win.
+    final navigation = reader.profile.tapNavigation;
+    if (navigation == PublicationTapNavigation.disabled) {
+      return [
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          child: IgnorePointer(child: const SizedBox.expand()),
+        ),
+        Positioned(
+          left: edge,
+          right: edge,
+          top: 0,
+          bottom: 0,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: reader.toggleChrome,
+            onDoubleTap: reader.toggleZoom,
+          ),
+        ),
+      ];
+    }
+    var leftGoesBack = switch (navigation) {
+      PublicationTapNavigation.leftPrevious => true,
+      PublicationTapNavigation.leftNext => false,
+      PublicationTapNavigation.automatic => !reader.isRightToLeft,
+      PublicationTapNavigation.disabled => false,
+    };
+    if (navigation == PublicationTapNavigation.automatic &&
+        reader.profile.invertTapZones) {
+      leftGoesBack = !leftGoesBack;
+    }
     // Ist die Ansicht vergrößert, gehört jede Berührung ihr: wer eine
     // herangeholte Seite mit dem Finger verschiebt, blättert nicht um.
     return [
@@ -920,6 +953,18 @@ Future<void> _showReaderSettings(BuildContext context) {
                         onSelected: (_) => update(
                           profile.copyWith(readingDirection: direction),
                         ),
+                      ),
+                  ],
+                ),
+                _SettingGroup(
+                  label: 'Seitliches Tippen',
+                  children: [
+                    for (final navigation in PublicationTapNavigation.values)
+                      ChoiceChip(
+                        label: Text(navigation.label),
+                        selected: profile.tapNavigation == navigation,
+                        onSelected: (_) =>
+                            update(profile.copyWith(tapNavigation: navigation)),
                       ),
                   ],
                 ),

@@ -676,7 +676,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// list of works that all claim never to have been opened — and the first
   /// thing anyone does after connecting is open the one they were in the
   /// middle of.
-  Future<void> connectPairedMachines({bool withProgress = true}) async {
+  Future<void> connectPairedMachines({bool withProgress = false}) async {
     if (settings.peers.isEmpty) return;
     await peerLibraries.connectAll();
     _wireSources();

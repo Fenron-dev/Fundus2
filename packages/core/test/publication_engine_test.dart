@@ -54,6 +54,7 @@ void main() {
       preloadCount: 4,
       chapterTransition: PublicationChapterTransition.automatic,
       progressPlacement: PublicationProgressPlacement.left,
+      tapNavigation: PublicationTapNavigation.leftNext,
     );
 
     final restored = PublicationReaderProfile.fromJson(profile.toJson());
@@ -68,6 +69,7 @@ void main() {
     expect(restored.preloadCount, 4);
     expect(restored.chapterTransition, PublicationChapterTransition.automatic);
     expect(restored.progressPlacement, PublicationProgressPlacement.left);
+    expect(restored.tapNavigation, PublicationTapNavigation.leftNext);
   });
 
   test('reader profile version one migrates to full reader width', () {
@@ -125,4 +127,28 @@ void main() {
     expect(restored.chapterTransition, PublicationChapterTransition.automatic);
     expect(restored.progressPlacement, PublicationProgressPlacement.automatic);
   });
+
+  test(
+    'reader profile version four keeps its settings and adds safe tap defaults',
+    () {
+      final restored = PublicationReaderProfile.fromJson({
+        'schema_version': 4,
+        'layout': 'singlePage',
+        'reading_direction': 'leftToRight',
+        'page_scale': 'fitScreen',
+        'first_page_is_cover': true,
+        'page_gap': 8,
+        'reader_width': 1,
+        'tap_zone_width': .3,
+        'invert_tap_zones': true,
+        'preload_count': 2,
+        'chapter_transition': 'automatic',
+        'progress_placement': 'left',
+      });
+
+      expect(restored.progressPlacement, PublicationProgressPlacement.left);
+      expect(restored.tapNavigation, PublicationTapNavigation.automatic);
+      expect(restored.invertTapZones, isTrue);
+    },
+  );
 }

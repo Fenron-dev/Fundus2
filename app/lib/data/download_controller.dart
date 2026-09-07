@@ -139,6 +139,26 @@ class DownloadController extends ChangeNotifier {
         files.every((file) => file.availability == 'offline_copy');
   }
 
+  /// Whether at least one file is already present, even while the complete
+  /// work is still being fetched. The downloads screen can therefore explain
+  /// a partial download instead of looking empty.
+  bool hasOfflineFiles(String workId) {
+    final vault = library.library;
+    if (vault == null) return false;
+    return vault
+        .contentFiles(workId)
+        .any((file) => file.availability == 'offline_copy');
+  }
+
+  int offlineFileCount(String workId) {
+    final vault = library.library;
+    if (vault == null) return 0;
+    return vault
+        .contentFiles(workId)
+        .where((file) => file.availability == 'offline_copy')
+        .length;
+  }
+
   /// Whether this controller is still in use.
   ///
   /// Measuring and fetching both run past the moment somebody closes a
@@ -219,7 +239,11 @@ class DownloadController extends ChangeNotifier {
   Future<void> download(WorkView work, {Set<String>? only}) async {
     final vault = library.library;
     if (vault == null || _proxyFor(work.id) == null) return;
-    if (_jobs.containsKey(work.id)) return;
+    final previous = _jobs[work.id];
+    // A failed job is history, not a lock. Keeping it in the map used to make
+    // the visible „Erneut“ action a no-op forever after the first timeout.
+    if (previous != null && previous.state != DownloadState.failed) return;
+    if (previous != null) _jobs.remove(work.id);
     final files = [
       for (final file in vault.contentFiles(work.id))
         if (only == null || only.contains(file.fileId)) file,
@@ -265,6 +289,7 @@ class DownloadController extends ChangeNotifier {
     final job = _jobs[workId];
     if (job == null || job.state == DownloadState.running) return;
     _jobs.remove(workId);
+    _wanted.remove(workId);
     notifyListeners();
   }
 
