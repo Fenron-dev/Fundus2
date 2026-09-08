@@ -40,6 +40,25 @@ jobs:
         working-directory: app
         run: flutter build windows --release
 
+      - name: Include Visual C++ runtime
+        working-directory: app
+        shell: pwsh
+        run: |
+          $release = (Resolve-Path "build/windows/x64/runner/Release").Path
+          $runtime = @(
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "msvcp140.dll",
+            "msvcp140_1.dll"
+          )
+          foreach ($name in $runtime) {
+            $source = Join-Path $env:WINDIR "System32\$name"
+            if (-not (Test-Path $source)) {
+              throw "Visual-C++-Runtime fehlt auf dem Runner: $source"
+            }
+            Copy-Item $source (Join-Path $release $name) -Force
+          }
+
       - name: Package application
         working-directory: app
         shell: pwsh
