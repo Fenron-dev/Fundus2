@@ -267,7 +267,10 @@ void main() {
     // Die weitere Stelle ist vorgewählt — meistens die Antwort. Hier wird
     // aber ausdrücklich die andere gewählt, denn genau das ist der Sinn.
     expect(find.text('weiteste'), findsOneWidget);
-    await tester.tap(find.textContaining(other.origin).last);
+    // The current-device card contains the same device name after a local
+    // losing revision was retained. Select the first (other-device) card
+    // explicitly instead of relying on the ambiguous substring's last hit.
+    await tester.tap(find.textContaining(other.origin).first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.textContaining('Ab '));

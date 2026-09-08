@@ -2090,6 +2090,7 @@ class _SyncState extends State<_Sync> {
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: FundusSpace.x3,
                     ),
+                    onTap: sync.isBusy ? null : () => _scan(scope.scanner),
                     leading: Icon(
                       FundusIcons.qrCode,
                       color: tokens.accent,

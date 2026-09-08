@@ -83,10 +83,16 @@ void main() {
         '"nonce":"abc","expires_at":"2030-01-01T00:00:00Z"}';
 
     await pumpSettings(tester, scanner: _FakeScanner(code));
-    await tester.tap(find.text('QR-Code scannen'));
+    await tester.tap(find.text('QR-Code vom Server scannen'));
     await tester.pumpAndSettle();
 
-    expect(find.text(code), findsOneWidget);
+    expect(
+      tester
+          .widgetList<TextField>(find.byType(TextField))
+          .map((field) => field.controller?.text)
+          .contains(code),
+      isTrue,
+    );
     // Danach fehlt nur noch die PIN — und das Feld dafür steht bereit.
     final pin = tester.widget<TextField>(
       find.ancestor(of: find.text('PIN'), matching: find.byType(TextField)),

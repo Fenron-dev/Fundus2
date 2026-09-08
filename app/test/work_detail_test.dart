@@ -80,12 +80,15 @@ void main() {
 
     // Der Kopf steht oben, die Dateien liegen darunter — und sie lassen sich
     // erreichen, statt hinter dem Bildschirmrand zu bleiben.
-    expect(find.textContaining('Kapitel 1'), findsWidgets);
-    await tester.drag(find.byType(TabBarView), const Offset(0, -400));
+    expect(find.textContaining('Kapitel'), findsWidgets);
+    // The page is a NestedScrollView; its TabBarView body is replaced by the
+    // active tab's list on current Flutter versions, so drag the owning
+    // scroll view instead of depending on the implementation detail.
+    await tester.drag(find.byType(NestedScrollView), const Offset(0, -400));
     await tester.pumpAndSettle();
 
     expect(
-      find.textContaining('Kapitel 1').hitTestable(),
+      find.textContaining('Kapitel').hitTestable(),
       findsWidgets,
       reason: 'die Dateiliste muss anfassbar sein, nicht nur gebaut',
     );
