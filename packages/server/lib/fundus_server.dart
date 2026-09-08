@@ -40,6 +40,7 @@ final class SharedFundusLibrary {
   final Map<String, List<LibraryPlaybackTrack>> _tracksByWork = {};
   final Map<String, ({LibraryWorkSummary work, LibraryPlaybackTrack track})>
   _tracksById = {};
+  final Map<String, String> _catalogueHashes = {};
   DateTime? _readAt;
 
   String get id => library.manifest.libraryId;
@@ -65,6 +66,7 @@ final class SharedFundusLibrary {
     _worksById = {for (final work in _works) work.id: work};
     _tracksByWork.clear();
     _tracksById.clear();
+    _catalogueHashes.clear();
     _readAt = DateTime.now();
   }
 
@@ -348,6 +350,7 @@ final class FundusServerHandler {
     if (segments.contains('progress')) return 'progress';
     if (segments.contains('annotations')) return 'annotations';
     if (segments.contains('reader-settings')) return 'reader_settings';
+    if (segments.contains('catalogue')) return 'catalogue';
     if (segments.contains('works')) return 'works';
     if (segments.contains('libraries')) return 'libraries';
     if (segments.contains('pairing')) return 'pairing';
@@ -447,7 +450,7 @@ final class FundusServerHandler {
         for (final work in entry.works)
           if (_canViewWork(request, work))
             if (wanted == null || wanted.contains(work.id))
-              _catalogueEntry(entry, work),
+              _catalogueEntryAndRemember(entry, work),
       ],
     });
   }
@@ -467,9 +470,23 @@ final class FundusServerHandler {
       'works': [
         for (final work in entry.works)
           if (_canViewWork(request, work))
-            {'id': work.id, 'hash': _hashOf(_catalogueEntry(entry, work))},
+            {
+              'id': work.id,
+              'hash': entry._catalogueHashes[work.id] ??= _hashOf(
+                _catalogueEntry(entry, work),
+              ),
+            },
       ],
     });
+  }
+
+  Map<String, Object?> _catalogueEntryAndRemember(
+    SharedFundusLibrary entry,
+    LibraryWorkSummary work,
+  ) {
+    final value = _catalogueEntry(entry, work);
+    entry._catalogueHashes[work.id] = _hashOf(value);
+    return value;
   }
 
   Map<String, Object?> _catalogueEntry(

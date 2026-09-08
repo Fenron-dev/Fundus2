@@ -51,6 +51,33 @@ final class FundusCatalogueMirror {
   static const _fetchAllAbove = 0.6;
 
   Future<RemoteMirrorReport> run() async {
+    // Beim ersten Verbinden gibt es hier noch keinen lokalen Spiegel. Der
+    // Index-Hash würde den vollständigen Katalog serverseitig bereits einmal
+    // mit allen Dateien aufbauen, nur damit wir ihn direkt danach ein zweites
+    // Mal anfordern. Das ist bei großen Bibliotheken unnötig genug, um die
+    // Verbindungs-Timeouts zu erreichen. Der Vollabzug ist in diesem Fall die
+    // einzige benötigte Antwort; ab dem zweiten Lauf greift der Delta-Index.
+    final known = await library.loadMirrorState(sourceId);
+    if (known.isEmpty &&
+        library
+            .listWorks(includeMissing: true)
+            .every((work) => work.sourceId != sourceId)) {
+      final report = await _full();
+      // The server remembers the hashes while producing the full response,
+      // so this follow-up is cheap. Persisting them keeps the next run a true
+      // delta instead of treating the whole catalogue as new again.
+      try {
+        await library.saveMirrorState(
+          sourceId,
+          await client.catalogueIndex(libraryId),
+        );
+      } on FundusRemoteException catch (error) {
+        // Older peers have no index endpoint; their full-catalogue behaviour
+        // remains valid, just without the delta optimisation.
+        if (error.statusCode != 404) rethrow;
+      }
+      return report;
+    }
     // What the other side holds, as a list of state markers: cheap enough to
     // ask every time, and exact — a hash covers the whole record, so nothing
     // can change without it changing.
@@ -64,7 +91,6 @@ final class FundusCatalogueMirror {
       return _full();
     }
 
-    final known = await library.loadMirrorState(sourceId);
     final changed = <String>[
       for (final entry in index.entries)
         if (known[entry.key] != entry.value) entry.key,
