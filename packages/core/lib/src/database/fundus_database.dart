@@ -3246,11 +3246,17 @@ final class FundusDatabase {
 
   /// Every content file of a work, with where its bytes are.
   List<
-    ({String fileId, String filename, String? offlinePath, String availability})
+    ({
+      String fileId,
+      String filename,
+      String? offlinePath,
+      String availability,
+      int sizeBytes,
+    })
   >
   contentFiles(String workId) => _database
       .select(
-        'SELECT f.id, f.filename, f.offline_path, f.availability '
+        'SELECT f.id, f.filename, f.offline_path, f.availability, f.size '
         'FROM work_files wf JOIN files f ON f.id = wf.file_id '
         'JOIN works w ON w.id = wf.work_id '
         "WHERE wf.work_id = ? AND wf.role = 'content' "
@@ -3264,6 +3270,7 @@ final class FundusDatabase {
           filename: row['filename'] as String,
           offlinePath: row['offline_path'] as String?,
           availability: row['availability'] as String,
+          sizeBytes: (row['size'] as int?) ?? 0,
         ),
       )
       .toList(growable: false);

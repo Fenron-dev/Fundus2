@@ -22,6 +22,9 @@ final class DownloadJob {
     required this.state,
     this.done = 0,
     this.total = 0,
+    this.bytesDone = 0,
+    this.bytesTotal = 0,
+    this.currentBytes = 0,
     this.fraction,
     this.failure,
     this.bytesPerSecond,
@@ -35,6 +38,11 @@ final class DownloadJob {
   /// Files finished, and files in the work.
   final int done;
   final int total;
+
+  /// Byte-weighted progress; falls back to file counts when sizes are absent.
+  final int bytesDone;
+  final int bytesTotal;
+  final int currentBytes;
 
   /// How far the file being fetched has come, where the other side said how
   /// large it is.
@@ -57,6 +65,9 @@ final class DownloadJob {
   DownloadJob copyWith({
     DownloadState? state,
     int? done,
+    int? bytesDone,
+    int? bytesTotal,
+    int? currentBytes,
     double? fraction,
     String? failure,
     double? bytesPerSecond,
@@ -67,6 +78,9 @@ final class DownloadJob {
     state: state ?? this.state,
     done: done ?? this.done,
     total: total,
+    bytesDone: bytesDone ?? this.bytesDone,
+    bytesTotal: bytesTotal ?? this.bytesTotal,
+    currentBytes: currentBytes ?? this.currentBytes,
     fraction: fraction,
     failure: failure ?? this.failure,
     bytesPerSecond: bytesPerSecond ?? this.bytesPerSecond,
@@ -75,6 +89,12 @@ final class DownloadJob {
 
   /// Roughly how far along the whole work is.
   double get progress {
+    if (bytesTotal > 0) {
+      return ((bytesDone + (fraction ?? 0) * currentBytes) / bytesTotal).clamp(
+        0,
+        1,
+      );
+    }
     if (total == 0) return 0;
     return ((done + (fraction ?? 0)) / total).clamp(0, 1);
   }
@@ -256,6 +276,7 @@ class DownloadController extends ChangeNotifier {
       title: work.title,
       state: DownloadState.queued,
       total: files.length,
+      bytesTotal: files.fold<int>(0, (sum, file) => sum + file.sizeBytes),
     );
     notifyListeners();
     unawaited(_drain());
@@ -334,6 +355,7 @@ class DownloadController extends ChangeNotifier {
     );
     final cache = PeerFileCache(proxy: proxy, directory: room);
     var done = 0;
+    var bytesDone = 0;
 
     final wanted = _wanted[job.workId];
     for (final file in vault.contentFiles(job.workId)) {
@@ -341,6 +363,7 @@ class DownloadController extends ChangeNotifier {
       if (wanted != null && !wanted.contains(file.fileId)) continue;
       if (file.availability == 'offline_copy' && file.offlinePath != null) {
         done++;
+        bytesDone += file.sizeBytes;
         continue;
       }
       // Tempo aus dem, was tatsächlich ankommt: ein gleitender Wert, damit
@@ -353,6 +376,8 @@ class DownloadController extends ChangeNotifier {
           onProgress: (fraction) {
             _jobs[job.workId] = _jobs[job.workId]!.copyWith(
               done: done,
+              bytesDone: bytesDone,
+              currentBytes: file.sizeBytes,
               fraction: fraction,
             );
           },
@@ -364,15 +389,28 @@ class DownloadController extends ChangeNotifier {
             }
             lastReported = elapsed;
             final seconds = elapsed.inMilliseconds / 1000;
+            final expectedBytes = expected > 0 ? expected : file.sizeBytes;
             _jobs[job.workId] = _jobs[job.workId]!.copyWith(
+              bytesDone: bytesDone,
+              currentBytes: file.sizeBytes,
+              fraction: expectedBytes > 0
+                  ? (received / expectedBytes).clamp(0, 1)
+                  : null,
               bytesPerSecond: seconds <= 0 ? null : received / seconds,
-              bytesLeft: expected > 0 ? expected - received : null,
+              bytesLeft: expectedBytes > 0 ? expectedBytes - received : null,
             );
             notifyListeners();
           },
         );
         vault.setOfflineCopy(fileId: file.fileId, path: path);
         done++;
+        bytesDone += file.sizeBytes;
+        _jobs[job.workId] = _jobs[job.workId]!.copyWith(
+          done: done,
+          bytesDone: bytesDone,
+          fraction: 0,
+          currentBytes: 0,
+        );
       } on Object catch (error) {
         _jobs[job.workId] = _jobs[job.workId]!.copyWith(
           state: DownloadState.failed,
@@ -387,6 +425,8 @@ class DownloadController extends ChangeNotifier {
     _jobs[job.workId] = _jobs[job.workId]!.copyWith(
       state: DownloadState.done,
       done: done,
+      bytesDone: bytesDone,
+      currentBytes: 0,
     );
     library.refreshWork(job.workId);
     notifyListeners();

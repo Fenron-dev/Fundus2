@@ -187,4 +187,21 @@ void main() {
     );
     expect(downloads.isSecured(theWork().id), isFalse);
   });
+
+  test('Fortschritt zählt Bytes statt nur Dateien', () {
+    const job = DownloadJob(
+      workId: 'film',
+      title: 'Film',
+      state: DownloadState.running,
+      done: 0,
+      total: 2,
+      bytesDone: 0,
+      bytesTotal: 1010,
+      currentBytes: 1000,
+      fraction: .5,
+    );
+
+    // Die halbe große Datei sind fast 50 %, nicht 25 % (Datei 1 von 2).
+    expect(job.progress, closeTo(500 / 1010, .0001));
+  });
 }

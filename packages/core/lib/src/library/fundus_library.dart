@@ -253,7 +253,13 @@ final class FundusLibrary {
 
   /// Every content file of a work, with where its bytes are.
   List<
-    ({String fileId, String filename, String? offlinePath, String availability})
+    ({
+      String fileId,
+      String filename,
+      String? offlinePath,
+      String availability,
+      int sizeBytes,
+    })
   >
   contentFiles(String workId) => _database.contentFiles(workId);
 

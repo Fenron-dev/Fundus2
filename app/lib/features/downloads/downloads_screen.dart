@@ -417,7 +417,7 @@ class _JobTile extends StatelessWidget {
           ),
           const SizedBox(height: FundusSpace.x2),
           Text(
-            line,
+            '${(job.progress * 100).toStringAsFixed(1)} % · $line',
             style: theme.textTheme.labelMedium?.copyWith(
               color: job.state == DownloadState.failed
                   ? tokens.danger
