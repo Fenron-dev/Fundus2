@@ -172,8 +172,22 @@ void main() {
         ),
       ),
     );
+    scope.navigation.reset(WorkRoute(work.id));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
     // Der Streifen ist der Fall, um den es geht: dort meldet die Liste, was
-    // sie sieht, und diese Meldung überschrieb den gespeicherten Stand.
+    // sie sieht, und diese Meldung überschrieb den gespeicherten Stand. Das
+    // Profil wird erst nach dem Öffnen gespeichert, weil es werkbezogen ist.
+    await tester.runAsync(() => scope.play(work));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    await tester.pump();
+    await tester.pump();
+
     await tester.runAsync(
       () => reader.updateProfile(
         const PublicationReaderProfile(
@@ -181,11 +195,6 @@ void main() {
         ),
       ),
     );
-    await tester.runAsync(() => scope.play(work));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 200)),
-    );
-    await tester.pump();
     await tester.pump();
 
     await tester.runAsync(() => reader.goToPage(3));
@@ -200,8 +209,26 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
 
     expect(reader.pageIndex, 3, reason: 'Der Stand wurde überschrieben');
+    // Der Footer liest den Modellstand direkt aus dem Controller. Das allein
+    // beweist aber nicht, dass der sichtbare Streifen dorthin gesprungen ist:
+    // genau dieser Unterschied war der gemeldete Fehler (z. B. „5/25“ bei
+    // Bild 1). Mit itemExtentBuilder muss auch die Scrollposition außerhalb
+    // des Kapitelanfangs liegen.
+    final strips = tester.stateList<ScrollableState>(find.byType(Scrollable));
+    expect(
+      strips.any(
+        (state) => state.position.hasPixels && state.position.pixels > 0,
+      ),
+      isTrue,
+      reason: 'Der sichtbare Manga-Streifen steht noch am Kapitelanfang',
+    );
   });
 
   testWidgets('eine Light Novel öffnet den Textleser', (tester) async {

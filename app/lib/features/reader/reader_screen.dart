@@ -625,36 +625,84 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
     // die Ansicht, nicht die Seite, und beim Loslassen bleibt es, wo es ist,
     // bis jemand mit zwei Fingern zurückgeht.
     return _ZoomWindow(
-      builder: (context, zoomed) => ListView.builder(
-        controller: _scroll,
-        // Ist etwas herangeholt, hält die Liste still: dann will man sich auf
-        // der Seite bewegen, nicht weiterscrollen.
-        physics: zoomed ? const NeverScrollableScrollPhysics() : null,
-        scrollDirection: horizontal ? Axis.horizontal : Axis.vertical,
-        reverse: horizontal && reader.isRightToLeft,
-        itemCount: reader.pageCount,
-        itemBuilder: (context, index) {
-          reader.requestPage(index);
-          final key = _keys.putIfAbsent(index, GlobalKey.new);
-          return Padding(
-            key: key,
-            padding: EdgeInsets.only(
-              bottom: horizontal ? 0 : reader.profile.pageGap,
-              right: horizontal ? reader.profile.pageGap : 0,
+      builder: (context, zoomed) => LayoutBuilder(
+        builder: (context, constraints) {
+          final viewport = Size(constraints.maxWidth, constraints.maxHeight);
+          return ListView.builder(
+            controller: _scroll,
+            // Ist etwas herangeholt, hält die Liste still: dann will man sich
+            // auf der Seite bewegen, nicht weiterscrollen.
+            physics: zoomed ? const NeverScrollableScrollPhysics() : null,
+            scrollDirection: horizontal ? Axis.horizontal : Axis.vertical,
+            reverse: horizontal && reader.isRightToLeft,
+            itemCount: reader.pageCount,
+            // A normal builder only knows the extent of the children that are
+            // already visible. That made a restored page outside the first
+            // viewport impossible to reach: maxScrollExtent was still near
+            // zero, so the saved page stayed at chapter start while the
+            // footer already said e.g. 5/25. Supplying a deterministic extent
+            // for every item lets Flutter calculate the complete scroll range
+            // before the target child is built.
+            itemExtentBuilder: (index, _) => _continuousExtent(
+              reader,
+              index,
+              viewport,
+              horizontal: horizontal,
             ),
-            // Eine Seite, die die Spalte nicht ausfüllt, gehört in die Mitte —
-            // links angeschlagen liest sich ein Band schief.
-            child: Center(
-              child: _Page(
-                index: index,
-                continuous: true,
-                onMeasured: (value) => _preserveAnchor(index, value),
-              ),
-            ),
+            itemBuilder: (context, index) {
+              reader.requestPage(index);
+              final key = _keys.putIfAbsent(index, GlobalKey.new);
+              return Padding(
+                key: key,
+                padding: EdgeInsets.only(
+                  bottom: horizontal ? 0 : reader.profile.pageGap,
+                  right: horizontal ? reader.profile.pageGap : 0,
+                ),
+                // Eine Seite, die die Spalte nicht ausfüllt, gehört in die
+                // Mitte — links angeschlagen liest sich ein Band schief.
+                child: Center(
+                  child: _Page(
+                    index: index,
+                    continuous: true,
+                    onMeasured: (value) => _preserveAnchor(index, value),
+                  ),
+                ),
+              );
+            },
           );
         },
       ),
     );
+  }
+
+  /// The extent used for the complete scroll range, including a sensible
+  /// fallback before an image has been decoded. Once an aspect is known the
+  /// item becomes precise; [_preserveAnchor] keeps the user's current page
+  /// fixed while an earlier image changes from its placeholder shape.
+  double _continuousExtent(
+    ReaderController reader,
+    int index,
+    Size viewport, {
+    required bool horizontal,
+  }) {
+    final aspect = (reader.aspectOf(index) ?? 2 / 3).clamp(.05, 20.0);
+    final gap = reader.profile.layout == PublicationReaderLayout.webtoon
+        ? 0.0
+        : reader.profile.pageGap;
+    final extent = horizontal
+        ? switch (reader.profile.pageScale) {
+            PublicationPageScale.fitHeight => viewport.height * aspect,
+            PublicationPageScale.fitWidth ||
+            PublicationPageScale.fitScreen => viewport.width,
+            PublicationPageScale.original => viewport.height * aspect,
+          }
+        : switch (reader.profile.pageScale) {
+            PublicationPageScale.fitWidth ||
+            PublicationPageScale.fitScreen => viewport.width / aspect,
+            PublicationPageScale.fitHeight => viewport.height,
+            PublicationPageScale.original => 600.0,
+          };
+    return (extent + gap).clamp(1.0, 1 << 20).toDouble();
   }
 }
 
