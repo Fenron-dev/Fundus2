@@ -1609,6 +1609,16 @@ class _ReaderState extends State<_Reader> {
                       ),
                   ],
                 ),
+                Text('Maximale Bildbreite', style: theme.textTheme.labelLarge),
+                Slider(
+                  value: pages.readerWidth,
+                  min: .4,
+                  max: 1,
+                  divisions: 6,
+                  label: '${(pages.readerWidth * 100).round()} %',
+                  onChanged: (value) =>
+                      _savePages(pages.copyWith(readerWidth: value)),
+                ),
                 _Choices(
                   label: 'Seitliches Tippen',
                   children: [

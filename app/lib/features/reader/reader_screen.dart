@@ -652,6 +652,7 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
             itemBuilder: (context, index) {
               reader.requestPage(index);
               final key = _keys.putIfAbsent(index, GlobalKey.new);
+              final pageWidth = viewport.width * reader.profile.readerWidth;
               return Padding(
                 key: key,
                 padding: EdgeInsets.only(
@@ -661,10 +662,21 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
                 // Eine Seite, die die Spalte nicht ausfüllt, gehört in die
                 // Mitte — links angeschlagen liest sich ein Band schief.
                 child: Center(
-                  child: _Page(
-                    index: index,
-                    continuous: true,
-                    onMeasured: (value) => _preserveAnchor(index, value),
+                  child: SizedBox(
+                    width: horizontal
+                        ? _continuousExtent(
+                                reader,
+                                index,
+                                viewport,
+                                horizontal: true,
+                              ) -
+                              reader.profile.pageGap
+                        : pageWidth,
+                    child: _Page(
+                      index: index,
+                      continuous: true,
+                      onMeasured: (value) => _preserveAnchor(index, value),
+                    ),
                   ),
                 ),
               );
@@ -686,6 +698,7 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
     required bool horizontal,
   }) {
     final aspect = (reader.aspectOf(index) ?? 2 / 3).clamp(.05, 20.0);
+    final width = viewport.width * reader.profile.readerWidth;
     final gap = reader.profile.layout == PublicationReaderLayout.webtoon
         ? 0.0
         : reader.profile.pageGap;
@@ -693,12 +706,12 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
         ? switch (reader.profile.pageScale) {
             PublicationPageScale.fitHeight => viewport.height * aspect,
             PublicationPageScale.fitWidth ||
-            PublicationPageScale.fitScreen => viewport.width,
+            PublicationPageScale.fitScreen => width,
             PublicationPageScale.original => viewport.height * aspect,
           }
         : switch (reader.profile.pageScale) {
             PublicationPageScale.fitWidth ||
-            PublicationPageScale.fitScreen => viewport.width / aspect,
+            PublicationPageScale.fitScreen => width / aspect,
             PublicationPageScale.fitHeight => viewport.height,
             PublicationPageScale.original => 600.0,
           };
@@ -789,7 +802,12 @@ class _ZoomWindowState extends State<_ZoomWindow> {
       transformationController: _view,
       maxScale: 5,
       panEnabled: _zoomed,
-      scaleEnabled: true,
+      // InteractiveViewer treats a mouse-wheel signal as a scale gesture.
+      // In a continuous manga strip the wheel is the primary way to scroll;
+      // let the ListView receive it until the user deliberately zooms via the
+      // double-tap gesture. Once zoomed, pinch/trackpad scaling is useful
+      // again for returning to the normal view.
+      scaleEnabled: !reader.isContinuous || _zoomed,
       child: widget.builder(context, _zoomed),
     );
   }
@@ -990,6 +1008,19 @@ Future<void> _showReaderSettings(BuildContext context) {
                             update(profile.copyWith(pageScale: scale)),
                       ),
                   ],
+                ),
+                Text(
+                  'Maximale Bildbreite',
+                  style: Theme.of(sheetContext).textTheme.labelSmall,
+                ),
+                Slider(
+                  value: profile.readerWidth,
+                  min: .4,
+                  max: 1,
+                  divisions: 6,
+                  label: '${(profile.readerWidth * 100).round()} %',
+                  onChanged: (value) =>
+                      update(profile.copyWith(readerWidth: value)),
                 ),
                 _SettingGroup(
                   label: 'Leserichtung',
