@@ -95,7 +95,21 @@ abstract interface class PlaybackEngine {
 
 /// The real engine: libmpv through media_kit.
 final class MediaKitEngine implements PlaybackEngine {
-  MediaKitEngine([Player? player]) : _player = player ?? Player() {
+  /// Read-ahead for libmpv's demuxer.
+  ///
+  /// The default is 32 MiB. That is enough for a local SSD, but a mounted
+  /// SMB/NFS file can briefly stall while the share answers the next range
+  /// request. A moderate 64 MiB cache smooths those short pauses without
+  /// turning Fundus into a full-file downloader. Offline copies and peer
+  /// streaming remain the right answer for a slow or unreliable connection.
+  static const _bufferSize = 64 * 1024 * 1024;
+
+  MediaKitEngine([Player? player])
+    : _player =
+          player ??
+          Player(
+            configuration: const PlayerConfiguration(bufferSize: _bufferSize),
+          ) {
     // The video output has to exist before the first file is opened —
     // attaching it afterwards leaves the picture black while the sound plays.
     _video = VideoController(_player);
