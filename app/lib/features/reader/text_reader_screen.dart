@@ -296,7 +296,21 @@ class _TextSurfaceState extends State<_TextSurface> {
   /// costs a wrong position, never a locked-up reader.
   void _travelTo(int target, int paragraphCount) {
     if (target <= 0 || paragraphCount <= 1) {
-      _travellingTo = null;
+      // Changing chapters keeps the same ScrollController. Without an
+      // explicit reset it retains the old chapter's offset, so the next
+      // chapter opens at its bottom even though the controller correctly
+      // reports paragraph zero. Keep reporting paused until the new list has
+      // laid out, then move the viewport to its real beginning.
+      _travellingTo = target <= 0 ? 0 : null;
+      if (_travellingTo == 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _travellingTo != 0) return;
+          if (_scroll.hasClients) {
+            _scroll.jumpTo(0);
+          }
+          _travellingTo = null;
+        });
+      }
       return;
     }
     _travellingTo = target;

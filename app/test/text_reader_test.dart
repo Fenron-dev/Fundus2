@@ -258,6 +258,17 @@ void main() {
       expect(reader.chapterFraction, greaterThan(.8));
     });
 
+    test('das nächste Kapitel beginnt wieder ganz oben', () async {
+      await openWork();
+      reader.reportPosition(4, .75);
+
+      await reader.nextChapter();
+
+      expect(reader.chapterIndex, 1);
+      expect(reader.paragraphIndex, 0);
+      expect(reader.innerOffset, 0);
+    });
+
     test('hinter dem letzten Kapitel ist Schluss, nicht Absturz', () async {
       await openWork();
       await reader.goToChapter(1);
