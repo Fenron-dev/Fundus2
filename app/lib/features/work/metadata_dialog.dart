@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -516,11 +517,9 @@ class _MatchRow extends StatelessWidget {
         height: 62,
         child: candidate.posterUrl == null
             ? Icon(FundusIcons.book, color: tokens.textFaint)
-            : Image.network(
-                candidate.posterUrl!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    Icon(FundusIcons.warning, color: tokens.textFaint),
+            : _MatchPoster(
+                key: ValueKey(candidate.posterUrl),
+                url: candidate.posterUrl!,
               ),
       ),
       title: Text(candidate.title),
@@ -529,4 +528,39 @@ class _MatchRow extends StatelessWidget {
       onTap: onTap,
     );
   }
+}
+
+/// Previews must use the same verified transport as saved covers. Flutter's
+/// Image.network would otherwise still use Dart TLS on Windows.
+class _MatchPoster extends StatefulWidget {
+  const _MatchPoster({super.key, required this.url});
+  final String url;
+
+  @override
+  State<_MatchPoster> createState() => _MatchPosterState();
+}
+
+class _MatchPosterState extends State<_MatchPoster> {
+  late final Future<Uint8List?> _bytes = fetchCoverBytes(widget.url);
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Uint8List?>(
+    future: _bytes,
+    builder: (context, snapshot) {
+      final color = context.fundus.textFaint;
+      if (snapshot.data case final bytes?) {
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => Icon(FundusIcons.warning, color: color),
+        );
+      }
+      return Icon(
+        snapshot.connectionState == ConnectionState.done
+            ? FundusIcons.warning
+            : FundusIcons.book,
+        color: color,
+      );
+    },
+  );
 }

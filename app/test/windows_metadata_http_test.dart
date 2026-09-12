@@ -147,14 +147,24 @@ void main() {
     () async {
       final client = createMetadataHttpClient();
       try {
-        final response = await client.post(
-          Uri.parse('https://graphql.anilist.co'),
-          headers: {'content-type': 'application/json'},
-          body: jsonEncode({
-            'query': '{ Media(id: 1) { id coverImage { large } } }',
-          }),
-        );
-        expect(response.statusCode, 200, reason: 'AniList HTTPS POST');
+        http.Response? response;
+        for (var attempt = 0; attempt < 3; attempt++) {
+          response = await client.post(
+            Uri.parse('https://graphql.anilist.co'),
+            headers: {'content-type': 'application/json'},
+            body: jsonEncode({
+              'query': '{ Media(id: 1) { id coverImage { large } } }',
+            }),
+          );
+          if (response.statusCode != 429 || attempt == 2) break;
+          final seconds =
+              int.tryParse(response.headers['retry-after'] ?? '') ?? 60;
+          // Shared CI egress can be rate-limited. Wait rather than pretending
+          // a 429 is a successful metadata download or a certificate failure.
+          if (seconds > 60) break;
+          await Future<void>.delayed(Duration(seconds: seconds.clamp(1, 60)));
+        }
+        expect(response!.statusCode, 200, reason: 'AniList HTTPS POST');
         final media =
             (jsonDecode(response.body) as Map)['data']['Media'] as Map;
         final cover = await fetchCoverBytes(
@@ -188,6 +198,6 @@ void main() {
     },
     skip:
         !Platform.isWindows || Platform.environment['FUNDUS_LIVE_HTTPS'] != '1',
-    timeout: const Timeout(Duration(minutes: 2)),
+    timeout: const Timeout(Duration(minutes: 3)),
   );
 }
