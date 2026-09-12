@@ -443,9 +443,9 @@ class LibraryController extends ChangeNotifier {
     }
     _worksPerMediaType = Map.unmodifiable(byType);
     _worksPerSource = Map.unmodifiable(bySource);
-    _worksPerSourceMediaType = Map.unmodifiable({
+    _worksPerSourceMediaType = Map<String, Map<String, int>>.unmodifiable({
       for (final entry in bySourceType.entries)
-        entry.key: Map.unmodifiable(entry.value),
+        entry.key: Map<String, int>.unmodifiable(entry.value),
     });
     _unassignedWorks = unassigned;
   }
