@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
@@ -24,6 +25,7 @@ void main() {
       ..createSync(recursive: true);
     File('${work.path}/01 - Anfang.mp3').writeAsBytesSync(List.filled(64, 1));
     File('${work.path}/02 - Mitte.mp3').writeAsBytesSync(List.filled(64, 1));
+    File('${work.path}/03 - Ende.mp3').writeAsBytesSync(List.filled(64, 1));
     library = LibraryController();
     engine = FakeEngine();
     player = PlaybackController(engine: engine);
@@ -94,4 +96,91 @@ void main() {
 
     expect(handler.playbackState.value.playing, isFalse);
   });
+
+  test(
+    'automatische Titelwechsel behalten den Hintergrund-Abspielauftrag',
+    () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+      for (var track = 1; track <= 2; track++) {
+        final loading = Completer<void>();
+        engine.onOpen = () => loading.future;
+        engine.emitPlaying(false); // Native EOF precedes the next file opening.
+        engine.emitCompleted();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(player.trackIndex, track);
+        expect(handler.playbackState.value.playing, isTrue);
+        expect(
+          handler.playbackState.value.processingState,
+          AudioProcessingState.buffering,
+        );
+        loading.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(engine.playing, isTrue);
+      }
+      engine.emitPlaying(false);
+      engine.emitCompleted();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        handler.playbackState.value.playing,
+        isFalse,
+        reason: 'wirkliches Listenende',
+      );
+    },
+  );
+
+  test(
+    'Fokusverlust während des Titelwechsels verhindert verspätetes Autoplay',
+    () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+      final loading = Completer<void>();
+      engine.onOpen = () => loading.future;
+      engine.emitPlaying(false);
+      engine.emitCompleted();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await player.pause(); // Same entry point as the native focus callback.
+      loading.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(engine.playing, isFalse);
+      expect(handler.playbackState.value.playing, isFalse);
+    },
+  );
+
+  test('ohne Audio-Fokus spielt auch ein direkter App-Start nicht', () async {
+    player.requestAudioFocus = () async => false;
+    await library.open(root, createIfMissing: true);
+    await library.scan();
+    await player.open(library.library!, library.works.first);
+    expect(engine.playing, isFalse);
+    expect(player.isPlaybackRequested, isFalse);
+    player.requestAudioFocus = () async => true;
+    await handler.play();
+    expect(engine.playing, isTrue);
+    var released = 0;
+    player.releaseAudioFocus = () async {
+      released++;
+    };
+    await handler.pause();
+    expect(released, 1);
+    expect(engine.playing, isFalse);
+  });
+
+  test(
+    'Pause während der Fokusabfrage wird nicht von spätem Erfolg überholt',
+    () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first, autoplay: false);
+      final focus = Completer<bool>();
+      player.requestAudioFocus = () => focus.future;
+      final playing = handler.play();
+      await handler.pause();
+      focus.complete(true);
+      await playing;
+      expect(engine.playing, isFalse);
+    },
+  );
 }

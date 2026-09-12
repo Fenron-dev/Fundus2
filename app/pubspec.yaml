@@ -30,6 +30,7 @@ dependencies:
   pdfrx: ^2.4.7
   image: ^4.9.2
   audio_service: ^0.18.19
+  audio_session: ^0.2.4
   qr_flutter: ^4.1.0
   xml: ^6.6.1
   mobile_scanner: ^7.4.0

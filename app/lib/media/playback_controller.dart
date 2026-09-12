@@ -113,6 +113,76 @@ class PlaybackController extends ChangeNotifier {
   Duration _position = Duration.zero;
   Duration? _duration;
   bool _playing = false;
+  bool _playbackRequested = false;
+  bool _loadingTrack = false;
+  int _pauseEpoch = 0;
+
+  /// Remains true through engine EOF/open gaps, until pause, stop or queue end.
+  /// Android must not drop its foreground service/wake lock at every track.
+  bool get isPlaybackRequested => _playbackRequested;
+  bool get isLoadingTrack => _loadingTrack;
+  Future<bool> Function()? requestAudioFocus;
+  Future<void> Function()? releaseAudioFocus;
+
+  void _endPlaybackRequest() {
+    _playbackRequested = false;
+    _pauseEpoch++;
+    unawaited(_releaseFocus());
+  }
+
+  Future<void> _releaseFocus() async {
+    try {
+      await releaseAudioFocus?.call();
+    } on Object catch (error) {
+      FundusLog.instance.warn('audio.focus.release', {'error': '$error'});
+    }
+  }
+
+  Future<void> _play() async {
+    final epoch = _pauseEpoch;
+    bool granted;
+    try {
+      granted = await requestAudioFocus?.call() ?? true;
+    } on Object catch (error) {
+      _endPlaybackRequest();
+      _failure = 'Die Audio-Sitzung konnte nicht aktiviert werden.';
+      FundusLog.instance.warn('audio.focus.failed', {'error': '$error'});
+      notifyListeners();
+      return;
+    }
+    if (epoch != _pauseEpoch) {
+      await _releaseFocus(); // Paused while focus was requested.
+      return;
+    }
+    if (!granted) {
+      _endPlaybackRequest();
+      _failure =
+          'Kein Audio-Fokus verfügbar. Bitte erneut Play drücken, '
+          'wenn die andere Wiedergabe beendet ist.';
+      FundusLog.instance.warn('audio.focus.denied');
+      notifyListeners();
+      return;
+    }
+    _playbackRequested = true;
+    notifyListeners();
+    try {
+      await _engine.play();
+    } on Object {
+      _endPlaybackRequest();
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Idempotent: an interruption during loading must not toggle into play.
+  Future<void> pause() async {
+    _endPlaybackRequest();
+    _clearBetweenEpisodes();
+    _playing = false;
+    notifyListeners();
+    await _engineOrNull?.pause();
+  }
+
   double _rate = 1;
   bool _expanded = false;
   bool _chrome = true;
@@ -354,6 +424,7 @@ class PlaybackController extends ChangeNotifier {
     // einer unerreichbaren Datei die vorige Datei einfach weiter — mit dem
     // Namen und dem Bild der neuen darüber.
     await _stopWhatIsPlaying();
+    final epoch = _pauseEpoch;
     _failure = null;
     _ended = false;
     _resumeTries = 0;
@@ -424,7 +495,7 @@ class PlaybackController extends ChangeNotifier {
       await _openCurrent(at: resumeAt);
       // Nur spielen, wenn wirklich etwas geöffnet wurde: sonst hat mpv noch
       // die vorige Datei geladen und „abspielen" hieße, sie fortzusetzen.
-      if (autoplay && _failure == null) await _engine.play();
+      if (autoplay && _failure == null && epoch == _pauseEpoch) await _play();
       span.done();
     } on Object catch (error) {
       span.failed(error);
@@ -448,6 +519,7 @@ class PlaybackController extends ChangeNotifier {
     bool autoplay = true,
   }) async {
     await _stopWhatIsPlaying();
+    final epoch = _pauseEpoch;
     _failure = null;
     _ended = false;
     _resumeTries = 0;
@@ -484,7 +556,7 @@ class PlaybackController extends ChangeNotifier {
       _buildOrder();
       _attachStreams();
       await _openCurrent(at: _startOf(_index));
-      if (autoplay && _failure == null) await _engine.play();
+      if (autoplay && _failure == null && epoch == _pauseEpoch) await _play();
       span.done();
     } on Object catch (error) {
       span.failed(error);
@@ -500,6 +572,7 @@ class PlaybackController extends ChangeNotifier {
   /// dem neuen Namen zu speichern wäre schlimmer als ihn zu verlieren.
   Future<void> _stopWhatIsPlaying() async {
     if (_work == null && _sources.isEmpty) return;
+    _endPlaybackRequest();
     saveProgress(checkpoint: true);
     _saveTimer?.cancel();
     _clearBetweenEpisodes();
@@ -542,6 +615,20 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> _openCurrent({Duration at = Duration.zero}) async {
+    _loadingTrack = true;
+    notifyListeners();
+    try {
+      await _loadCurrent(at: at);
+    } on Object {
+      _endPlaybackRequest();
+      rethrow;
+    } finally {
+      _loadingTrack = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadCurrent({Duration at = Duration.zero}) async {
     final source = currentSource;
     if (source == null) return;
     // Wechselt die Zeile das Werk, gehört der bisherige Stand noch dem alten
@@ -574,6 +661,7 @@ class PlaybackController extends ChangeNotifier {
       }, reach.elapsed);
     }
     if (!reachable) {
+      _endPlaybackRequest();
       // A file that is gone is a state, not a crash: the work keeps its
       // progress and the origin mark tells the story. Angehalten wird
       // trotzdem — sonst liefe die vorige Datei unter neuem Namen weiter.
@@ -682,24 +770,25 @@ class PlaybackController extends ChangeNotifier {
   /// tut, nur ohne den Umweg.
   Future<void> playOrPause() async {
     if (_work == null || _engineOrNull == null) return;
-    if (_playing) {
-      await _engine.pause();
+    if (_playing || _playbackRequested) {
+      await pause();
       return;
     }
     if (_ended || _failure != null) {
       await pickUpAgain();
       return;
     }
-    await _engine.play();
+    await _play();
   }
 
   /// Öffnet die laufende Datei noch einmal an der Stelle, an der sie steht.
   Future<void> pickUpAgain() async {
     if (currentSource == null) return;
+    final epoch = _pauseEpoch;
     _failure = null;
     final at = _position;
     await _openCurrent(at: at);
-    if (_failure == null) await _engine.play();
+    if (_failure == null && epoch == _pauseEpoch) await _play();
     notifyListeners();
   }
 
@@ -718,9 +807,10 @@ class PlaybackController extends ChangeNotifier {
   /// „Titel wiederholen" is about what happens when a track *ends*; someone
   /// who asks for the next one is not asking for this one again.
   Future<void> next() async {
+    final epoch = _pauseEpoch;
     final target = _nextIndex(manual: true);
     if (target == null) {
-      await _engine.pause();
+      await pause();
       _ended = true;
       _markFinished();
       return;
@@ -731,11 +821,12 @@ class PlaybackController extends ChangeNotifier {
     // „abspielen" auf einer leeren Engine, dass der Player sich für laufend
     // hält — und der nächste Druck auf den Knopf pausiert etwas, das nie
     // angefangen hat.
-    if (_failure == null) await _engine.play();
+    if (_failure == null && epoch == _pauseEpoch) await _play();
     notifyListeners();
   }
 
   Future<void> previous() async {
+    final epoch = _pauseEpoch;
     // Like every player: back jumps to the start of the track first.
     final at = _orderPosition;
     if (_position > const Duration(seconds: 3) || at <= 0) {
@@ -744,7 +835,7 @@ class PlaybackController extends ChangeNotifier {
     }
     _index = _order[at - 1];
     await _openCurrent();
-    if (_failure == null) await _engine.play();
+    if (_failure == null && epoch == _pauseEpoch) await _play();
     notifyListeners();
   }
 
@@ -808,20 +899,22 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> jumpToTrack(int index) async {
     if (index < 0 || index >= _sources.length) return;
+    final epoch = _pauseEpoch;
     // Erst festhalten, wo die laufende Folge steht, dann wechseln.
     saveProgress();
     _index = index;
     await _openCurrent(at: _startOfFile(_sources[index].fileId));
-    await _engine.play();
+    if (_failure == null && epoch == _pauseEpoch) await _play();
     notifyListeners();
   }
 
   Future<void> jumpToChapter(LibraryPlaybackChapter chapter) async {
+    final epoch = _pauseEpoch;
     final index = _sources.indexWhere((s) => s.fileId == chapter.fileId);
     if (index >= 0 && index != _index) {
       _index = index;
       await _openCurrent(at: chapter.position);
-      await _engine.play();
+      if (_failure == null && epoch == _pauseEpoch) await _play();
     } else {
       await seek(chapter.position);
     }
@@ -855,6 +948,7 @@ class PlaybackController extends ChangeNotifier {
   /// next file, a single film — behaves as it always did, because there is
   /// nothing to decide.
   void _finished() {
+    if (!_playbackRequested || _loadingTrack) return;
     // Ein Strom, der reißt, meldet sich wie ein Ende. Der Unterschied ist
     // messbar: was zu Ende ist, steht am Ende. Steht es mitten drin, wird
     // dieselbe Stelle noch einmal geöffnet — das ist, was ein Mensch täte,
@@ -877,6 +971,7 @@ class PlaybackController extends ChangeNotifier {
       _playing = false;
       _ended = true;
       _failure = 'Die Wiedergabe ist abgerissen.';
+      _endPlaybackRequest();
       notifyListeners();
       return;
     }
@@ -885,6 +980,7 @@ class PlaybackController extends ChangeNotifier {
     if (target == null) {
       saveProgress();
       _ended = true;
+      _endPlaybackRequest();
       notifyListeners();
       return;
     }
@@ -892,6 +988,7 @@ class PlaybackController extends ChangeNotifier {
       unawaited(_playIndex(target));
       return;
     }
+    _endPlaybackRequest();
     _nextIn = habits.autoplayNext ? habits.autoplayDelay : null;
     _betweenEpisodes = true;
     _chrome = true;
@@ -940,9 +1037,17 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> _playIndex(int index) async {
+    final epoch = _pauseEpoch;
     _index = index;
-    await _openCurrent();
-    if (_failure == null) await _engine.play();
+    try {
+      await _openCurrent();
+      if (_failure == null && epoch == _pauseEpoch) await _play();
+    } on Object catch (error) {
+      _endPlaybackRequest();
+      _ended = true;
+      _failure = 'Der nächste Titel konnte nicht gestartet werden.';
+      FundusLog.instance.warn('player.next.failed', {'error': '$error'});
+    }
     notifyListeners();
   }
 
@@ -1015,7 +1120,7 @@ class PlaybackController extends ChangeNotifier {
   Future<void> _sleepNow() async {
     cancelSleepTimer();
     saveProgress();
-    if (_engineOrNull != null) await _engine.pause();
+    if (_engineOrNull != null) await pause();
   }
 
   /// Whether the current chapter still has a way to run.
@@ -1037,6 +1142,7 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> close() async {
     saveProgress();
+    await pause();
     await _engineOrNull?.stop();
     _saveTimer?.cancel();
     _ended = false;
@@ -1132,6 +1238,7 @@ class PlaybackController extends ChangeNotifier {
   @override
   void dispose() {
     saveProgress(checkpoint: true);
+    _endPlaybackRequest();
     _saveTimer?.cancel();
     _sleepTimer?.cancel();
     _sleepTick?.cancel();

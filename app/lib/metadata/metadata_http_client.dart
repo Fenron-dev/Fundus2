@@ -254,7 +254,9 @@ _Response _exchange(
   Pointer<Void> session = nullptr, connection = nullptr, request = nullptr;
   void check(int result, String operation) {
     if (result == 0) {
-      throw WindowsMetadataException(uri.host, operation, _lastError());
+      // Capture before URI decoding/exception allocation can touch Win32.
+      final code = _lastError();
+      throw WindowsMetadataException(uri.host, operation, code);
     }
   }
 

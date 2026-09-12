@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
+
+import '../app/fundus_log.dart';
 
 import 'playback_controller.dart';
 
@@ -23,6 +26,9 @@ final class FundusAudioHandler extends BaseAudioHandler {
   }
 
   final PlaybackController _player;
+  final List<StreamSubscription<dynamic>> _focusSubscriptions = [];
+  AudioSession? _session;
+  bool _hasFocus = false;
 
   /// Starts the media session, or does nothing where there is none to start.
   ///
@@ -30,8 +36,10 @@ final class FundusAudioHandler extends BaseAudioHandler {
   /// starting a session there would buy a notification nobody asked for.
   static Future<FundusAudioHandler?> attach(PlaybackController player) async {
     if (kIsWeb || !Platform.isAndroid) return null;
+    // Fail closed if native focus setup fails: never mix audio silently.
+    player.requestAudioFocus = () async => false;
     try {
-      return await AudioService.init(
+      final handler = await AudioService.init(
         builder: () => FundusAudioHandler(player),
         config: const AudioServiceConfig(
           androidNotificationChannelId: 'dev.fundus.playback',
@@ -40,11 +48,49 @@ final class FundusAudioHandler extends BaseAudioHandler {
           androidStopForegroundOnPause: true,
         ),
       );
+      await handler._configureAudioFocus();
+      return handler;
     } on Object catch (error) {
       // A missing session costs background playback, not the app.
       debugPrint('Hintergrundwiedergabe nicht verfügbar: $error');
+      FundusLog.instance.warn('audio.session.failed', {'error': '$error'});
       return null;
     }
+  }
+
+  Future<void> _configureAudioFocus() async {
+    final session = _session = await AudioSession.instance;
+    await session.configure(
+      const AudioSessionConfiguration.music().copyWith(
+        androidWillPauseWhenDucked: true,
+      ),
+    );
+    _player.requestAudioFocus = () async {
+      if (_hasFocus) return true;
+      return _hasFocus = await session.setActive(true);
+    };
+    _player.releaseAudioFocus = () async {
+      _hasFocus = false;
+      await session.setActive(false);
+    };
+    _focusSubscriptions.add(
+      session.interruptionEventStream.listen((event) {
+        if (!event.begin) return;
+        _hasFocus = false;
+        FundusLog.instance.info('audio.interruption', {
+          'type': event.type.name,
+        });
+        // Do not restart behind another player when it later gives focus back.
+        // Includes duck requests: spoken chapters should not be talked over.
+        unawaited(_player.pause());
+      }),
+    );
+    _focusSubscriptions.add(
+      session.becomingNoisyEventStream.listen((_) {
+        FundusLog.instance.info('audio.headphones.disconnected');
+        unawaited(_player.pause());
+      }),
+    );
   }
 
   void _publish() {
@@ -72,13 +118,20 @@ final class FundusAudioHandler extends BaseAudioHandler {
       PlaybackState(
         controls: [
           MediaControl.skipToPrevious,
-          if (_player.isPlaying) MediaControl.pause else MediaControl.play,
+          if (_player.isPlaybackRequested)
+            MediaControl.pause
+          else
+            MediaControl.play,
           MediaControl.skipToNext,
         ],
         systemActions: const {MediaAction.seek},
         androidCompactActionIndices: const [0, 1, 2],
-        processingState: AudioProcessingState.ready,
-        playing: _player.isPlaying,
+        processingState:
+            _player.isLoadingTrack ||
+                (_player.isPlaybackRequested && !_player.isPlaying)
+            ? AudioProcessingState.buffering
+            : AudioProcessingState.ready,
+        playing: _player.isPlaybackRequested,
         updatePosition: _player.position,
         speed: _player.rate,
       ),
@@ -87,11 +140,10 @@ final class FundusAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> play() =>
-      _player.isPlaying ? Future.value() : _player.playOrPause();
+      _player.isPlaybackRequested ? Future.value() : _player.playOrPause();
 
   @override
-  Future<void> pause() =>
-      _player.isPlaying ? _player.playOrPause() : Future.value();
+  Future<void> pause() => _player.pause();
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
@@ -114,5 +166,15 @@ final class FundusAudioHandler extends BaseAudioHandler {
     await stop();
   }
 
-  void detach() => _player.removeListener(_publish);
+  void detach() {
+    _player.removeListener(_publish);
+    for (final subscription in _focusSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    if (_session != null) {
+      _player.requestAudioFocus = null;
+      _player.releaseAudioFocus = null;
+      unawaited(_session!.setActive(false));
+    }
+  }
 }

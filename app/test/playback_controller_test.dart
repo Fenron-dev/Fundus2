@@ -29,6 +29,7 @@ final class FakeEngine implements PlaybackEngine {
   bool playing = false;
   bool stopped = false;
   bool disposed = false;
+  Future<void> Function()? onOpen;
 
   void emitPosition(Duration value) => _position.add(value);
   void emitDuration(Duration value) => _duration.add(value);
@@ -55,6 +56,7 @@ final class FakeEngine implements PlaybackEngine {
   Future<void> open(Uri uri, {Duration start = Duration.zero}) async {
     opened.add(uri);
     starts.add(start);
+    await onOpen?.call();
   }
 
   @override
