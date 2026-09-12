@@ -129,6 +129,26 @@ void main() {
     ]);
   });
 
+  test('entfernt Kapitelbereiche am Ende eines Webnovel-Titels', () {
+    final candidate =
+        DocumentImporter(mediaRoots: LibraryConfiguration.defaults).group([
+          file(
+            'Webnovels/Nachtmeer - Kapitel 1-50.epub',
+            mimeType: 'application/epub+zip',
+          ),
+        ]).single;
+
+    expect(candidate.title, 'Nachtmeer');
+    expect(
+      normalizeDocumentWorkTitle('webnovel', 'Nachtmeer – Chapter 51 to 80'),
+      'Nachtmeer',
+    );
+    expect(
+      normalizeDocumentWorkTitle('ebook', 'Nachtmeer - Kapitel 1-50'),
+      'Nachtmeer - Kapitel 1-50',
+    );
+  });
+
   test('sorts webnovel chapters by natural chapter number', () {
     final importer = DocumentImporter(
       mediaRoots: LibraryConfiguration.defaults,

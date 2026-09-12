@@ -114,6 +114,7 @@ class _NavigationPaneState extends State<NavigationPane> {
     final favourites = scope.library.works
         .where((work) => work.summary.favourite)
         .length;
+    final rootEntries = _configuredRootEntries(scope);
 
     final entries = <NavigationEntry>[
       NavigationEntry(
@@ -155,6 +156,14 @@ class _NavigationPaneState extends State<NavigationPane> {
             active: activeType == type.id,
             onTap: () => scope.openMediaType(type.id),
           ),
+      for (final root in rootEntries)
+        NavigationEntry(
+          label: root.label,
+          icon: root.type.icon,
+          count: _formatCount(root.count),
+          active: scope.filter.mediaRoot == root.path,
+          onTap: () => scope.openMediaRoot(root.path, root.type.id),
+        ),
       if (unassigned > 0)
         NavigationEntry(
           label: 'Nicht zugeordnet',
@@ -179,6 +188,40 @@ class _NavigationPaneState extends State<NavigationPane> {
         ),
       ..._sourceEntries(context, scope),
     ];
+  }
+
+  List<({String path, String label, MediaTypeDefinition type, int count})>
+  _configuredRootEntries(FundusScopeState scope) {
+    final library = scope.library.library;
+    if (library == null) return const [];
+    final selected = scope.settings.navigationMediaRoots;
+    final entries =
+        <({String path, String label, MediaTypeDefinition type, int count})>[];
+    for (final type in MediaTypes.all) {
+      final kind = type.configurationKind;
+      if (kind == null) continue;
+      final sensitive = library.configuration.sensitiveRootsFor(kind).toSet();
+      for (final root in library.configuration.rootsFor(kind)) {
+        if (!selected.contains(root)) continue;
+        if (sensitive.contains(root) && !scope.protection.isUnlocked) continue;
+        final normalized = root.replaceAll('\\', '/').toLowerCase();
+        final count = scope.library.works.where((work) {
+          final path = work.summary.sourcePath
+              .replaceAll('\\', '/')
+              .toLowerCase();
+          return path == normalized || path.startsWith('$normalized/');
+        }).length;
+        if (count == 0) continue;
+        entries.add((
+          path: root,
+          label: root.split(RegExp(r'[/\\]')).last,
+          type: type,
+          count: count,
+        ));
+      }
+    }
+    entries.sort((left, right) => left.label.compareTo(right.label));
+    return entries;
   }
 
   List<Widget> _settingsEntries(BuildContext context, FundusScopeState scope) {

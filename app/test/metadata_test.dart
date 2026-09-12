@@ -351,6 +351,24 @@ void main() {
 
       expect(again.coverFetched, isTrue);
     });
+
+    test('ein fehlgeschlagenes Titelbild nennt den HTTP-Fehler', () async {
+      final result = await applyMetadata(
+        library: library,
+        work: work,
+        client: FakeHttp((_) => http.Response('', 503)),
+        candidate: const MetadataCandidate(
+          provider: 'tmdb',
+          providerId: '42',
+          title: 'Berserk',
+          posterUrl: 'https://image.example/cover.jpg',
+        ),
+      );
+
+      expect(result.coverFetched, isFalse);
+      expect(result.coverFailed, isTrue);
+      expect(result.coverFailure, 'HTTP 503');
+    });
   });
 
   group('Podcasts kommen aus dem Apple-Verzeichnis', () {

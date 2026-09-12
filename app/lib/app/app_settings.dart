@@ -224,6 +224,28 @@ class AppSettings extends ChangeNotifier {
   Future<void> setMediaTypeOrder(List<String> value) =>
       _set('media_type_order', value);
 
+  /// Media-root names that get their own first-class navigation entry.
+  ///
+  /// The classification itself stays in the vault; this is only a device UI
+  /// preference, so a phone and a desktop may organise their sidebar
+  /// differently without changing the library.
+  Set<String> get navigationMediaRoots {
+    final value = _values['navigation_media_roots'];
+    return value is List
+        ? value.whereType<String>().where((root) => root.isNotEmpty).toSet()
+        : const {};
+  }
+
+  Future<void> setMediaRootInNavigation(String root, bool visible) async {
+    final roots = {...navigationMediaRoots};
+    if (visible) {
+      roots.add(root);
+    } else {
+      roots.remove(root);
+    }
+    await _set('navigation_media_roots', roots.toList()..sort());
+  }
+
   /// Up to ten vault paths, most recent first.
   List<String> get recentVaults {
     final value = _values['recent_vaults'];

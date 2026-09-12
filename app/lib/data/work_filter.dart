@@ -30,6 +30,7 @@ final class WorkFilter {
     this.favouritesOnly = false,
     this.tags = const {},
     this.sourceId,
+    this.mediaRoot,
   });
 
   final String text;
@@ -63,20 +64,28 @@ final class WorkFilter {
   /// machine keeps its files.
   final String? sourceId;
 
+  /// A configured top-level media folder such as `Hentai` or `Webnovels`.
+  /// It complements the internal media type: two roots may both be anime but
+  /// remain independently selectable in navigation.
+  final String? mediaRoot;
+
   bool get hasActiveFilters =>
       text.isNotEmpty ||
       origins.isNotEmpty ||
       unassignedOnly ||
       favouritesOnly ||
       tags.isNotEmpty ||
-      sourceId != null;
+      sourceId != null ||
+      mediaRoot != null;
 
   int get activeFilterCount =>
       (text.isEmpty ? 0 : 1) +
       origins.length +
       (unassignedOnly ? 1 : 0) +
       (favouritesOnly ? 1 : 0) +
-      tags.length;
+      tags.length +
+      (sourceId == null ? 0 : 1) +
+      (mediaRoot == null ? 0 : 1);
 
   WorkFilter copyWith({
     String? text,
@@ -90,6 +99,8 @@ final class WorkFilter {
     Set<String>? tags,
     String? sourceId,
     bool clearSource = false,
+    String? mediaRoot,
+    bool clearMediaRoot = false,
   }) => WorkFilter(
     text: text ?? this.text,
     mediaTypeId: clearMediaType ? null : (mediaTypeId ?? this.mediaTypeId),
@@ -100,6 +111,7 @@ final class WorkFilter {
     favouritesOnly: favouritesOnly ?? this.favouritesOnly,
     tags: tags ?? this.tags,
     sourceId: clearSource ? null : (sourceId ?? this.sourceId),
+    mediaRoot: clearMediaRoot ? null : (mediaRoot ?? this.mediaRoot),
   );
 
   /// Wonach sich ein Werk filtern lässt: seine Schlagworte und seine Genres.
@@ -116,6 +128,7 @@ final class WorkFilter {
     if (favouritesOnly) reasons.add('die Beschränkung auf Favoriten');
     if (tags.isNotEmpty) reasons.add('die Schlagworte ${tags.join(', ')}');
     if (sourceId != null) reasons.add('das gewählte Gerät');
+    if (mediaRoot != null) reasons.add('der Medienordner „$mediaRoot“');
     if (origins.isNotEmpty) {
       reasons.add(
         'der Herkunftsfilter ${origins.map((o) => o.label).join(', ')}',
@@ -145,6 +158,7 @@ final class WorkFilter {
       if (type != null && work.mediaType?.id != type.id) return false;
       if (origins.isNotEmpty && !origins.contains(work.origin)) return false;
       if (sourceId != null && work.summary.sourceId != sourceId) return false;
+      if (mediaRoot != null && !_isBelowRoot(work, mediaRoot!)) return false;
       if (needle.isEmpty) return true;
       return work.title.toLowerCase().contains(needle) ||
           work.subtitle.toLowerCase().contains(needle);
@@ -152,6 +166,15 @@ final class WorkFilter {
 
     matched.sort(_comparator);
     return matched;
+  }
+
+  static bool _isBelowRoot(WorkView work, String root) {
+    final normalized = work.summary.sourcePath.replaceAll('\\', '/');
+    final wanted = root
+        .replaceAll('\\', '/')
+        .replaceAll(RegExp(r'^/+|/+$'), '');
+    return normalized.toLowerCase() == wanted.toLowerCase() ||
+        normalized.toLowerCase().startsWith('${wanted.toLowerCase()}/');
   }
 
   int Function(WorkView, WorkView) get _comparator => switch (sort) {

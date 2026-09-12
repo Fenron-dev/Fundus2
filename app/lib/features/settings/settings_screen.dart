@@ -425,34 +425,29 @@ class _Libraries extends StatelessWidget {
               Text(
                 'Eingelesen wird nur, was unter diesen Ordnernamen liegt. '
                 'Die Zuordnung steht in der Bibliothek und gilt auf jedem '
-                'Gerät.',
+                'Gerät. Ordner mit Inhalt können auf diesem Gerät zusätzlich '
+                'einen eigenen Punkt in der Seitenleiste erhalten.',
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: tokens.textMuted),
               ),
               const SizedBox(height: FundusSpace.x4),
               for (final entry in _mediaRoots(scope))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: FundusSpace.x2),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 190,
-                        child: Text(
-                          entry.$1,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: tokens.textFaint),
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          entry.$2,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                      ),
-                    ],
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(entry.root),
+                  subtitle: Text(
+                    '${entry.typeLabel} · ${entry.count} Werke'
+                    '${entry.sensitive ? ' · Schutzmodus' : ''}',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: tokens.textFaint),
                   ),
+                  value: scope.settings.navigationMediaRoots.contains(
+                    entry.root,
+                  ),
+                  onChanged: (visible) => scope.settings
+                      .setMediaRootInNavigation(entry.root, visible),
                 ),
             ],
           ),
@@ -690,18 +685,41 @@ class _ScanCardState extends State<_ScanCard> {
   }
 }
 
-/// The configured media roots, as area label and folder names.
-List<(String, String)> _mediaRoots(FundusScopeState scope) {
+/// Configured roots that actually contain indexed works.
+///
+/// Defaults contain several language aliases, so listing every configured
+/// name would turn this into a long list of folders that do not exist. A root
+/// becomes relevant as soon as the index contains at least one work below it.
+List<({String typeLabel, String root, bool sensitive, int count})> _mediaRoots(
+  FundusScopeState scope,
+) {
   final library = scope.library.library;
   if (library == null) return const [];
-  final entries = <(String, String)>[];
+  final entries =
+      <({String typeLabel, String root, bool sensitive, int count})>[];
   for (final type in MediaTypes.all) {
     final kind = type.configurationKind;
     if (kind == null) continue;
+    final sensitive = library.configuration.sensitiveRootsFor(kind).toSet();
     final roots = library.configuration.rootsFor(kind);
-    if (roots.isEmpty) continue;
-    entries.add((type.label, roots.join(' · ')));
+    for (final root in roots) {
+      final wanted = root.replaceAll('\\', '/').toLowerCase();
+      final count = scope.library.works.where((work) {
+        final path = work.summary.sourcePath
+            .replaceAll('\\', '/')
+            .toLowerCase();
+        return path == wanted || path.startsWith('$wanted/');
+      }).length;
+      if (count == 0) continue;
+      entries.add((
+        typeLabel: type.label,
+        root: root,
+        sensitive: sensitive.contains(root),
+        count: count,
+      ));
+    }
   }
+  entries.sort((left, right) => left.root.compareTo(right.root));
   return entries;
 }
 
@@ -2874,9 +2892,30 @@ class _Sharing extends StatelessWidget {
                 _PairingInvitation(host: host, session: session),
             ],
           ],
-          if (host.pairedDevices.isNotEmpty) ...[
-            const SizedBox(height: FundusSpace.x4),
-            Text('Gekoppelte Geräte', style: theme.textTheme.labelLarge),
+          const SizedBox(height: FundusSpace.x4),
+          Text(
+            'Gekoppelte Geräte & Freigaben',
+            style: theme.textTheme.labelLarge,
+          ),
+          const SizedBox(height: FundusSpace.x1),
+          Text(
+            'Hier legst du serverseitig fest, welche Bibliotheken und '
+            'Schutzinhalte jedes bereits gekoppelte Gerät abrufen darf. '
+            '„Verbundene Geräte" weiter unten sind dagegen Server, die '
+            'dieses Gerät selbst verwendet.',
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+          ),
+          if (host.pairedDevices.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: FundusSpace.x2),
+              child: Text(
+                'Noch kein Gerät gekoppelt.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+            )
+          else ...[
             for (final device in host.pairedDevices)
               _PairedDeviceAccessTile(device: device, host: host),
           ],

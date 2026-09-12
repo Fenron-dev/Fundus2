@@ -14,6 +14,7 @@ WorkView work({
   String availability = 'available',
   DateTime? addedAt,
   List<String> tags = const [],
+  String sourcePath = '',
 }) => WorkView.fromSummary(
   LibraryWorkSummary(
     id: id,
@@ -25,6 +26,7 @@ WorkView work({
     series: series,
     availability: availability,
     tags: tags,
+    sourcePath: sourcePath,
   ),
 );
 
@@ -67,6 +69,20 @@ void main() {
 
     expect(audiobooks.map((w) => w.id), unorderedEquals(['a', 'b']));
     expect(unassigned.map((w) => w.id), ['d']);
+  });
+
+  test('ein Medienordner grenzt Werke desselben Typs getrennt ein', () {
+    final sameType = [
+      work(id: 'normal', title: 'Normal', kind: 'anime', sourcePath: 'Anime/A'),
+      work(id: 'hhh', title: 'Separat', kind: 'anime', sourcePath: 'H-Anime/B'),
+    ];
+
+    final filtered = const WorkFilter(
+      mediaTypeId: 'anime',
+      mediaRoot: 'H-Anime',
+    ).apply(sameType);
+
+    expect(filtered.map((entry) => entry.id), ['hhh']);
   });
 
   test('die Suche greift auf Titel und Untertitel', () {

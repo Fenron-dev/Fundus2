@@ -127,6 +127,8 @@ class _BulkMetadataState extends State<_BulkMetadata> {
               _Outcome.applied,
               note: result.coverFetched
                   ? '${result.title} · mit Bild'
+                  : result.coverFailed
+                  ? '${result.title} · ${result.coverFailure ?? 'Bildabruf fehlgeschlagen'}'
                   : result.title,
             ),
           );

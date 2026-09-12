@@ -210,7 +210,11 @@ final class DocumentImporter {
       final key = '$kind\u0000$sourcePath';
       final group = grouped.putIfAbsent(
         key,
-        () => _DocumentGroup(kind: kind, sourcePath: sourcePath, title: title),
+        () => _DocumentGroup(
+          kind: kind,
+          sourcePath: sourcePath,
+          title: normalizeDocumentWorkTitle(kind, title),
+        ),
       );
       group.contentSensitivity ??= area.contentSensitivity;
       group.files.add(file);
@@ -326,6 +330,28 @@ final class DocumentImporter {
         'book' => 'ebook',
         _ => configurationKind,
       };
+}
+
+/// Removes chapter ranges that describe a webnovel file, not the work.
+///
+/// Downloaders commonly produce names such as `Nachtmeer - Kapitel 1-50`.
+/// Keeping that suffix makes every later batch look like a different novel.
+/// The rule is deliberately limited to webnovels and to a suffix at the end;
+/// a legitimate title containing the word "Kapitel" is left alone.
+String normalizeDocumentWorkTitle(String kind, String title) {
+  if (kind != 'webnovel') return title;
+  final cleaned = title
+      .replaceFirst(
+        RegExp(
+          r'\s*(?:[-–—_:]|\[)\s*'
+          r'(?:kapitel|chapter|chapters|ch\.?)\s*\d+'
+          r'(?:\s*(?:[-–—]|bis|to)\s*\d+)?\s*\]?\s*$',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .trim();
+  return cleaned.isEmpty ? title : cleaned;
 }
 
 final class _DocumentGroup {

@@ -447,6 +447,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       _filter = _filter.copyWith(
         sourceId: sourceId,
         clearSource: sourceId == null,
+        clearMediaRoot: true,
       );
     });
     navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
@@ -463,6 +464,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         mediaTypeId: mediaTypeId,
         clearMediaType: false,
         clearSource: false,
+        clearMediaRoot: true,
       );
     });
     navigation.go(LibraryRoute(mediaTypeId: mediaTypeId));
@@ -1002,6 +1004,21 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       _filter = _filter.copyWith(
         mediaTypeId: mediaTypeId,
         clearMediaType: mediaTypeId == null,
+        clearMediaRoot: true,
+        text: '',
+      );
+    });
+    navigation.go(LibraryRoute(mediaTypeId: mediaTypeId));
+  }
+
+  /// Opens one configured media folder as its own shelf while retaining its
+  /// internal type for reader/player behaviour.
+  void openMediaRoot(String root, String mediaTypeId) {
+    _bump(() {
+      _filter = _filter.copyWith(
+        mediaRoot: root,
+        mediaTypeId: mediaTypeId,
+        clearSource: true,
         text: '',
       );
     });

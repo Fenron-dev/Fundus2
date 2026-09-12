@@ -714,7 +714,8 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
                   ? '„${result.title}" verknüpft — nichts überschrieben.'
                   : result.coverFailed
                   ? '„${result.title}" übernommen — das Titelbild kam '
-                        'nicht an.'
+                        'nicht an: '
+                        '${result.coverFailure ?? 'unbekannter Fehler'}.'
                   : result.coverFetched && result.backdropFetched
                   ? '„${result.title}" übernommen, mit Titelbild und '
                         'Breitbild.'

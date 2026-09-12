@@ -342,6 +342,38 @@ void main() {
       expect(third.isRunning, isFalse);
     },
   );
+
+  test(
+    'gekoppelte Geräte sind auch bei ausgeschaltetem Server sichtbar',
+    () async {
+      final ownRoot = await Directory.systemTemp.createTemp('fundus-pairs-');
+      addTearDown(() => ownRoot.delete(recursive: true));
+      final ownStore = ServerIdentityStore(ownRoot);
+      await ownStore.loadOrCreate();
+      await ownStore.saveSharing(false);
+      await ownStore.savePairedDevices([
+        FundusPairedDevice(
+          id: 'telefon',
+          name: 'S21 FE',
+          tokenHash: 'hash',
+          pairedAt: DateTime.utc(2026, 9, 12),
+          allowedLibraryIds: const {'familie'},
+        ),
+      ]);
+      final restored = ServerHostController(
+        settings: settings,
+        library: library,
+        identityStore: ownStore,
+      );
+      addTearDown(restored.dispose);
+
+      await restored.restore();
+
+      expect(restored.isRunning, isFalse);
+      expect(restored.pairedDevices.single.name, 'S21 FE');
+      expect(restored.pairedDevices.single.allowedLibraryIds, {'familie'});
+    },
+  );
 }
 
 /// The same invitation, pointing at the loopback.

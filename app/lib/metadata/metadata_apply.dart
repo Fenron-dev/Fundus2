@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 
+import '../app/fundus_log.dart';
 import '../data/work_view.dart';
 import 'podcast_feed.dart';
 
@@ -57,6 +58,7 @@ final class MetadataApplyResult {
     required this.provider,
     this.coverFetched = false,
     this.coverFailed = false,
+    this.coverFailure,
     this.backdropFetched = false,
     this.episodesDescribed = 0,
     this.feedRead = false,
@@ -68,6 +70,7 @@ final class MetadataApplyResult {
   final String provider;
   final bool coverFetched;
   final bool coverFailed;
+  final String? coverFailure;
 
   /// Whether a wide picture came down with it.
   final bool backdropFetched;
@@ -157,6 +160,7 @@ Future<MetadataApplyResult> applyMetadata({
 
   var fetched = false;
   var failed = false;
+  String? coverFailure;
   final poster = candidate.posterUrl;
   // A `cover.jpg` in the folder is somebody's decision and is left alone. A
   // picture Fundus fetched earlier is not — it was the best answer at the
@@ -167,13 +171,14 @@ Future<MetadataApplyResult> applyMetadata({
       wants(MetadataField.cover) &&
       poster != null &&
       !summary.hasFolderCover) {
-    final bytes = await fetchCoverBytes(poster, client: client);
-    if (bytes == null) {
+    final download = await _fetchCover(poster, client: client);
+    if (download.bytes == null) {
       failed = true;
+      coverFailure = download.failure;
     } else {
       await library.cacheGeneratedCover(
         workId: work.id,
-        bytes: bytes,
+        bytes: download.bytes!,
         extension: poster.toLowerCase().endsWith('.png') ? 'png' : 'jpg',
       );
       fetched = true;
@@ -249,6 +254,7 @@ Future<MetadataApplyResult> applyMetadata({
     provider: candidate.provider,
     coverFetched: fetched,
     coverFailed: failed,
+    coverFailure: coverFailure,
     backdropFetched: wide,
     episodesDescribed: described,
     feedRead: feedUrl != null,
@@ -262,20 +268,61 @@ Future<MetadataApplyResult> applyMetadata({
 /// failed match, so a picture that will not come down is reported and
 /// otherwise ignored.
 Future<Uint8List?> fetchCoverBytes(String url, {http.Client? client}) async {
+  return (await _fetchCover(url, client: client)).bytes;
+}
+
+final class _CoverDownload {
+  const _CoverDownload({this.bytes, this.failure});
+
+  final Uint8List? bytes;
+  final String? failure;
+}
+
+Future<_CoverDownload> _fetchCover(String url, {http.Client? client}) async {
   final own = client == null;
   final fetcher = client ?? http.Client();
   try {
     final response = await fetcher
-        .get(Uri.parse(url))
+        .get(
+          Uri.parse(url),
+          headers: const {
+            'accept': 'image/avif,image/webp,image/jpeg,image/png,*/*',
+            'user-agent': 'Fundus/2',
+          },
+        )
         .timeout(const Duration(seconds: 15));
-    if (response.statusCode < 200 || response.statusCode >= 300) return null;
-    if (response.bodyBytes.isEmpty) return null;
-    return response.bodyBytes;
-  } on Object {
-    return null;
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return _coverFailure(url, 'HTTP ${response.statusCode}');
+    }
+    if (response.bodyBytes.isEmpty) {
+      return _coverFailure(url, 'leere Antwort');
+    }
+    return _CoverDownload(bytes: response.bodyBytes);
+  } on HandshakeException {
+    return _coverFailure(
+      url,
+      'TLS-Zertifikat konnte unter Windows nicht geprüft werden',
+    );
+  } on TimeoutException {
+    return _coverFailure(url, 'Zeitüberschreitung beim Bildabruf');
+  } on SocketException {
+    return _coverFailure(url, 'Bildserver nicht erreichbar');
+  } on FormatException {
+    return _coverFailure(url, 'ungültige Bildadresse');
+  } on Object catch (error) {
+    return _coverFailure(url, 'Abruf fehlgeschlagen (${error.runtimeType})');
   } finally {
     if (own) fetcher.close();
   }
+}
+
+_CoverDownload _coverFailure(String url, String reason) {
+  final host = Uri.tryParse(url)?.host;
+  FundusLog.instance.warn('metadata.image', {
+    if (host != null && host.isNotEmpty) 'host': host,
+    'error': reason,
+  });
+  return _CoverDownload(failure: reason);
 }
 
 /// Writes what a show's feed says about each of its episodes.

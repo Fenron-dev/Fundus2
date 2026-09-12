@@ -2019,7 +2019,7 @@ final class FundusLibrary {
         source.absolutePath,
       );
       return candidate.copyWith(
-        title: publication.title,
+        title: normalizeDocumentWorkTitle(candidate.kind, publication.title),
         metadata: {
           ...candidate.metadata,
           if (publication.authors.isNotEmpty)

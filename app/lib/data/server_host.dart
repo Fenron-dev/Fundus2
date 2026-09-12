@@ -164,6 +164,12 @@ class ServerHostController extends ChangeNotifier {
   Future<void> restore() async {
     final store = _identityStore ??=
         await ServerIdentityStore.platformDefault();
+    // Pairings and their allow-lists belong to the device, not to the
+    // currently running socket. Load them even when sharing is switched off,
+    // otherwise Settings misleadingly shows no paired devices and offers no
+    // way to edit their library permissions until the server is started.
+    await _ensureIdentity();
+    notifyListeners();
     if (await store.loadSharing()) await start(remember: false);
   }
 
