@@ -3,6 +3,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../data/work_view.dart';
+import '../../data/media_type.dart';
 
 /// Editing a work by hand.
 ///
@@ -70,6 +71,8 @@ class _MetadataEditorState extends State<_MetadataEditor> {
           series: widget.work.summary.series,
         );
   bool _wholeSeries = false;
+  late String _kind = widget.work.summary.kind;
+  late bool _hhh = widget.work.summary.isHhh;
   bool _saving = false;
   String? _error;
 
@@ -115,6 +118,11 @@ class _MetadataEditorState extends State<_MetadataEditor> {
         publisher: _text('publisher').isEmpty ? null : _text('publisher'),
         publishedYear: int.tryParse(_text('year')),
         genres: _list('genres'),
+      );
+      widget.library.updateWorkKind(
+        workId: widget.work.id,
+        kind: _kind,
+        contentSensitivity: _hhh ? 'adult_explicit' : 'general',
       );
       // „Für alle Bände" schreibt nur, was eine Reihe gemeinsam hat. Ein
       // Band, der dabei nicht angenommen wird, hält den Rest nicht auf.
@@ -227,6 +235,35 @@ class _MetadataEditorState extends State<_MetadataEditor> {
                 label: 'Beschreibung',
                 controller: _fields['description']!,
                 lines: 5,
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: _kind,
+                decoration: const InputDecoration(
+                  labelText: 'Interner Medientyp',
+                  border: OutlineInputBorder(),
+                  helperText:
+                      'Steuert Player, Reader und die Bibliotheksgruppe.',
+                ),
+                items: [
+                  for (final type in MediaTypes.all)
+                    for (final kind in type.workKinds)
+                      DropdownMenuItem(value: kind, child: Text(type.label)),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _kind = value!),
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Als HHH kennzeichnen'),
+                subtitle: const Text(
+                  'Das Werk wird in Schutzmodus und auf eingeschränkten Geräten ausgeblendet.',
+                ),
+                value: _hhh,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _hhh = value),
               ),
               if (_siblings.isNotEmpty)
                 CheckboxListTile(

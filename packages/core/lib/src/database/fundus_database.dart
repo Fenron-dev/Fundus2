@@ -396,6 +396,8 @@ final class FundusDatabase {
       seriesSequence: identity.sequence,
       metadata: {
         'author': identity.author,
+        if (candidate.contentSensitivity != null)
+          'content_sensitivity': candidate.contentSensitivity,
         ...?candidate.absMetadata?.toDatabaseMetadata(),
       },
       source: candidate.metadataSource,

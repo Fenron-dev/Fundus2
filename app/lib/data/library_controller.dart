@@ -34,6 +34,7 @@ class LibraryController extends ChangeNotifier {
   Map<String, int> _lastRootCounts = const {};
   Map<String, int> _worksPerMediaType = const {};
   Map<String, int> _worksPerSource = const {};
+  Map<String, Map<String, int>> _worksPerSourceMediaType = const {};
   int _unassignedWorks = 0;
 
   /// Works this must not hand out at all.
@@ -57,6 +58,12 @@ class LibraryController extends ChangeNotifier {
   Map<String, int> get worksPerMediaType => _worksPerMediaType;
 
   Map<String, int> get worksPerSource => _worksPerSource;
+
+  /// Counts used by the expandable source shelf in the navigation. The inner
+  /// map is deliberately derived from the already filtered work list, so
+  /// protected or locally hidden sources never leak a count into navigation.
+  Map<String, Map<String, int>> get worksPerSourceMediaType =>
+      _worksPerSourceMediaType;
   int get unassignedWorkCount => _unassignedWorks;
   List<LibrarySource> get sources => _sources;
   LibraryIndexEvent? get scanProgress => _scanProgress;
@@ -98,10 +105,18 @@ class LibraryController extends ChangeNotifier {
 
   /// Assigns a folder to a media area and reads the library in again — the
   /// choice is stored with the vault, not with this device.
-  Future<void> assignFolder(String folder, String configurationKind) async {
+  Future<void> assignFolder(
+    String folder,
+    String configurationKind, {
+    bool sensitive = false,
+  }) async {
     final library = _library;
     if (library == null) return;
-    await library.assignMediaRoot(folder: folder, kind: configurationKind);
+    await library.assignMediaRoot(
+      folder: folder,
+      kind: configurationKind,
+      sensitive: sensitive,
+    );
     await scan();
   }
 
@@ -409,6 +424,7 @@ class LibraryController extends ChangeNotifier {
   void _countWorks() {
     final byType = <String, int>{};
     final bySource = <String, int>{};
+    final bySourceType = <String, Map<String, int>>{};
     var unassigned = 0;
     for (final work in _works) {
       final type = work.mediaType;
@@ -419,9 +435,18 @@ class LibraryController extends ChangeNotifier {
       }
       final source = work.summary.sourceId;
       bySource[source] = (bySource[source] ?? 0) + 1;
+      final typeCounts = bySourceType.putIfAbsent(
+        source,
+        () => <String, int>{},
+      );
+      if (type != null) typeCounts[type.id] = (typeCounts[type.id] ?? 0) + 1;
     }
     _worksPerMediaType = Map.unmodifiable(byType);
     _worksPerSource = Map.unmodifiable(bySource);
+    _worksPerSourceMediaType = Map.unmodifiable({
+      for (final entry in bySourceType.entries)
+        entry.key: Map.unmodifiable(entry.value),
+    });
     _unassignedWorks = unassigned;
   }
 

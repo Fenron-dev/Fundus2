@@ -368,6 +368,45 @@ void main() {
     },
   );
 
+  test('paired devices only see libraries in their allow-list', () async {
+    const deviceToken = 'scoped-device-token';
+    final authority = FundusPairingAuthority(
+      devices: [
+        FundusPairedDevice(
+          id: 'phone-scoped',
+          name: 'Telefon',
+          tokenHash: FundusPairingAuthority.tokenDigest(deviceToken),
+          pairedAt: DateTime.utc(2026, 1, 1),
+          allowedLibraryIds: {firstLibrary.manifest.libraryId},
+        ),
+      ],
+    );
+    final pairedServer = FundusServerHandler(
+      token: 'secret',
+      serverId: 'server-test',
+      registry: registry,
+      pairingAuthority: authority,
+    );
+    Request request(String path) => Request(
+      'GET',
+      Uri.parse('http://localhost$path'),
+      headers: {'authorization': 'Bearer $deviceToken'},
+    );
+
+    final libraries = await pairedServer.handler(request('/v1/libraries'));
+    final listed = (await _json(libraries))['libraries']! as List<dynamic>;
+    expect(listed, hasLength(1));
+    expect(
+      (listed.single as Map<String, dynamic>)['id'],
+      firstLibrary.manifest.libraryId,
+    );
+
+    final denied = await pairedServer.handler(
+      request('/v1/libraries/${secondLibrary.manifest.libraryId}/works'),
+    );
+    expect(denied.statusCode, 404);
+  });
+
   test('returns work details and opaque file IDs', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final response = await _get(

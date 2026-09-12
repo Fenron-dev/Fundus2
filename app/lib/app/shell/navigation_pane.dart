@@ -34,7 +34,7 @@ final class NavigationEntry {
 /// There is never a second sidebar. Sub-areas such as the settings take this
 /// same column over, keeping the vault switch at the top and downloads,
 /// settings and the device at the bottom.
-class NavigationPane extends StatelessWidget {
+class NavigationPane extends StatefulWidget {
   const NavigationPane({
     super.key,
     required this.collapsed,
@@ -52,6 +52,16 @@ class NavigationPane extends StatelessWidget {
   final VoidCallback? onNavigate;
 
   @override
+  State<NavigationPane> createState() => _NavigationPaneState();
+}
+
+class _NavigationPaneState extends State<NavigationPane> {
+  final Set<String> _expandedSources = <String>{};
+
+  bool get collapsed => widget.collapsed;
+  VoidCallback? get onNavigate => widget.onNavigate;
+
+  @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
     final tokens = context.fundus;
@@ -60,7 +70,7 @@ class NavigationPane extends StatelessWidget {
 
     return Container(
       width:
-          width ??
+          widget.width ??
           (collapsed
               ? FundusShellMetrics.navigationCollapsedWidth
               : FundusShellMetrics.navigationWidth),
@@ -206,13 +216,18 @@ class NavigationPane extends StatelessWidget {
   /// called „dieses Gerät" is a line of furniture.
   List<Widget> _sourceEntries(BuildContext context, FundusScopeState scope) {
     final mirrored = scope.library.sources
-        .where((source) => !source.isVault)
+        .where(
+          (source) =>
+              !source.isVault &&
+              !scope.settings.hiddenSourceIds.contains(source.id),
+        )
         .toList();
     if (mirrored.isEmpty) return const [];
 
     final counts = scope.library.worksPerSource;
     final route = scope.navigation.current;
     final active = route is LibraryRoute ? scope.filter.sourceId : null;
+    final activeType = route is LibraryRoute ? route.mediaTypeId : null;
 
     return [
       _NavigationTile(
@@ -225,25 +240,50 @@ class NavigationPane extends StatelessWidget {
         ),
       ),
       for (final source in [
-        ...scope.library.sources.where((source) => source.isVault),
+        ...scope.library.sources.where(
+          (source) =>
+              source.isVault &&
+              !scope.settings.hiddenSourceIds.contains(source.id),
+        ),
         ...mirrored,
       ])
-        _NavigationTile(
+        _SourceNavigationGroup(
+          source: source,
           collapsed: collapsed,
+          expanded: _expandedSources.contains(source.id),
+          count: _formatCount(counts[source.id] ?? 0),
+          active: active == source.id,
+          onToggle: () => setState(() {
+            if (!_expandedSources.add(source.id)) {
+              _expandedSources.remove(source.id);
+            }
+          }),
           onNavigate: onNavigate,
-          entry: NavigationEntry(
-            label: source.isVault ? 'Auf diesem Gerät' : source.displayName,
-            icon: source.isVault
-                ? FundusIcons.originLocal
-                : switch (source.status) {
-                    LibrarySourceStatus.available => FundusIcons.originStream,
-                    _ => FundusIcons.originUnreachable,
-                  },
-            count: _formatCount(counts[source.id] ?? 0),
-            active: active == source.id,
-            onTap: () =>
-                scope.showSource(active == source.id ? null : source.id),
-          ),
+          onSelect: () =>
+              scope.showSource(active == source.id ? null : source.id),
+          typeEntries: [
+            for (final type in MediaTypes.ordered(
+              scope.settings.mediaTypeOrder,
+            ))
+              if (scope.library.worksPerSourceMediaType[source.id]?[type.id] !=
+                      null &&
+                  scope.library.worksPerSourceMediaType[source.id]![type.id]! >
+                      0)
+                _NavigationTile(
+                  collapsed: false,
+                  onNavigate: onNavigate,
+                  entry: NavigationEntry(
+                    label: type.label,
+                    icon: type.icon,
+                    count: _formatCount(
+                      scope.library.worksPerSourceMediaType[source.id]![type
+                          .id]!,
+                    ),
+                    active: active == source.id && activeType == type.id,
+                    onTap: () => scope.showSourceMediaType(source.id, type.id),
+                  ),
+                ),
+          ],
         ),
     ];
   }
@@ -283,6 +323,100 @@ class NavigationPane extends StatelessWidget {
       buffer.write(text[i]);
     }
     return buffer.toString();
+  }
+}
+
+class _SourceNavigationGroup extends StatelessWidget {
+  const _SourceNavigationGroup({
+    required this.source,
+    required this.collapsed,
+    required this.expanded,
+    required this.count,
+    required this.active,
+    required this.onToggle,
+    required this.onNavigate,
+    required this.onSelect,
+    required this.typeEntries,
+  });
+
+  final LibrarySource source;
+  final bool collapsed;
+  final bool expanded;
+  final String count;
+  final bool active;
+  final VoidCallback onToggle;
+  final VoidCallback? onNavigate;
+  final VoidCallback onSelect;
+  final List<Widget> typeEntries;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final icon = source.isVault
+        ? FundusIcons.originLocal
+        : switch (source.status) {
+            LibrarySourceStatus.available => FundusIcons.originStream,
+            _ => FundusIcons.originUnreachable,
+          };
+    final tile = InkWell(
+      onTap: collapsed ? onSelect : onToggle,
+      borderRadius: FundusRadius.mdAll,
+      hoverColor: tokens.hover,
+      child: Container(
+        height: 32,
+        padding: EdgeInsets.symmetric(
+          horizontal: collapsed ? 0 : FundusSpace.x3,
+        ),
+        decoration: BoxDecoration(
+          color: active ? tokens.surfaceRaised : null,
+          borderRadius: FundusRadius.mdAll,
+        ),
+        child: Row(
+          mainAxisAlignment: collapsed
+              ? MainAxisAlignment.center
+              : MainAxisAlignment.start,
+          children: [
+            Icon(icon, size: FundusIcons.sizeMd, color: tokens.textMuted),
+            if (!collapsed) ...[
+              const SizedBox(width: FundusSpace.x3),
+              Expanded(
+                child: Text(
+                  source.isVault ? 'Auf diesem Gerät' : source.displayName,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+              Text(
+                count,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
+              ),
+              const SizedBox(width: FundusSpace.x1),
+              Icon(
+                expanded ? FundusIcons.expand : FundusIcons.collapse,
+                size: FundusIcons.sizeSm,
+                color: tokens.textFaint,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+    final body = <Widget>[
+      Padding(
+        padding: EdgeInsets.only(
+          left: collapsed ? FundusSpace.x2 : 0,
+          right: collapsed ? FundusSpace.x2 : 0,
+          bottom: 1,
+        ),
+        child: collapsed
+            ? Tooltip(message: source.displayName, child: tile)
+            : tile,
+      ),
+      if (!collapsed && expanded) ...typeEntries,
+    ];
+    return Column(children: body);
   }
 }
 

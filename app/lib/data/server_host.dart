@@ -481,6 +481,21 @@ class ServerHostController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Restricts one paired device to the selected shared libraries. `null`
+  /// restores the legacy behaviour where every shared library is visible.
+  Future<void> setDeviceLibraries(
+    String deviceId,
+    Set<String>? libraryIds,
+  ) async {
+    await _pairing?.setAllowedLibraries(deviceId, libraryIds);
+    notifyListeners();
+  }
+
+  Future<void> setDeviceAdultExplicit(String deviceId, bool allowed) async {
+    await _pairing?.setAdultExplicitAllowed(deviceId, allowed);
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     library.removeListener(_followLibrary);

@@ -249,9 +249,11 @@ class AppSettings extends ChangeNotifier {
   Future<void> setServerLibraries(List<ServerLibraryPreference> value) =>
       _set('server_libraries', [for (final entry in value) entry.toJson()]);
 
-  /// Peer sources hidden from this installation's combined catalogue. The
-  /// source rows and their catalogues remain in the shell vault; this is only
-  /// a local visibility preference, like Plex's library visibility setting.
+  /// Sources hidden from this installation's combined catalogue. The source
+  /// rows and their catalogues remain in the shell vault; this is only a local
+  /// visibility preference, like Plex's library visibility setting. The local
+  /// shell source can be hidden too, which allows a temporary presentation
+  /// profile without deleting offline data.
   List<String> get hiddenSourceIds {
     final value = _values['hidden_source_ids'];
     return value is List

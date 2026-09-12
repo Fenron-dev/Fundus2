@@ -12,6 +12,7 @@ final class FundusPairedDevice {
     required this.pairedAt,
     this.lastSeenAt,
     this.allowAdultExplicit = false,
+    this.allowedLibraryIds,
   });
 
   final String id;
@@ -21,6 +22,10 @@ final class FundusPairedDevice {
   final DateTime? lastSeenAt;
   final bool allowAdultExplicit;
 
+  /// Null means every currently shared library. A non-null set is an explicit
+  /// allow-list for this device; an empty set therefore sees no catalogue.
+  final Set<String>? allowedLibraryIds;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'name': name,
@@ -29,6 +34,8 @@ final class FundusPairedDevice {
     if (lastSeenAt != null)
       'last_seen_at': lastSeenAt!.toUtc().toIso8601String(),
     'allow_adult_explicit': allowAdultExplicit,
+    if (allowedLibraryIds != null)
+      'allowed_library_ids': allowedLibraryIds!.toList()..sort(),
   };
 
   static FundusPairedDevice? fromJson(Object? value) {
@@ -51,6 +58,12 @@ final class FundusPairedDevice {
       pairedAt: pairedAt,
       lastSeenAt: lastSeenAt,
       allowAdultExplicit: value['allow_adult_explicit'] == true,
+      allowedLibraryIds: value['allowed_library_ids'] is List
+          ? (value['allowed_library_ids'] as List)
+                .whereType<String>()
+                .where((id) => id.trim().isNotEmpty)
+                .toSet()
+          : null,
     );
   }
 }
@@ -213,6 +226,7 @@ final class FundusPairingAuthority {
       pairedAt: device.pairedAt,
       lastSeenAt: now,
       allowAdultExplicit: device.allowAdultExplicit,
+      allowedLibraryIds: device.allowedLibraryIds,
     );
     final callback = onChanged;
     if (callback != null) unawaited(callback(devices));
@@ -233,6 +247,7 @@ final class FundusPairingAuthority {
       pairedAt: current.pairedAt,
       lastSeenAt: current.lastSeenAt,
       allowAdultExplicit: current.allowAdultExplicit,
+      allowedLibraryIds: current.allowedLibraryIds,
     );
     await _notifyChanged();
   }
@@ -247,12 +262,44 @@ final class FundusPairingAuthority {
       pairedAt: current.pairedAt,
       lastSeenAt: current.lastSeenAt,
       allowAdultExplicit: allowed,
+      allowedLibraryIds: current.allowedLibraryIds,
     );
     await _notifyChanged();
   }
 
   bool adultExplicitAllowed(String deviceId) =>
       _devices[deviceId]?.allowAdultExplicit ?? false;
+
+  /// Whether a paired device may see one of the currently shared libraries.
+  /// The absence of an allow-list preserves the original all-libraries
+  /// behaviour for existing pairings.
+  bool libraryAllowed(String deviceId, String libraryId) {
+    final allowed = _devices[deviceId]?.allowedLibraryIds;
+    return allowed == null || allowed.contains(libraryId);
+  }
+
+  Future<void> setAllowedLibraries(
+    String deviceId,
+    Set<String>? libraryIds,
+  ) async {
+    final current = _devices[deviceId];
+    if (current case final device?) {
+      final normalized = libraryIds
+          ?.map((id) => id.trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      _devices[deviceId] = FundusPairedDevice(
+        id: device.id,
+        name: device.name,
+        tokenHash: device.tokenHash,
+        pairedAt: device.pairedAt,
+        lastSeenAt: device.lastSeenAt,
+        allowAdultExplicit: device.allowAdultExplicit,
+        allowedLibraryIds: normalized,
+      );
+      await _notifyChanged();
+    }
+  }
 
   Future<void> _notifyChanged() async {
     final callback = onChanged;

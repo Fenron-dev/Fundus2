@@ -115,11 +115,13 @@ final class DocumentImportCandidate {
 /// keeps arbitrary folders outside those roots untouched and prevents an
 /// audiobook's neighboring cover from becoming a separate image work.
 final class DocumentImporter {
-  DocumentImporter({required Map<String, Iterable<String>> mediaRoots})
-    : _areas = MediaAreaMap({
-        for (final entry in mediaRoots.entries)
-          if (_supportedKinds.contains(entry.key)) entry.key: entry.value,
-      });
+  DocumentImporter({
+    required Map<String, Iterable<String>> mediaRoots,
+    Map<String, Iterable<String>> sensitiveRoots = const {},
+  }) : _areas = MediaAreaMap({
+         for (final entry in mediaRoots.entries)
+           if (_supportedKinds.contains(entry.key)) entry.key: entry.value,
+       }, sensitiveRoots: sensitiveRoots);
 
   static const _supportedKinds = {
     'book',
@@ -210,6 +212,7 @@ final class DocumentImporter {
         key,
         () => _DocumentGroup(kind: kind, sourcePath: sourcePath, title: title),
       );
+      group.contentSensitivity ??= area.contentSensitivity;
       group.files.add(file);
     }
     final candidates = [
@@ -220,6 +223,10 @@ final class DocumentImporter {
           title: group.title,
           files: group.files..sort(_compareFiles),
           coverFile: _cover(group.files, group.kind, title: group.title),
+          metadata: {
+            if (group.contentSensitivity != null)
+              'content_sensitivity': group.contentSensitivity,
+          },
         ),
     ];
     candidates.sort((left, right) {
@@ -331,5 +338,6 @@ final class _DocumentGroup {
   final String kind;
   final String sourcePath;
   final String title;
+  String? contentSensitivity;
   final List<ScannedFile> files = [];
 }

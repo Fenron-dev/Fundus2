@@ -30,6 +30,7 @@ final class AudiobookImportCandidate {
     this.usesFallbackIdentity = false,
     this.absMetadata,
     this.metadataSource = WorkMetadataSource.filename,
+    this.contentSensitivity,
   });
 
   /// The `works.kind` this candidate becomes — `audiobook`, `album` or
@@ -43,11 +44,13 @@ final class AudiobookImportCandidate {
   final bool usesFallbackIdentity;
   final AbsAudiobookMetadata? absMetadata;
   final WorkMetadataSource metadataSource;
+  final String? contentSensitivity;
 
   AudiobookImportCandidate copyWith({
     AbsBookIdentity? identity,
     AbsAudiobookMetadata? absMetadata,
     WorkMetadataSource? metadataSource,
+    String? contentSensitivity,
   }) => AudiobookImportCandidate(
     identity: identity ?? this.identity,
     directory: directory,
@@ -57,6 +60,7 @@ final class AudiobookImportCandidate {
     usesFallbackIdentity: usesFallbackIdentity,
     absMetadata: absMetadata ?? this.absMetadata,
     metadataSource: metadataSource ?? this.metadataSource,
+    contentSensitivity: contentSensitivity ?? this.contentSensitivity,
   );
 }
 
@@ -162,6 +166,7 @@ final class AbsImporter {
           audioFiles: audio,
           coverFiles: covers,
           kind: kind,
+          contentSensitivity: area?.contentSensitivity,
           usesFallbackIdentity: parsedIdentity == null,
         ),
       );

@@ -6,6 +6,7 @@ final class MediaAreaMatch {
     required this.kind,
     required this.rootParts,
     required this.remainder,
+    this.contentSensitivity,
   });
 
   /// The configuration key of the area — `audiobook`, `music`, `manga` …
@@ -16,6 +17,10 @@ final class MediaAreaMatch {
 
   /// What is left below the area folder.
   final List<String> remainder;
+
+  /// Optional policy attached to the configured root. `adult_explicit` is
+  /// rendered as HHH throughout the app and is enforced by paired servers.
+  final String? contentSensitivity;
 
   String get rootPath => p.posix.joinAll(rootParts);
 }
@@ -36,15 +41,28 @@ final class MediaAreaMatch {
 /// declare a name at the same depth, the longer declaration wins, so
 /// `Medien/Meine Hörbücher` beats a bare `Medien`.
 final class MediaAreaMap {
-  MediaAreaMap(Map<String, Iterable<String>> mediaRoots)
-    : _roots = [
-        for (final entry in mediaRoots.entries)
-          for (final root in entry.value)
-            if (splitPath(root).isNotEmpty)
-              (kind: entry.key, parts: splitPath(root)),
-      ]..sort((left, right) => right.parts.length.compareTo(left.parts.length));
+  MediaAreaMap(
+    Map<String, Iterable<String>> mediaRoots, {
+    Map<String, Iterable<String>> sensitiveRoots = const {},
+  }) : _roots =
+           [
+             for (final entry in mediaRoots.entries)
+               for (final root in entry.value)
+                 if (splitPath(root).isNotEmpty)
+                   (
+                     kind: entry.key,
+                     parts: splitPath(root),
+                     sensitive: (sensitiveRoots[entry.key] ?? const []).any(
+                       (candidate) =>
+                           splitPath(candidate).join('/').toLowerCase() ==
+                           splitPath(root).join('/').toLowerCase(),
+                     ),
+                   ),
+           ]..sort(
+             (left, right) => right.parts.length.compareTo(left.parts.length),
+           );
 
-  final List<({String kind, List<String> parts})> _roots;
+  final List<({String kind, List<String> parts, bool sensitive})> _roots;
 
   bool get isEmpty => _roots.isEmpty;
 
@@ -70,6 +88,7 @@ final class MediaAreaMap {
           kind: root.kind,
           rootParts: parts.sublist(0, start + root.parts.length),
           remainder: parts.sublist(start + root.parts.length),
+          contentSensitivity: root.sensitive ? 'adult_explicit' : null,
         );
       }
     }

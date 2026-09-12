@@ -452,6 +452,22 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     navigation.go(LibraryRoute(mediaTypeId: _filter.mediaTypeId));
   }
 
+  /// Opens one media shelf below one source. Keeping this as a single filter
+  /// operation means the mobile navigation and the desktop source list use
+  /// the same combined catalogue rather than inventing a second library
+  /// screen for every server.
+  void showSourceMediaType(String sourceId, String mediaTypeId) {
+    _bump(() {
+      _filter = _filter.copyWith(
+        sourceId: sourceId,
+        mediaTypeId: mediaTypeId,
+        clearMediaType: false,
+        clearSource: false,
+      );
+    });
+    navigation.go(LibraryRoute(mediaTypeId: mediaTypeId));
+  }
+
   /// Der Würfel hinter „Vorschlag für heute".
   ///
   /// Für heute heißt: für heute. Vorher wurde bei jedem Aufbau neu gewürfelt

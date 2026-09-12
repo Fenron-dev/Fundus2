@@ -406,9 +406,20 @@ class _Libraries extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Medienordner',
-                style: Theme.of(context).textTheme.titleSmall,
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Medienordner',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _addMediaRoot(context, scope),
+                    icon: Icon(FundusIcons.add, size: FundusIcons.sizeSm),
+                    label: const Text('Hinzufügen'),
+                  ),
+                ],
               ),
               const SizedBox(height: FundusSpace.x2),
               Text(
@@ -474,27 +485,21 @@ class _Libraries extends StatelessWidget {
                 ),
                 if (source.isVault)
                   FundusTag('Auf diesem Gerät', tone: FundusTagTone.outline)
-                else ...[
+                else
                   FundusTag('Server', tone: FundusTagTone.outline),
-                  const SizedBox(width: FundusSpace.x2),
-                  Tooltip(
-                    message: scope.settings.hiddenSourceIds.contains(source.id)
-                        ? 'Bibliothek einblenden'
-                        : 'Bibliothek ausblenden',
-                    child: Switch.adaptive(
-                      value: !scope.settings.hiddenSourceIds.contains(
-                        source.id,
-                      ),
-                      onChanged: (visible) async {
-                        await scope.settings.setSourceVisible(
-                          source.id,
-                          visible,
-                        );
-                        scope.library.refresh();
-                      },
-                    ),
+                const SizedBox(width: FundusSpace.x2),
+                Tooltip(
+                  message: scope.settings.hiddenSourceIds.contains(source.id)
+                      ? 'Bibliothek einblenden'
+                      : 'Bibliothek ausblenden',
+                  child: Switch.adaptive(
+                    value: !scope.settings.hiddenSourceIds.contains(source.id),
+                    onChanged: (visible) async {
+                      await scope.settings.setSourceVisible(source.id, visible);
+                      scope.library.refresh();
+                    },
                   ),
-                ],
+                ),
               ],
             ),
           ),
@@ -519,6 +524,25 @@ class _Libraries extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _addMediaRoot(
+    BuildContext context,
+    FundusScopeState scope,
+  ) async {
+    final assignable = MediaTypes.all
+        .where((type) => type.configurationKind != null)
+        .toList(growable: false);
+    final result = await showMediaRootAssignmentDialog(
+      context,
+      assignable: assignable,
+    );
+    if (result == null) return;
+    await scope.library.assignFolder(
+      result.folder,
+      result.kind,
+      sensitive: result.sensitive,
     );
   }
 }
@@ -2854,29 +2878,7 @@ class _Sharing extends StatelessWidget {
             const SizedBox(height: FundusSpace.x4),
             Text('Gekoppelte Geräte', style: theme.textTheme.labelLarge),
             for (final device in host.pairedDevices)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: FundusConnectionDot(
-                  state: host.connectionFor(device),
-                  showLabel: false,
-                ),
-                title: Text(device.name),
-                subtitle: Text(
-                  host.connectionFor(device) == FundusConnectionState.connected
-                      ? 'jetzt verbunden'
-                      : device.lastSeenAt == null
-                      ? 'gekoppelt am ${_date(device.pairedAt)}'
-                      : 'zuletzt ${_moment(device.lastSeenAt!)}',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: tokens.textFaint,
-                  ),
-                ),
-                trailing: IconButton(
-                  onPressed: () => host.revoke(device.id),
-                  icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
-                  tooltip: 'Zugang entziehen',
-                ),
-              ),
+              _PairedDeviceAccessTile(device: device, host: host),
           ],
         ],
       ),
@@ -2904,6 +2906,96 @@ class _Sharing extends StatelessWidget {
     String two(int number) => number.toString().padLeft(2, '0');
     return '${two(local.day)}.${two(local.month)}. ${two(local.hour)}:'
         '${two(local.minute)}';
+  }
+}
+
+/// Per-device visibility is enforced by the server, not just by hiding a
+/// shelf in the client. A restricted phone therefore cannot fetch a hidden
+/// library by guessing its id, and newly shared libraries remain hidden until
+/// explicitly assigned when an allow-list is active.
+class _PairedDeviceAccessTile extends StatelessWidget {
+  const _PairedDeviceAccessTile({required this.device, required this.host});
+
+  final FundusPairedDevice device;
+  final ServerHostController host;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final allIds = {
+      for (final library in host.libraries)
+        if (library.libraryId != null) library.libraryId!,
+    };
+    final allowList = device.allowedLibraryIds;
+    final allSelected = allowList == null;
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(left: FundusSpace.x8),
+      leading: FundusConnectionDot(
+        state: host.connectionFor(device),
+        showLabel: false,
+      ),
+      title: Text(device.name),
+      subtitle: Text(
+        host.connectionFor(device) == FundusConnectionState.connected
+            ? 'jetzt verbunden'
+            : device.lastSeenAt == null
+            ? 'gekoppelt am ${_Sharing._date(device.pairedAt)}'
+            : 'zuletzt ${_Sharing._moment(device.lastSeenAt!)}',
+        style: theme.textTheme.labelMedium?.copyWith(color: tokens.textFaint),
+      ),
+      trailing: IconButton(
+        onPressed: () => host.revoke(device.id),
+        icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
+        tooltip: 'Zugang entziehen',
+      ),
+      children: [
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Alle freigegebenen Bibliotheken'),
+          subtitle: const Text('Neue Bibliotheken sind automatisch sichtbar.'),
+          value: allSelected,
+          onChanged: (value) =>
+              host.setDeviceLibraries(device.id, value ? null : <String>{}),
+        ),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('HHH-Inhalte erlauben'),
+          subtitle: const Text('Wirkt zusätzlich zur Bibliotheksauswahl.'),
+          value: device.allowAdultExplicit,
+          onChanged: (value) => host.setDeviceAdultExplicit(device.id, value),
+        ),
+        if (!allSelected)
+          for (final library in host.libraries)
+            if (library.libraryId != null)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(library.name),
+                subtitle: Text(
+                  library.available
+                      ? '${library.workCount ?? 0} Werke'
+                      : 'nicht erreichbar',
+                ),
+                value: allowList.contains(library.libraryId),
+                onChanged: (value) {
+                  final next = {...allowList};
+                  if (value == true) {
+                    next.add(library.libraryId!);
+                  } else {
+                    next.remove(library.libraryId!);
+                  }
+                  host.setDeviceLibraries(device.id, next);
+                },
+              ),
+        if (allIds.isEmpty)
+          Text(
+            'Sobald Bibliotheken freigegeben sind, können sie hier einzeln '
+            'zugewiesen werden.',
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+          ),
+      ],
+    );
   }
 }
 

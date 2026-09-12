@@ -428,7 +428,8 @@ final class FundusServerHandler {
   Response _libraries(Request request) => _json({
     'libraries': [
       for (final entry in registry.libraries)
-        _libraryJson(entry, includeAdultExplicit: _canViewAdult(request)),
+        if (_canAccessLibrary(request, entry.id))
+          _libraryJson(entry, includeAdultExplicit: _canViewAdult(request)),
     ],
   });
 
@@ -1626,21 +1627,41 @@ final class FundusServerHandler {
         if (!directToken && deviceId == null) {
           return _json({'error': 'unauthorized'}, statusCode: 401);
         }
-        return inner(
-          request.change(
-            context: {
-              ...request.context,
-              'fundus_device_id': deviceId,
-              'fundus_adult_explicit':
-                  directToken ||
-                  (deviceId != null &&
-                      (pairingAuthority?.adultExplicitAllowed(deviceId) ??
-                          false)),
-            },
-          ),
+        final authenticated = request.change(
+          context: {
+            ...request.context,
+            'fundus_device_id': deviceId,
+            'fundus_adult_explicit':
+                directToken ||
+                (deviceId != null &&
+                    (pairingAuthority?.adultExplicitAllowed(deviceId) ??
+                        false)),
+          },
         );
+        final libraryId = _libraryIdIn(authenticated.url.pathSegments);
+        if (libraryId != null && !_canAccessLibrary(authenticated, libraryId)) {
+          // Do not reveal whether a restricted library exists. From a paired
+          // device it is indistinguishable from a library that was removed.
+          return _json({'error': 'library_not_found'}, statusCode: 404);
+        }
+        return inner(authenticated);
       };
     };
+  }
+
+  static String? _libraryIdIn(List<String> segments) {
+    final index = segments.indexOf('libraries');
+    if (index < 0 || index + 1 >= segments.length) return null;
+    final value = segments[index + 1];
+    return value.isEmpty ? null : value;
+  }
+
+  bool _canAccessLibrary(Request request, String libraryId) {
+    final deviceId = request.context['fundus_device_id'];
+    // The fixed internal token is used only by the host itself. Paired
+    // devices are subject to the explicit allow-list.
+    if (deviceId is! String || deviceId.isEmpty) return true;
+    return pairingAuthority?.libraryAllowed(deviceId, libraryId) ?? false;
   }
 
   bool _canViewAdult(Request request) =>

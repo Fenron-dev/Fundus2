@@ -429,6 +429,7 @@ final class FundusLibrary {
   Future<void> assignMediaRoot({
     required String folder,
     required String kind,
+    bool sensitive = false,
   }) async {
     _ensureWritable();
     final name = folder.trim();
@@ -442,7 +443,18 @@ final class FundusLibrary {
         ),
     };
     roots[kind] = [...?roots[kind], name];
-    await saveConfiguration(LibraryConfiguration(mediaRoots: roots));
+    final sensitiveRoots = <String, Iterable<String>>{
+      for (final entry in configuration.sensitiveRoots.entries)
+        entry.key: entry.value.where(
+          (value) => value.toLowerCase() != name.toLowerCase(),
+        ),
+    };
+    if (sensitive) {
+      sensitiveRoots[kind] = [...?sensitiveRoots[kind], name];
+    }
+    await saveConfiguration(
+      LibraryConfiguration(mediaRoots: roots, sensitiveRoots: sensitiveRoots),
+    );
   }
 
   Future<void> saveConfiguration(LibraryConfiguration next) async {
@@ -462,7 +474,11 @@ final class FundusLibrary {
       for (final entry in configuration.mediaRoots.entries)
         '${entry.key}=${([...entry.value]..sort()).join(',')}',
     ]..sort();
-    return entries.join(';');
+    final sensitive = [
+      for (final entry in configuration.sensitiveRoots.entries)
+        '${entry.key}=${([...entry.value]..sort()).join(',')}',
+    ]..sort();
+    return '${entries.join(';')}|sensitive:${sensitive.join(';')}';
   }
 
   File get _indexStateFile =>
@@ -1838,11 +1854,15 @@ final class FundusLibrary {
         (importer ??
                 AbsImporter(
                   mediaRootNames: configuration.rootsFor('audiobook'),
-                  areas: MediaAreaMap(configuration.mediaRoots),
+                  areas: MediaAreaMap(
+                    configuration.mediaRoots,
+                    sensitiveRoots: configuration.sensitiveRoots,
+                  ),
                 ))
             .group(files);
     final groupedDocumentCandidates = DocumentImporter(
       mediaRoots: configuration.mediaRoots,
+      sensitiveRoots: configuration.sensitiveRoots,
     ).group(files);
     final rootCounts = scope != null
         ? const <String, int>{}
@@ -2001,6 +2021,7 @@ final class FundusLibrary {
       return candidate.copyWith(
         title: publication.title,
         metadata: {
+          ...candidate.metadata,
           if (publication.authors.isNotEmpty)
             'author': publication.authors.join(', '),
           if (publication.authors.isNotEmpty) 'authors': publication.authors,

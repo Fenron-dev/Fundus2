@@ -342,6 +342,10 @@ class PeerLibraries extends ChangeNotifier {
       client: entry.client,
       libraryId: entry.libraryId,
       sourceId: entry.sourceId,
+      // Phones should not leave a visible fraction of a novel shelf blank on
+      // first connection. The mirror still bounds each pass, while the
+      // client-specific value is generous enough for normal libraries.
+      coverLimit: 500,
     ).run();
     // Listen gehören der Bibliothek, nicht dem Gerät, auf dem sie entstanden
     // sind — sie reisen mit dem Katalog. Scheitert das, ist der Katalog

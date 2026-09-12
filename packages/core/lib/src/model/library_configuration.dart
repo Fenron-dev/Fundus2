@@ -4,16 +4,28 @@ import 'dart:io';
 import 'package:yaml/yaml.dart';
 
 final class LibraryConfiguration {
-  LibraryConfiguration({Map<String, Iterable<String>>? mediaRoots})
-    : mediaRoots = Map<String, List<String>>.unmodifiable({
-        for (final entry in (mediaRoots ?? defaults).entries)
-          entry.key: List<String>.unmodifiable(
-            entry.value
-                .map((value) => _normalizeRoot(value))
-                .where((value) => value.isNotEmpty)
-                .toSet(),
-          ),
-      });
+  LibraryConfiguration({
+    Map<String, Iterable<String>>? mediaRoots,
+    Map<String, Iterable<String>>? sensitiveRoots,
+  }) : mediaRoots = Map<String, List<String>>.unmodifiable({
+         for (final entry in (mediaRoots ?? defaults).entries)
+           entry.key: List<String>.unmodifiable(
+             entry.value
+                 .map((value) => _normalizeRoot(value))
+                 .where((value) => value.isNotEmpty)
+                 .toSet(),
+           ),
+       }),
+       sensitiveRoots = Map<String, List<String>>.unmodifiable({
+         for (final entry
+             in (sensitiveRoots ?? const <String, Iterable<String>>{}).entries)
+           entry.key: List<String>.unmodifiable(
+             entry.value
+                 .map((value) => _normalizeRoot(value))
+                 .where((value) => value.isNotEmpty)
+                 .toSet(),
+           ),
+       });
 
   static const formatVersion = 1;
 
@@ -47,8 +59,12 @@ final class LibraryConfiguration {
   };
 
   final Map<String, List<String>> mediaRoots;
+  final Map<String, List<String>> sensitiveRoots;
 
   List<String> rootsFor(String kind) => mediaRoots[kind] ?? const [];
+
+  List<String> sensitiveRootsFor(String kind) =>
+      sensitiveRoots[kind] ?? const [];
 
   static Future<LibraryConfiguration> readOrDefault(File file) async {
     if (!await file.exists()) return LibraryConfiguration();
@@ -57,12 +73,12 @@ final class LibraryConfiguration {
       throw const FormatException('Ungültige Fundus-Bibliothekskonfiguration.');
     }
     final roots = value['media_roots'];
-    if (roots == null) return LibraryConfiguration();
-    if (roots is! Map) {
+    if (roots != null && roots is! Map) {
       throw const FormatException('media_roots muss eine Zuordnung sein.');
     }
     final parsed = <String, Iterable<String>>{};
-    for (final entry in roots.entries) {
+    final rootEntries = roots is Map ? roots.entries : const <MapEntry>[];
+    for (final entry in rootEntries) {
       if (entry.key is! String || entry.value is! List) {
         throw const FormatException('Ungültiger Eintrag unter media_roots.');
       }
@@ -73,13 +89,26 @@ final class LibraryConfiguration {
         return value;
       });
     }
-    return LibraryConfiguration(mediaRoots: {...defaults, ...parsed});
+    final sensitive = <String, Iterable<String>>{};
+    final configuredSensitive = value['sensitive_roots'];
+    if (configuredSensitive is Map) {
+      for (final entry in configuredSensitive.entries) {
+        if (entry.key is String && entry.value is List) {
+          sensitive[entry.key as String] = (entry.value as List)
+              .whereType<String>();
+        }
+      }
+    }
+    return LibraryConfiguration(
+      mediaRoots: {...defaults, ...parsed},
+      sensitiveRoots: sensitive,
+    );
   }
 
   Future<void> write(File file) async {
     await file.parent.create(recursive: true);
     await file.writeAsString(
-      '${const JsonEncoder.withIndent('  ').convert({'format_version': formatVersion, 'media_roots': mediaRoots})}\n',
+      '${const JsonEncoder.withIndent('  ').convert({'format_version': formatVersion, 'media_roots': mediaRoots, if (sensitiveRoots.isNotEmpty) 'sensitive_roots': sensitiveRoots})}\n',
       flush: true,
     );
   }

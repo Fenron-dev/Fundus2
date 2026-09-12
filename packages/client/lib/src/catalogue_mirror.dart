@@ -34,9 +34,9 @@ final class FundusCatalogueMirror {
   /// The source row here that its works belong to.
   final String sourceId;
 
-  /// How many covers to fetch in one pass. Covers are the expensive part of
-  /// a catalogue and the least urgent: a list with some tiles still blank is
-  /// usable, a mirror that takes five minutes is not.
+  /// How many covers are fetched in one pass. Later mirror passes continue at
+  /// the first missing cover, so a large catalogue is eventually complete;
+  /// clients with a faster connection can choose a larger bound.
   final int coverLimit;
 
   /// How many works to ask for in one request.
@@ -155,18 +155,25 @@ final class FundusCatalogueMirror {
       for (final work in library.listWorks())
         if (work.coverPath != null) work.id,
     };
-    var fetched = 0;
-    for (final work in works) {
-      if (fetched >= coverLimit) return;
-      if (!work.hasCover || known.contains(work.id)) continue;
-      final bytes = await _cover(work.id);
-      if (bytes == null) continue;
-      await library.cacheGeneratedCover(
-        workId: work.id,
-        bytes: bytes,
-        extension: _extensionFor(bytes),
-      );
-      fetched++;
+    final pending = [
+      for (final work in works)
+        if (work.hasCover && !known.contains(work.id)) work,
+    ];
+    final batchSize = coverLimit < 1 ? 1 : coverLimit;
+    final batch = pending.take(batchSize).toList();
+    if (batch.isNotEmpty) {
+      final fetched = await Future.wait([
+        for (final work in batch) _cover(work.id),
+      ]);
+      for (var index = 0; index < batch.length; index++) {
+        final bytes = fetched[index];
+        if (bytes == null) continue;
+        await library.cacheGeneratedCover(
+          workId: batch[index].id,
+          bytes: bytes,
+          extension: _extensionFor(bytes),
+        );
+      }
     }
   }
 
