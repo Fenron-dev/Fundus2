@@ -299,7 +299,10 @@ class AppSettings extends ChangeNotifier {
   /// request to be called nothing.
   /// How much of the protected shelf is shown.
   ProtectionMode get protectionMode => switch (_values['protection_mode']) {
-    'blur' => ProtectionMode.blur,
+    // Preview builds offered a cover-only blur. A closed dashboard lock must
+    // never leave protected titles, descriptions or navigation counts in
+    // view, so old installations migrate to the unequivocal hidden state.
+    'blur' => ProtectionMode.hide,
     'hide' => ProtectionMode.hide,
     _ => ProtectionMode.off,
   };

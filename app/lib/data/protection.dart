@@ -13,7 +13,8 @@ enum ProtectionMode {
   /// would hide them from the person who put them there.
   off('Aus', 'Alles ist sichtbar.'),
 
-  /// Visible in lists, but the covers are veiled until unlocked.
+  /// Legacy value from previews that only veiled covers. It is read as
+  /// [hide] by current settings so a closed lock has one unambiguous meaning.
   blur('Unscharf', 'Sichtbar, aber die Vorschau bleibt verdeckt.'),
 
   /// Not in lists, not in search, not in „Fortsetzen".
@@ -57,7 +58,7 @@ class ProtectionController extends ChangeNotifier {
 
   /// Whether a work must not appear at all right now.
   bool hides(WorkView work) =>
-      mode == ProtectionMode.hide && work.summary.isHhh && !isUnlocked;
+      mode != ProtectionMode.off && work.summary.isHhh && !isUnlocked;
 
   /// Whether a work's picture is veiled — it is listed, but not shown.
   bool veils(WorkView work) =>

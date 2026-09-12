@@ -2,6 +2,20 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
 
+const _windowsTrustChannel = MethodChannel('dev.fundus/windows_trust');
+
+final class WindowsTrustReport {
+  const WindowsTrustReport({
+    required this.received,
+    required this.installed,
+    this.error,
+  });
+
+  final int received;
+  final int installed;
+  final String? error;
+}
+
 /// Adds the roots and intermediate issuers trusted by Windows to Dart's HTTPS
 /// context.
 ///
@@ -11,16 +25,23 @@ import 'package:flutter/services.dart';
 /// in Windows and works in browsers. We add those roots and intermediate CAs
 /// without accepting a certificate Windows itself does not trust;
 /// certificate and host checks remain enabled.
-Future<int> installWindowsTrustedRoots() async {
-  if (!Platform.isWindows) return -1;
-  const channel = MethodChannel('dev.fundus/windows_trust');
+Future<WindowsTrustReport?> installWindowsTrustedRoots() async {
+  if (!Platform.isWindows) return null;
   final List<Object?>? roots;
   try {
-    roots = await channel.invokeListMethod<Object?>('rootCertificates');
-  } on Object {
-    return 0;
+    roots = await loadWindowsCertificatesWithRetry(
+      () => _windowsTrustChannel.invokeListMethod<Object?>('rootCertificates'),
+    );
+  } on Object catch (error) {
+    return WindowsTrustReport(
+      received: 0,
+      installed: 0,
+      error: error.runtimeType.toString(),
+    );
   }
-  if (roots == null) return 0;
+  if (roots == null) {
+    return const WindowsTrustReport(received: 0, installed: 0);
+  }
   var installed = 0;
   for (final value in roots) {
     if (value is! Uint8List || value.isEmpty) continue;
@@ -41,9 +62,31 @@ Future<int> installWindowsTrustedRoots() async {
         utf8.encode(pem),
       );
       installed++;
-    } on TlsException {
+    } on Object {
       // One malformed or unsupported entry must not discard the other roots.
     }
   }
-  return installed;
+  return WindowsTrustReport(received: roots.length, installed: installed);
+}
+
+/// Waits until the native runner has installed its channel.
+///
+/// `FlutterViewController` starts Dart before FlutterWindow can finish
+/// registering app-owned method channels. On a fast Windows start the first
+/// call can therefore legitimately receive [MissingPluginException]. Waiting
+/// a few event-loop turns is enough; other platform errors remain failures.
+Future<List<Object?>?> loadWindowsCertificatesWithRetry(
+  Future<List<Object?>?> Function() load, {
+  int attempts = 40,
+  Duration retryDelay = const Duration(milliseconds: 25),
+}) async {
+  for (var attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await load();
+    } on MissingPluginException {
+      if (attempt + 1 >= attempts) rethrow;
+      await Future<void>.delayed(retryDelay);
+    }
+  }
+  return null;
 }

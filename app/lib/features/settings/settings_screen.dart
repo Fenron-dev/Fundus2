@@ -1404,17 +1404,18 @@ class _ProtectionState extends State<_Protection> {
                 child: Column(
                   children: [
                     for (final mode in ProtectionMode.values)
-                      RadioListTile<ProtectionMode>(
-                        contentPadding: EdgeInsets.zero,
-                        value: mode,
-                        title: Text(mode.label),
-                        subtitle: Text(
-                          mode.description,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: tokens.textMuted,
+                      if (mode != ProtectionMode.blur)
+                        RadioListTile<ProtectionMode>(
+                          contentPadding: EdgeInsets.zero,
+                          value: mode,
+                          title: Text(mode.label),
+                          subtitle: Text(
+                            mode.description,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: tokens.textMuted,
+                            ),
                           ),
                         ),
-                      ),
                   ],
                 ),
               ),

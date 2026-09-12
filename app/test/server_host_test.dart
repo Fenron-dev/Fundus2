@@ -239,6 +239,22 @@ void main() {
     final libraries = await client.libraries();
     expect(libraries, hasLength(2));
     expect(libraries.map((entry) => entry.name), containsAll(['HHH']));
+
+    // Opening the background vault in the desktop must not drop the former
+    // active vault from the same server. This used to leave its already
+    // mirrored works visible on mobile but marked as unreachable.
+    await library.open(extra);
+    await _eventually(
+      () =>
+          host.isRunning &&
+          !host.isReconcilingLibraries &&
+          host.libraries.where((item) => item.shared).length == 2,
+    );
+    final afterSwitch = await client.libraries();
+    expect(afterSwitch, hasLength(2));
+    for (final offered in afterSwitch) {
+      expect(await client.works(offered.id), isNotEmpty);
+    }
   });
 
   test(
@@ -374,6 +390,14 @@ void main() {
       expect(restored.pairedDevices.single.allowedLibraryIds, {'familie'});
     },
   );
+}
+
+Future<void> _eventually(bool Function() condition) async {
+  for (var attempt = 0; attempt < 60; attempt++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+  fail('Bedingung wurde nicht rechtzeitig erfüllt.');
 }
 
 /// The same invitation, pointing at the loopback.

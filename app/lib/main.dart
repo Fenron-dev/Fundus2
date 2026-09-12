@@ -12,10 +12,13 @@ import 'media/playback_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final windowsCertificates = await installWindowsTrustedRoots();
-  if (windowsCertificates >= 0) {
+  final windowsTrust = await installWindowsTrustedRoots();
+  if (windowsTrust != null) {
     FundusLog.instance.info('windows.trust', {
-      'certificates': windowsCertificates,
+      'received': windowsTrust.received,
+      'installed': windowsTrust.installed,
+      'rejected': windowsTrust.received - windowsTrust.installed,
+      if (windowsTrust.error != null) 'error': windowsTrust.error,
     });
   }
   // The playback engine has to be up before any player is built.

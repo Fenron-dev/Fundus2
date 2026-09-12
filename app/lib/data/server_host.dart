@@ -91,6 +91,7 @@ class ServerHostController extends ChangeNotifier {
   List<Uri> _addresses = const [];
   Uri? _address;
   List<ServerLibraryStatus> _libraries = const [];
+  bool _followingActiveLibrary = false;
 
   ServerHostState get state => _state;
   bool get isRunning => _state == ServerHostState.running;
@@ -107,6 +108,8 @@ class ServerHostController extends ChangeNotifier {
   FundusPairingSession? get pairingSession => _pairing?.activeSession;
   List<FundusPairedDevice> get pairedDevices => _pairing?.devices ?? const [];
   List<ServerLibraryStatus> get libraries => List.unmodifiable(_libraries);
+  @visibleForTesting
+  bool get isReconcilingLibraries => _followingActiveLibrary;
 
   /// Whether starting can succeed without the currently open vault.
   bool get hasConfiguredLibraries => settings.serverLibraries.isNotEmpty;
@@ -392,6 +395,22 @@ class ServerHostController extends ChangeNotifier {
         );
         continue;
       }
+      final alreadyOpen = _ownedLibraries[path];
+      if (alreadyOpen != null) {
+        registry.register(alreadyOpen, name: source.name);
+        final shared = registry.lookup(alreadyOpen.manifest.libraryId)!;
+        statuses.add(
+          ServerLibraryStatus(
+            path: path,
+            name: source.name,
+            available: true,
+            shared: true,
+            libraryId: alreadyOpen.manifest.libraryId,
+            workCount: shared.works.length,
+          ),
+        );
+        continue;
+      }
       try {
         if (unlockPath != null) await unlockPath!(path);
         final opened = await FundusLibrary.open(
@@ -545,44 +564,49 @@ class ServerHostController extends ChangeNotifier {
       return;
     }
     if (_state == ServerHostState.running) {
-      final registry = _registry;
-      if (registry == null) return;
-      if (_shared != null) {
-        registry.unregister(_shared!.manifest.libraryId);
-      }
-      _shared = null;
-      final configured = settings.serverLibraries;
-      final activePath = vault?.root.absolute.path;
-      if (activePath != null) {
-        _ownedLibraries.remove(activePath)?.close();
-      }
-      final activeSelected =
-          vault != null &&
-          (configured.isEmpty ||
-              configured.any(
-                (entry) =>
-                    entry.enabled &&
-                    Directory(entry.path).absolute.path == activePath,
-              ));
-      if (vault != null && activeSelected) {
-        final name = configured
-            .where((entry) => Directory(entry.path).absolute.path == activePath)
-            .map((entry) => entry.name)
-            .firstOrNull;
-        registry.register(vault, name: name ?? library.displayName);
-        _shared = vault;
-      }
-      FundusLog.instance.info('server.library', {
-        'library': vault == null ? 'keine' : library.displayName,
-      });
-      _libraries = _statusForPreferences(settings.serverLibraries);
-      notifyListeners();
+      // The former active vault was borrowed and LibraryController has just
+      // closed it. Reconcile all selected paths so the new active vault is
+      // borrowed and the old active one is reopened as a background handle.
+      unawaited(_followActiveLibraryChange());
       return;
     }
     // Eingeschaltet, aber beim Einschalten war nichts offen: sobald eine
     // Bibliothek da ist, geht die Freigabe von selbst an.
     if (_wantsSharing && vault != null && _state != ServerHostState.starting) {
       unawaited(start(remember: false));
+    }
+  }
+
+  Future<void> _followActiveLibraryChange() async {
+    if (_followingActiveLibrary) return;
+    _followingActiveLibrary = true;
+    try {
+      if (_state == ServerHostState.running) {
+        final registry = _registry;
+        if (registry == null) return;
+        FundusLog.instance.info('server.library', {
+          'library': library.library == null ? 'keine' : library.displayName,
+          'action': 'registry_reconcile',
+        });
+        final formerActive = _shared;
+        if (formerActive != null) {
+          registry.unregister(formerActive.manifest.libraryId);
+        }
+        _shared = null;
+        final activePath = library.library?.root.absolute.path;
+        if (activePath != null) {
+          _ownedLibraries.remove(activePath)?.close();
+        }
+        _libraries = await _registerLibraries(registry);
+        if (registry.libraries.isEmpty) {
+          _failure = 'Keine der ausgewählten Bibliotheken ist verfügbar.';
+        } else {
+          _failure = null;
+        }
+        notifyListeners();
+      }
+    } finally {
+      _followingActiveLibrary = false;
     }
   }
 

@@ -54,13 +54,12 @@ void main() {
     expect(protection.veils(library.works.single), isFalse);
   });
 
-  test('unscharf heißt gelistet, aber verdeckt', () async {
+  test('die alte Unscharf-Einstellung wird sicher ausgeblendet', () async {
     await protection.setMode(ProtectionMode.blur);
     library.refresh();
 
-    expect(library.works, hasLength(1));
-    expect(protection.veils(library.works.single), isTrue);
-    expect(protection.hides(library.works.single), isFalse);
+    expect(protection.mode, ProtectionMode.hide);
+    expect(library.works, isEmpty);
   });
 
   test('ausblenden nimmt das Werk aus jeder Liste', () async {
