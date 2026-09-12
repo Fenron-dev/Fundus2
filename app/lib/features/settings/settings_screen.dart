@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -2749,13 +2750,42 @@ class _Sharing extends StatelessWidget {
           const SizedBox(height: FundusSpace.x2),
           Text(
             'Solange die Freigabe an ist, kann ein gekoppeltes Gerät im '
-            'selben Netz die hier geöffnete Bibliothek erreichen. Die '
+            'selben Netz die ausgewählten Bibliotheken erreichen. Die '
             'Verbindung ist verschlüsselt, und das Zertifikat steht im '
             'Kopplungscode — ein anderes wird nicht angenommen.',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: tokens.textMuted,
             ),
           ),
+          const SizedBox(height: FundusSpace.x4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Freigegebene Bibliotheken',
+                  style: theme.textTheme.labelLarge,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: host.isBusy ? null : () => _addLibrary(context),
+                icon: Icon(FundusIcons.folder, size: FundusIcons.sizeSm),
+                label: const Text('Hinzufügen'),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          for (final entry in host.libraries)
+            _SharedLibraryTile(
+              entry: entry,
+              activePath: FundusScope.of(context).library.library?.root.path,
+              enabled: !host.isBusy,
+              onToggle: (value) => host.setLibraryShared(entry.path, value),
+              onRemove:
+                  entry.path ==
+                      FundusScope.of(context).library.library?.root.path
+                  ? null
+                  : () => host.removeLibrary(entry.path),
+            ),
           if (host.failure case final failure?) ...[
             const SizedBox(height: FundusSpace.x3),
             Text(
@@ -2833,6 +2863,16 @@ class _Sharing extends StatelessWidget {
     );
   }
 
+  Future<void> _addLibrary(BuildContext context) async {
+    final scope = FundusScope.of(context);
+    final path = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Bibliothek für den Server auswählen',
+    );
+    if (path == null || path.trim().isEmpty) return;
+    await scope.vaultAccess.remember(path);
+    await host.addLibrary(path, name: p.basename(path));
+  }
+
   static String _date(DateTime value) {
     final local = value.toLocal();
     String two(int number) => number.toString().padLeft(2, '0');
@@ -2844,6 +2884,65 @@ class _Sharing extends StatelessWidget {
     String two(int number) => number.toString().padLeft(2, '0');
     return '${two(local.day)}.${two(local.month)}. ${two(local.hour)}:'
         '${two(local.minute)}';
+  }
+}
+
+class _SharedLibraryTile extends StatelessWidget {
+  const _SharedLibraryTile({
+    required this.entry,
+    required this.activePath,
+    required this.enabled,
+    required this.onToggle,
+    required this.onRemove,
+  });
+
+  final ServerLibraryStatus entry;
+  final String? activePath;
+  final bool enabled;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final active = entry.path == activePath;
+    final detail =
+        entry.error ??
+        (entry.available
+            ? active
+                  ? 'Diese Bibliothek · ${entry.workCount ?? 0} Werke'
+                  : entry.path
+            : 'Ordner nicht erreichbar');
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: FundusConnectionDot(
+        state: entry.available && entry.shared
+            ? FundusConnectionState.connected
+            : FundusConnectionState.idle,
+        showLabel: false,
+      ),
+      title: Text(entry.name),
+      subtitle: Text(
+        detail,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: entry.error == null ? tokens.textFaint : tokens.danger,
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Switch(value: entry.shared, onChanged: enabled ? onToggle : null),
+          if (onRemove != null)
+            IconButton(
+              onPressed: enabled ? onRemove : null,
+              icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
+              tooltip: 'Bibliothek entfernen',
+            ),
+        ],
+      ),
+    );
   }
 }
 

@@ -196,6 +196,51 @@ void main() {
     await host.revoke('anderes-geraet');
   });
 
+  test('ein Server stellt mehrere ausgewählte Bibliotheken bereit', () async {
+    final extra = Directory(
+      '${temporary.path}/extra-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    addTearDown(() async {
+      if (await extra.exists()) await extra.delete(recursive: true);
+    });
+    final extraWork = Directory('${extra.path}/HHH/Beispiel');
+    await extraWork.create(recursive: true);
+    await File(
+      '${extraWork.path}/01 - Einstieg.mp3',
+    ).writeAsBytes(List.filled(64, 2));
+    final extraVault = await FundusLibrary.create(extra);
+    await for (final _ in extraVault.index()) {}
+    extraVault.close();
+
+    await host.addLibrary(extra.path, name: 'HHH');
+    await host.start(remember: false);
+    expect(host.failure, isNull);
+    expect(host.libraries, hasLength(2));
+    expect(host.libraries.map((entry) => entry.name), containsAll(['HHH']));
+
+    addTearDown(() => host.revoke('mehrbibliotheken-geraet'));
+    host.beginPairing();
+    final session = host.pairingSession;
+    if (session == null) return; // Kein Netz — siehe die übrigen Host-Tests.
+    final code = _loopback(host, session, await store.loadOrCreate());
+    final claimed = await FundusRemoteClient.claim(
+      code: code,
+      pin: session.pin,
+      deviceId: 'mehrbibliotheken-geraet',
+      deviceName: 'Telefon',
+    );
+    final client = FundusRemoteClient(
+      baseUri: code.baseUri,
+      token: claimed.token,
+      certificateFingerprint: code.certificateFingerprint,
+    );
+    addTearDown(client.close);
+
+    final libraries = await client.libraries();
+    expect(libraries, hasLength(2));
+    expect(libraries.map((entry) => entry.name), containsAll(['HHH']));
+  });
+
   test(
     'eingeschaltet ohne Bibliothek beginnt sie, sobald eine da ist',
     () async {

@@ -12,6 +12,45 @@ import '../data/peer_connection.dart';
 import '../data/protection.dart';
 import 'device_name.dart';
 
+/// A library path the local Fundus server should expose.
+///
+/// Paths are installation-local and deliberately stay out of the vault. The
+/// server may offer several vaults at once, while the active library remains
+/// the one shown by the app itself.
+final class ServerLibraryPreference {
+  const ServerLibraryPreference({
+    required this.path,
+    required this.name,
+    this.enabled = true,
+  });
+
+  final String path;
+  final String name;
+  final bool enabled;
+
+  factory ServerLibraryPreference.fromJson(Object? value) {
+    if (value is! Map) {
+      throw const FormatException('Ungültige Serverbibliothek.');
+    }
+    final path = value['path'];
+    final name = value['name'];
+    if (path is! String || path.trim().isEmpty) {
+      throw const FormatException('Serverbibliothek ohne Pfad.');
+    }
+    return ServerLibraryPreference(
+      path: path,
+      name: name is String && name.trim().isNotEmpty ? name.trim() : path,
+      enabled: value['enabled'] != false,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'path': path,
+    'name': name,
+    'enabled': enabled,
+  };
+}
+
 /// Everything this device remembers on its own.
 ///
 /// Two kinds of state are deliberately kept apart. What lives here is bound to
@@ -190,6 +229,25 @@ class AppSettings extends ChangeNotifier {
     final value = _values['recent_vaults'];
     return value is List ? value.whereType<String>().toList() : const [];
   }
+
+  /// Vaults explicitly selected for the local server. An empty list keeps the
+  /// backwards-compatible behaviour: the currently open vault is shared.
+  List<ServerLibraryPreference> get serverLibraries {
+    final value = _values['server_libraries'];
+    if (value is! List) return const [];
+    final result = <ServerLibraryPreference>[];
+    for (final entry in value) {
+      try {
+        result.add(ServerLibraryPreference.fromJson(entry));
+      } on FormatException {
+        // One damaged entry must not hide the other configured libraries.
+      }
+    }
+    return result;
+  }
+
+  Future<void> setServerLibraries(List<ServerLibraryPreference> value) =>
+      _set('server_libraries', [for (final entry in value) entry.toJson()]);
 
   /// Renames this device, unless the new name says nothing.
   ///

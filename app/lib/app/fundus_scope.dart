@@ -196,6 +196,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     fullscreen.addListener(_bump);
     sync.addListener(_bump);
     host.addListener(_bump);
+    // Additional server libraries are remembered independently from the
+    // active vault. On sandboxed Apple platforms each one still needs its
+    // security-scoped bookmark restored before the server opens it.
+    host.unlockPath = (path) => vaultAccess.unlock(path);
     peerLibraries.addListener(_bump);
     downloads.addListener(_bump);
     photos.addListener(_bump);

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:fundus_server/fundus_server.dart';
+import 'package:path/path.dart' as p;
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../app/app_settings.dart';
@@ -16,18 +17,41 @@ import 'server_identity.dart';
 
 enum ServerHostState { stopped, starting, running, failed }
 
+/// One library known to the local server, whether it is currently served or
+/// only remembered for the next start.
+final class ServerLibraryStatus {
+  const ServerLibraryStatus({
+    required this.path,
+    required this.name,
+    required this.available,
+    required this.shared,
+    this.libraryId,
+    this.workCount,
+    this.error,
+  });
+
+  final String path;
+  final String name;
+  final bool available;
+  final bool shared;
+  final String? libraryId;
+  final int? workCount;
+  final String? error;
+}
+
 /// Offering this device's library to another Fundus.
 ///
 /// The other half of the sync: something has to answer. Sharing is off until
-/// it is switched on, and while it is on the vault that is open here is the
-/// one that is served — one library, the one in front of the person, rather
-/// than a second list of folders to keep in step with the first.
+/// it is switched on, the configured vaults are registered in one server
+/// registry. The active vault remains the one shown by the app itself;
+/// additional vaults are opened only for serving their own data.
 class ServerHostController extends ChangeNotifier {
   ServerHostController({
     required this.settings,
     required this.library,
     ServerIdentityStore? identityStore,
   }) : _identityStore = identityStore {
+    _libraries = _statusForPreferences(settings.serverLibraries);
     // Die Freigabe bedient *die* Bibliothek, die offen ist — nicht die, die
     // beim Einschalten offen war. Wird eine andere geöffnet (oder dieselbe
     // erneut, was eine neue Instanz ist), zeigte die Registrierung bisher auf
@@ -45,8 +69,17 @@ class ServerHostController extends ChangeNotifier {
   ServerIdentityStore? _identityStore;
   ServerIdentity? _identity;
 
-  /// Die Bibliothek, die gerade freigegeben ist.
+  /// Die Bibliothek, die gerade im Hauptfenster offen ist.
   FundusLibrary? _shared;
+
+  /// Handles opened by this controller for configured, non-active vaults.
+  /// The active vault is borrowed from [LibraryController] and never closed
+  /// here.
+  final Map<String, FundusLibrary> _ownedLibraries = {};
+
+  /// On macOS/iOS the app must restore a security-scoped bookmark before a
+  /// remembered additional vault can be opened.
+  Future<bool> Function(String path)? unlockPath;
 
   /// Ob geteilt werden soll, auch wenn gerade keine Bibliothek offen ist.
   bool _wantsSharing = false;
@@ -57,6 +90,7 @@ class ServerHostController extends ChangeNotifier {
   String? _failure;
   List<Uri> _addresses = const [];
   Uri? _address;
+  List<ServerLibraryStatus> _libraries = const [];
 
   ServerHostState get state => _state;
   bool get isRunning => _state == ServerHostState.running;
@@ -72,6 +106,10 @@ class ServerHostController extends ChangeNotifier {
 
   FundusPairingSession? get pairingSession => _pairing?.activeSession;
   List<FundusPairedDevice> get pairedDevices => _pairing?.devices ?? const [];
+  List<ServerLibraryStatus> get libraries => List.unmodifiable(_libraries);
+
+  /// Whether starting can succeed without the currently open vault.
+  bool get hasConfiguredLibraries => settings.serverLibraries.isNotEmpty;
 
   /// A device counts as present while its requests keep arriving.
   ///
@@ -132,10 +170,11 @@ class ServerHostController extends ChangeNotifier {
   Future<void> start({bool remember = true}) async {
     if (isRunning || isBusy) return;
     // Der Wunsch gilt dem Gerät, nicht dem Augenblick: ist gerade keine
-    // Bibliothek offen, beginnt die Freigabe, sobald eine geöffnet wird.
+    // Bibliothek offen, können die konfigurierten zusätzlichen Bibliotheken
+    // trotzdem geöffnet und angeboten werden.
     _wantsSharing = true;
-    final vault = library.library;
-    if (vault == null) {
+    if (library.library == null &&
+        settings.serverLibraries.every((entry) => !entry.enabled)) {
       _failure = 'Es ist keine Bibliothek geöffnet, die sich teilen ließe.';
       notifyListeners();
       return;
@@ -146,12 +185,12 @@ class ServerHostController extends ChangeNotifier {
 
     try {
       final identity = await _ensureIdentity();
-      // The registry only borrows the open vault. Closing it is the app's
-      // business, not the server's — see [_releaseRegistry].
-      final registry = FundusLibraryRegistry()
-        ..register(vault, name: library.displayName);
+      final registry = FundusLibraryRegistry();
       _registry = registry;
-      _shared = vault;
+      _libraries = await _registerLibraries(registry);
+      if (registry.libraries.isEmpty) {
+        throw StateError('Keine der ausgewählten Bibliotheken ist verfügbar.');
+      }
       final handler = FundusServerHandler(
         // Only paired devices get in. The handler also accepts one fixed
         // token; it is generated here, never shown and never stored, so no
@@ -172,7 +211,7 @@ class ServerHostController extends ChangeNotifier {
       _state = ServerHostState.running;
       FundusLog.instance.info('server.start', {
         'port': _socket!.port,
-        'library': library.displayName,
+        'libraries': registry.libraries.length,
       });
       if (remember) await _identityStore!.saveSharing(true);
       _presenceTick ??= Timer.periodic(
@@ -188,6 +227,214 @@ class ServerHostController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Adds a vault to the server's persistent sharing selection. The currently
+  /// open vault is copied into the selection the first time an extra vault is
+  /// added, so the old one-library behaviour stays visible without another
+  /// setting having to be understood.
+  Future<void> addLibrary(String path, {String? name}) async {
+    final normalized = Directory(path).absolute.path;
+    final current = library.library;
+    final existing = [...settings.serverLibraries];
+    if (existing.isEmpty && current != null) {
+      existing.add(
+        ServerLibraryPreference(
+          path: current.root.absolute.path,
+          name: library.displayName,
+        ),
+      );
+    }
+    final index = existing.indexWhere(
+      (entry) => Directory(entry.path).absolute.path == normalized,
+    );
+    final replacement = ServerLibraryPreference(
+      path: normalized,
+      name: name?.trim().isNotEmpty == true
+          ? name!.trim()
+          : index >= 0
+          ? existing[index].name
+          : p.basename(normalized),
+    );
+    if (index >= 0) {
+      existing[index] = replacement;
+    } else {
+      existing.add(replacement);
+    }
+    await settings.setServerLibraries(existing);
+    if (isRunning) {
+      await _restartAfterLibraryChange();
+    } else {
+      _libraries = _statusForPreferences(existing);
+      notifyListeners();
+    }
+  }
+
+  /// Removes a non-active vault from the sharing selection.
+  Future<void> removeLibrary(String path) async {
+    final normalized = Directory(path).absolute.path;
+    final remaining = settings.serverLibraries
+        .where((entry) => Directory(entry.path).absolute.path != normalized)
+        .toList(growable: false);
+    await settings.setServerLibraries(remaining);
+    if (isRunning) {
+      await _restartAfterLibraryChange();
+    } else {
+      _libraries = _statusForPreferences(remaining);
+      notifyListeners();
+    }
+  }
+
+  /// Enables or disables one configured vault without forgetting its path.
+  Future<void> setLibraryShared(String path, bool shared) async {
+    final normalized = Directory(path).absolute.path;
+    final values = [...settings.serverLibraries];
+    if (values.isEmpty && library.library != null) {
+      values.add(
+        ServerLibraryPreference(
+          path: library.library!.root.absolute.path,
+          name: library.displayName,
+        ),
+      );
+    }
+    final index = values.indexWhere(
+      (entry) => Directory(entry.path).absolute.path == normalized,
+    );
+    if (index < 0) {
+      values.add(
+        ServerLibraryPreference(
+          path: normalized,
+          name: p.basename(normalized),
+          enabled: shared,
+        ),
+      );
+    } else {
+      final current = values[index];
+      values[index] = ServerLibraryPreference(
+        path: current.path,
+        name: current.name,
+        enabled: shared,
+      );
+    }
+    await settings.setServerLibraries(values);
+    if (isRunning) {
+      await _restartAfterLibraryChange();
+    } else {
+      _libraries = _statusForPreferences(values);
+      notifyListeners();
+    }
+  }
+
+  List<ServerLibraryPreference> _sourcesToServe() {
+    final configured = settings.serverLibraries;
+    if (configured.isNotEmpty) return configured;
+    final active = library.library;
+    if (active == null) return const [];
+    return [
+      ServerLibraryPreference(
+        path: active.root.absolute.path,
+        name: library.displayName,
+      ),
+    ];
+  }
+
+  Future<List<ServerLibraryStatus>> _registerLibraries(
+    FundusLibraryRegistry registry,
+  ) async {
+    final statuses = <ServerLibraryStatus>[];
+    final seen = <String>{};
+    final active = library.library;
+    _shared = null;
+    for (final source in _sourcesToServe()) {
+      final path = Directory(source.path).absolute.path;
+      if (!seen.add(path)) continue;
+      if (!source.enabled) {
+        statuses.add(
+          ServerLibraryStatus(
+            path: path,
+            name: source.name,
+            available: await Directory(path).exists(),
+            shared: false,
+          ),
+        );
+        continue;
+      }
+      if (active != null && active.root.absolute.path == path) {
+        registry.register(active, name: source.name);
+        _shared = active;
+        statuses.add(
+          ServerLibraryStatus(
+            path: path,
+            name: source.name,
+            available: true,
+            shared: true,
+            libraryId: active.manifest.libraryId,
+            workCount: active.listWorks().length,
+          ),
+        );
+        continue;
+      }
+      try {
+        if (unlockPath != null) await unlockPath!(path);
+        final opened = await FundusLibrary.open(
+          Directory(path),
+        ).timeout(LibraryController.reachTimeout);
+        _ownedLibraries[path] = opened;
+        registry.register(opened, name: source.name);
+        final shared = registry.lookup(opened.manifest.libraryId)!;
+        statuses.add(
+          ServerLibraryStatus(
+            path: path,
+            name: source.name,
+            available: true,
+            shared: true,
+            libraryId: opened.manifest.libraryId,
+            workCount: shared.works.length,
+          ),
+        );
+      } on Object catch (error) {
+        statuses.add(
+          ServerLibraryStatus(
+            path: path,
+            name: source.name,
+            available: false,
+            shared: true,
+            error: _libraryError(error),
+          ),
+        );
+      }
+    }
+    return statuses;
+  }
+
+  List<ServerLibraryStatus> _statusForPreferences(
+    List<ServerLibraryPreference> values,
+  ) {
+    final sources = values.isEmpty ? _sourcesToServe() : values;
+    return [
+      for (final source in sources)
+        ServerLibraryStatus(
+          path: Directory(source.path).absolute.path,
+          name: source.name,
+          available: Directory(source.path).existsSync(),
+          shared: source.enabled,
+        ),
+    ];
+  }
+
+  static String _libraryError(Object error) => error is FileSystemException
+      ? error.message
+      : 'Bibliothek konnte nicht geöffnet werden.';
+
+  Future<void> _restartAfterLibraryChange() async {
+    if (!isRunning) return;
+    await _closeSocket();
+    _releaseRegistry();
+    _pairing?.cancel();
+    _state = ServerHostState.stopped;
+    _addresses = const [];
+    _address = null;
+    await start(remember: false);
+  }
+
   Future<void> stop({bool remember = true}) async {
     _wantsSharing = false;
     _shared = null;
@@ -200,6 +447,7 @@ class ServerHostController extends ChangeNotifier {
     _address = null;
     _state = ServerHostState.stopped;
     _failure = null;
+    _libraries = _statusForPreferences(settings.serverLibraries);
     if (remember) await _identityStore?.saveSharing(false);
     notifyListeners();
   }
@@ -264,16 +512,35 @@ class ServerHostController extends ChangeNotifier {
     if (_state == ServerHostState.running) {
       final registry = _registry;
       if (registry == null) return;
-      for (final shared in registry.libraries) {
-        registry.unregister(shared.id);
+      if (_shared != null) {
+        registry.unregister(_shared!.manifest.libraryId);
       }
-      if (vault != null) {
-        registry.register(vault, name: library.displayName);
+      _shared = null;
+      final configured = settings.serverLibraries;
+      final activePath = vault?.root.absolute.path;
+      if (activePath != null) {
+        _ownedLibraries.remove(activePath)?.close();
       }
-      _shared = vault;
+      final activeSelected =
+          vault != null &&
+          (configured.isEmpty ||
+              configured.any(
+                (entry) =>
+                    entry.enabled &&
+                    Directory(entry.path).absolute.path == activePath,
+              ));
+      if (vault != null && activeSelected) {
+        final name = configured
+            .where((entry) => Directory(entry.path).absolute.path == activePath)
+            .map((entry) => entry.name)
+            .firstOrNull;
+        registry.register(vault, name: name ?? library.displayName);
+        _shared = vault;
+      }
       FundusLog.instance.info('server.library', {
         'library': vault == null ? 'keine' : library.displayName,
       });
+      _libraries = _statusForPreferences(settings.serverLibraries);
       notifyListeners();
       return;
     }
@@ -328,10 +595,15 @@ class ServerHostController extends ChangeNotifier {
     _shared = null;
     final registry = _registry;
     _registry = null;
-    if (registry == null) return;
-    for (final shared in registry.libraries) {
-      registry.unregister(shared.id);
+    if (registry != null) {
+      for (final shared in registry.libraries) {
+        registry.unregister(shared.id);
+      }
     }
+    for (final owned in _ownedLibraries.values) {
+      owned.close();
+    }
+    _ownedLibraries.clear();
   }
 
   Future<ServerIdentity> _ensureIdentity() async {
