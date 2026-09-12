@@ -45,7 +45,8 @@ bool FlutterWindow::OnCreate() {
                                    CERT_SYSTEM_STORE_LOCAL_MACHINE};
         for (const DWORD location : locations) {
           HCERTSTORE store = CertOpenStore(
-              CERT_STORE_PROV_SYSTEM_W, X509_ASN_ENCODING, nullptr,
+              CERT_STORE_PROV_SYSTEM_W, X509_ASN_ENCODING,
+              static_cast<HCRYPTPROV_LEGACY>(0),
               location | CERT_STORE_OPEN_EXISTING_FLAG |
                   CERT_STORE_READONLY_FLAG,
               L"ROOT");
