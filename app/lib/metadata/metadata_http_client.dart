@@ -248,6 +248,9 @@ _Response _exchange(
   Uint8List body,
   DateTime deadline,
 ) => using((arena) {
+  // Resolve kernel32/GetLastError before the first failing WinHTTP call.
+  // Lazy DynamicLibrary lookup itself resets the thread's last-error slot.
+  _lastError();
   Pointer<Void> session = nullptr, connection = nullptr, request = nullptr;
   void check(int result, String operation) {
     if (result == 0) {
@@ -341,7 +344,10 @@ _Response _exchange(
     );
     length.value = 0;
     final probe = _query(request, 22, nullptr, nullptr, length, nullptr);
-    if (probe == 0 && _lastError() != 122) check(0, 'headers size');
+    final probeError = probe == 0 ? _lastError() : 0;
+    if (probe == 0 && probeError != 122) {
+      throw WindowsMetadataException(uri.host, 'headers size', probeError);
+    }
     if (length.value > 65536) {
       throw http.ClientException('Metadata headers too large');
     }
