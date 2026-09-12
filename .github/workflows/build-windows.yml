@@ -36,6 +36,12 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
+      - name: Test native Windows HTTPS and live metadata downloads
+        working-directory: app
+        env:
+          FUNDUS_LIVE_HTTPS: '1'
+        run: flutter test test/windows_metadata_http_test.dart --reporter expanded
+
       - name: Build Windows release
         working-directory: app
         run: flutter build windows --release

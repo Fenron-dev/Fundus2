@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:http/http.dart' as http;
+
+import 'metadata_http_client.dart';
 import 'package:xml/xml.dart';
 
 /// One episode as the show's own feed describes it.
@@ -28,7 +30,8 @@ final class FeedEpisode {
 /// out, and what it is really called. That lives in the feed, whose address
 /// the directory match brings along.
 final class PodcastFeed {
-  PodcastFeed({http.Client? client}) : _client = client ?? http.Client();
+  PodcastFeed({http.Client? client})
+    : _client = client ?? createMetadataHttpClient();
 
   final http.Client _client;
 

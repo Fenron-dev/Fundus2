@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 
+import 'metadata_http_client.dart';
+
 /// A provider error carries no request URL and no credentials.
 final class MetadataProviderException implements Exception {
   const MetadataProviderException(this.provider, this.message);
@@ -19,7 +21,7 @@ String _networkMessage(Object error) {
   final text = '$error';
   if (text.contains('Certificate_Verify_Failed') ||
       text.contains('HandshakeException')) {
-    return 'TLS-Zertifikat konnte nicht geprüft werden. Fundus verwendet unter Windows den Windows-Zertifikatsspeicher, akzeptiert aber absichtlich keine unsicheren Zertifikate.';
+    return 'TLS-Zertifikat konnte nicht geprüft werden. Fundus akzeptiert keine unsicheren Zertifikate.';
   }
   return 'Netzwerk: $error';
 }
@@ -210,7 +212,7 @@ final class AniListProvider implements MetadataProvider {
     this.includeAdult = false,
     http.Client? client,
     this.endpoint = _defaultEndpoint,
-  }) : _client = client ?? http.Client();
+  }) : _client = client ?? createMetadataHttpClient();
 
   static const _defaultEndpoint = 'https://graphql.anilist.co';
   static const _query = r'''
@@ -456,7 +458,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
 /// serialized, logged or included in an error message.
 final class TmdbProvider implements MetadataProvider {
   TmdbProvider({required this.apiKey, http.Client? client})
-    : _client = client ?? http.Client();
+    : _client = client ?? createMetadataHttpClient();
 
   static const _endpoint = 'https://api.themoviedb.org/3/search/multi';
   final String apiKey;
@@ -697,7 +699,7 @@ final class TmdbProvider implements MetadataProvider {
 /// catalogue when `sfw=false`, without requiring a MAL account or secret.
 final class MyAnimeListProvider implements MetadataProvider {
   MyAnimeListProvider({http.Client? client, this.includeAdult = false})
-    : _client = client ?? http.Client();
+    : _client = client ?? createMetadataHttpClient();
 
   final http.Client _client;
   final bool includeAdult;
@@ -823,7 +825,7 @@ final class MyAnimeListProvider implements MetadataProvider {
 /// beside it below.
 final class OpenLibraryProvider implements MetadataProvider {
   OpenLibraryProvider({http.Client? client, this.endpoint = _defaultEndpoint})
-    : _client = client ?? http.Client();
+    : _client = client ?? createMetadataHttpClient();
 
   static const _defaultEndpoint = 'https://openlibrary.org/search.json';
   final http.Client _client;
@@ -916,7 +918,7 @@ final class OpenLibraryProvider implements MetadataProvider {
 /// German title, a German blurb and a different reader than the English one.
 final class AudibleProvider implements MetadataProvider {
   AudibleProvider({http.Client? client, this.host})
-    : _client = client ?? http.Client();
+    : _client = client ?? createMetadataHttpClient();
 
   final http.Client _client;
 
@@ -1090,7 +1092,7 @@ final class AudibleProvider implements MetadataProvider {
 /// the show.
 final class ApplePodcastProvider implements MetadataProvider {
   ApplePodcastProvider({http.Client? client, this.endpoint = _defaultEndpoint})
-    : _client = client ?? http.Client();
+    : _client = client ?? createMetadataHttpClient();
 
   static const _defaultEndpoint = 'https://itunes.apple.com/search';
   final http.Client _client;

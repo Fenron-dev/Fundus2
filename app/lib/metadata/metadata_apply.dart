@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 
+import 'metadata_http_client.dart';
+
 import '../app/fundus_log.dart';
 import '../data/work_view.dart';
 import 'podcast_feed.dart';
@@ -280,7 +282,7 @@ final class _CoverDownload {
 
 Future<_CoverDownload> _fetchCover(String url, {http.Client? client}) async {
   final own = client == null;
-  final fetcher = client ?? http.Client();
+  final fetcher = client ?? createMetadataHttpClient();
   try {
     final response = await fetcher
         .get(
@@ -298,11 +300,10 @@ Future<_CoverDownload> _fetchCover(String url, {http.Client? client}) async {
       return _coverFailure(url, 'leere Antwort');
     }
     return _CoverDownload(bytes: response.bodyBytes);
+  } on WindowsMetadataException catch (error) {
+    return _coverFailure(url, error.toString());
   } on HandshakeException {
-    return _coverFailure(
-      url,
-      'TLS-Zertifikat konnte unter Windows nicht geprüft werden',
-    );
+    return _coverFailure(url, 'TLS-Zertifikat konnte nicht geprüft werden');
   } on TimeoutException {
     return _coverFailure(url, 'Zeitüberschreitung beim Bildabruf');
   } on SocketException {

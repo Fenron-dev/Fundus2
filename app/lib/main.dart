@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -5,20 +7,16 @@ import 'package:pdfrx/pdfrx.dart';
 import 'app/app_settings.dart';
 import 'app/fundus_app.dart';
 import 'app/fundus_log.dart';
-import 'app/windows_trust.dart';
 import 'data/library_controller.dart';
 import 'media/background_playback.dart';
 import 'media/playback_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final windowsTrust = await installWindowsTrustedRoots();
-  if (windowsTrust != null) {
-    FundusLog.instance.info('windows.trust', {
-      'received': windowsTrust.received,
-      'installed': windowsTrust.installed,
-      'rejected': windowsTrust.received - windowsTrust.installed,
-      if (windowsTrust.error != null) 'error': windowsTrust.error,
+  if (Platform.isWindows) {
+    FundusLog.instance.info('metadata.transport', {
+      'backend': 'WinHTTP',
+      'tls': 'Schannel',
     });
   }
   // The playback engine has to be up before any player is built.
