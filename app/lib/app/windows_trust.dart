@@ -2,18 +2,24 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
 
-/// Adds the roots trusted by Windows to Dart's HTTPS context.
+/// Adds the roots and intermediate issuers trusted by Windows to Dart's HTTPS
+/// context.
 ///
 /// Dart uses its bundled Mozilla roots on Windows instead of the Windows
 /// certificate stores. That makes HTTPS fail when a legitimate local root
 /// (for example a company or antivirus inspection certificate) is installed
-/// in Windows and works in browsers. We add those roots without accepting a
-/// certificate Windows itself does not trust; certificate and host checks
-/// remain enabled.
+/// in Windows and works in browsers. We add those roots and intermediate CAs
+/// without accepting a certificate Windows itself does not trust;
+/// certificate and host checks remain enabled.
 Future<int> installWindowsTrustedRoots() async {
-  if (!Platform.isWindows) return 0;
+  if (!Platform.isWindows) return -1;
   const channel = MethodChannel('dev.fundus/windows_trust');
-  final roots = await channel.invokeListMethod<Object?>('rootCertificates');
+  final List<Object?>? roots;
+  try {
+    roots = await channel.invokeListMethod<Object?>('rootCertificates');
+  } on Object {
+    return 0;
+  }
   if (roots == null) return 0;
   var installed = 0;
   for (final value in roots) {

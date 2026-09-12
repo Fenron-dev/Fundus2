@@ -4,6 +4,7 @@ import 'package:pdfrx/pdfrx.dart';
 
 import 'app/app_settings.dart';
 import 'app/fundus_app.dart';
+import 'app/fundus_log.dart';
 import 'app/windows_trust.dart';
 import 'data/library_controller.dart';
 import 'media/background_playback.dart';
@@ -11,7 +12,12 @@ import 'media/playback_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await installWindowsTrustedRoots();
+  final windowsCertificates = await installWindowsTrustedRoots();
+  if (windowsCertificates >= 0) {
+    FundusLog.instance.info('windows.trust', {
+      'certificates': windowsCertificates,
+    });
+  }
   // The playback engine has to be up before any player is built.
   MediaKit.ensureInitialized();
   // And pdfium before the first PDF is opened. The reader calls this too, but
