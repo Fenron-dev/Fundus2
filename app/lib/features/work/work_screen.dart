@@ -867,13 +867,17 @@ class _Properties extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final summary = work.summary;
+    final isFilm = work.kind == 'movie' || work.kind == 'tv';
     final entries = <(String, String)>[
       ('Titel', summary.title),
-      if (summary.authors.isNotEmpty) ('Urheber', summary.authors.join(', ')),
+      if (!isFilm && summary.authors.isNotEmpty)
+        ('Urheber', summary.authors.join(', ')),
       if (summary.narrators.isNotEmpty)
         ('Sprecher', summary.narrators.join(', ')),
-      if (summary.series != null) ('Reihe', summary.series!),
-      if (summary.publisher != null) ('Verlag', summary.publisher!),
+      if (summary.series != null)
+        (isFilm && work.kind == 'tv' ? 'Serie' : 'Reihe', summary.series!),
+      if (summary.publisher != null)
+        (isFilm ? 'Studio / Sender' : 'Verlag', summary.publisher!),
       if (summary.publishedYear != null) ('Jahr', '${summary.publishedYear}'),
       if (summary.language != null) ('Sprache', summary.language!),
       if (summary.genres.isNotEmpty) ('Genres', summary.genres.join(', ')),
@@ -1693,7 +1697,10 @@ class _People extends StatelessWidget {
     // Nach Rolle gruppiert, wie im Entwurf.
     final byRole = <String, List<PersonCredit>>{};
     for (final credit in credits) {
-      final group = byRole.putIfAbsent(credit.roleLabel, () => []);
+      final group = byRole.putIfAbsent(
+        creditGroupLabel(credit.roleLabel),
+        () => [],
+      );
       if (!group.any((person) => person.name == credit.name)) {
         group.add(credit);
       }

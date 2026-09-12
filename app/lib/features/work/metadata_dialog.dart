@@ -41,8 +41,14 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   late final TextEditingController _key = TextEditingController(
     text: widget.settings.tmdbKey,
   );
-  late final List<MetadataProviderKind> _suggested =
-      MetadataProviderKind.forMediaType(widget.work.mediaType?.id);
+  late final List<MetadataProviderKind> _suggested = [
+    ...MetadataProviderKind.forMediaType(widget.work.mediaType?.id),
+    if (widget.work.summary.contentSensitivity == 'adult_explicit') ...[
+      MetadataProviderKind.anilistAdultAnime,
+      MetadataProviderKind.anilistAdultManga,
+      MetadataProviderKind.myAnimeListAdult,
+    ],
+  ];
   late MetadataProviderKind _provider = _suggested.first;
   late String _language = widget.settings.metadataLanguage;
   bool _loading = false;
@@ -345,6 +351,17 @@ Set<MetadataField> offeredFields(MetadataCandidate candidate) => {
   if (candidate.backdropUrl != null) MetadataField.backdrop,
 };
 
+/// Labels stay media-aware: a film has a production studio, not a publisher,
+/// and it has no manga-style "Reihe & Band" field.
+String metadataFieldLabel(MetadataField field, String? workKind) {
+  if (field == MetadataField.publisher &&
+      (workKind == 'movie' || workKind == 'tv')) {
+    return 'Studio / Sender';
+  }
+  if (field == MetadataField.series && workKind == 'tv') return 'Serie';
+  return field.label;
+}
+
 /// What a field holds now, in the same words the work's page uses.
 String currentValue(WorkView work, MetadataField field) {
   final summary = work.summary;
@@ -442,7 +459,7 @@ class _FieldChoice extends StatelessWidget {
                 onChanged: field == MetadataField.cover && blocked
                     ? null
                     : (on) => onToggle(field, on ?? false),
-                title: Text(field.label),
+                title: Text(metadataFieldLabel(field, work.kind)),
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

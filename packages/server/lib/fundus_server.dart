@@ -1743,6 +1743,8 @@ final class FundusServerHandler {
     'description': work.description,
     'publisher': work.publisher,
     'published_year': work.publishedYear,
+    'genres': work.genres,
+    'content_style': work.contentStyle,
     'file_count': work.fileCount,
     'tags': work.tags,
     if (work.contentSensitivity != null)

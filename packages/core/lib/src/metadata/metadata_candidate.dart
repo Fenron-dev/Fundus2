@@ -4,16 +4,25 @@
 /// „Hauptrolle". Das Bild ist eine Adresse bei der Quelle; ob es geholt wird,
 /// entscheidet, wer den Abgleich anwendet.
 final class MetadataPerson {
-  const MetadataPerson({required this.name, required this.role, this.imageUrl});
+  const MetadataPerson({
+    required this.name,
+    required this.role,
+    this.imageUrl,
+    this.roleGroup,
+  });
 
   final String name;
   final String role;
   final String? imageUrl;
 
+  /// A thematic UI group, e.g. `Darsteller`, while [role] may be `Tim`.
+  final String? roleGroup;
+
   Map<String, Object?> toJson() => {
     'name': name,
     'role': role,
     if (imageUrl != null) 'image_url': imageUrl,
+    if (roleGroup != null) 'role_group': roleGroup,
   };
 
   static MetadataPerson? fromJson(Object? value) {
@@ -25,6 +34,9 @@ final class MetadataPerson {
       role: value['role'] is String ? value['role'] as String : 'Beteiligt',
       imageUrl: value['image_url'] is String
           ? value['image_url'] as String
+          : null,
+      roleGroup: value['role_group'] is String
+          ? value['role_group'] as String
           : null,
     );
   }
@@ -99,32 +111,52 @@ final class MetadataCandidate {
 
   final Map<String, String> externalIds;
 
-  /// Dasselbe mit anderer Besetzung — für den Nachschlag, der sie erst holt.
-  MetadataCandidate copyWith({List<MetadataPerson>? credits}) =>
-      MetadataCandidate(
-        provider: provider,
-        providerId: providerId,
-        title: title,
-        alternateTitles: alternateTitles,
-        authors: authors,
-        workKind: workKind,
-        series: series,
-        seriesSequence: seriesSequence,
-        contentStyle: contentStyle,
-        contentSensitivity: contentSensitivity,
-        releaseYear: releaseYear,
-        season: season,
-        episodeCount: episodeCount,
-        isAdult: isAdult,
-        description: description,
-        publisher: publisher,
-        language: language,
-        genres: genres,
-        posterUrl: posterUrl,
-        backdropUrl: backdropUrl,
-        credits: credits ?? this.credits,
-        externalIds: externalIds,
-      );
+  /// Dasselbe mit nachgeladenen Angaben — etwa TMDB-Details und Besetzung.
+  MetadataCandidate copyWith({
+    String? title,
+    List<String>? alternateTitles,
+    List<String>? authors,
+    String? workKind,
+    String? series,
+    double? seriesSequence,
+    String? contentStyle,
+    String? contentSensitivity,
+    int? releaseYear,
+    int? season,
+    int? episodeCount,
+    bool? isAdult,
+    String? description,
+    String? publisher,
+    String? language,
+    List<String>? genres,
+    String? posterUrl,
+    String? backdropUrl,
+    List<MetadataPerson>? credits,
+    Map<String, String>? externalIds,
+  }) => MetadataCandidate(
+    provider: provider,
+    providerId: providerId,
+    title: title ?? this.title,
+    alternateTitles: alternateTitles ?? this.alternateTitles,
+    authors: authors ?? this.authors,
+    workKind: workKind ?? this.workKind,
+    series: series ?? this.series,
+    seriesSequence: seriesSequence ?? this.seriesSequence,
+    contentStyle: contentStyle ?? this.contentStyle,
+    contentSensitivity: contentSensitivity ?? this.contentSensitivity,
+    releaseYear: releaseYear ?? this.releaseYear,
+    season: season ?? this.season,
+    episodeCount: episodeCount ?? this.episodeCount,
+    isAdult: isAdult ?? this.isAdult,
+    description: description ?? this.description,
+    publisher: publisher ?? this.publisher,
+    language: language ?? this.language,
+    genres: genres ?? this.genres,
+    posterUrl: posterUrl ?? this.posterUrl,
+    backdropUrl: backdropUrl ?? this.backdropUrl,
+    credits: credits ?? this.credits,
+    externalIds: externalIds ?? this.externalIds,
+  );
 
   Map<String, Object?> toJson() => {
     'provider': provider,

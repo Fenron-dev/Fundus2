@@ -515,6 +515,12 @@ final class FundusRemoteClient {
         if (value['publisher'] != null) 'publisher': value['publisher'],
         if (value['published_year'] != null)
           'published_year': value['published_year'],
+        if (value['content_sensitivity'] != null)
+          'content_sensitivity': value['content_sensitivity'],
+        if (value['content_style'] != null)
+          'content_style': value['content_style'],
+        if (value['genres'] case final List genres)
+          'genres': [for (final genre in genres) '$genre'],
         if (value['narrators'] case final List narrators)
           if (narrators.isNotEmpty)
             'narrators': [for (final name in narrators) '$name'],

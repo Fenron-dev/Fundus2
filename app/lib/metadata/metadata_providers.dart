@@ -15,10 +15,23 @@ final class MetadataProviderException implements Exception {
   String toString() => '$provider: $message';
 }
 
+String _networkMessage(Object error) {
+  final text = '$error';
+  if (text.contains('Certificate_Verify_Failed') ||
+      text.contains('HandshakeException')) {
+    return 'TLS-Zertifikat konnte nicht geprüft werden. Bitte den Windows-/Flutter-Zertifikatsspeicher aktualisieren; Fundus akzeptiert absichtlich keine unsicheren Zertifikate.';
+  }
+  return 'Netzwerk: $error';
+}
+
 /// What a media area should be asked about, and where.
 enum MetadataProviderKind {
   anilistAnime('AniList (Anime)'),
   anilistManga('AniList (Manga & Manhwa)'),
+  anilistAdultAnime('AniList (Hentai Anime)'),
+  anilistAdultManga('AniList (Hentai Manga & Novel)'),
+  myAnimeList('MyAnimeList (Anime & Manga)'),
+  myAnimeListAdult('MyAnimeList (Hentai)'),
   tmdb('TMDB (Filme & Serien)'),
   openLibrary('Open Library (Bücher)'),
   audible('Audible (Hörbücher)'),
@@ -40,6 +53,7 @@ enum MetadataProviderKind {
         'anime' => const [
           MetadataProviderKind.anilistAnime,
           MetadataProviderKind.tmdb,
+          MetadataProviderKind.myAnimeList,
         ],
         'movie' || 'series' => const [
           MetadataProviderKind.tmdb,
@@ -48,10 +62,12 @@ enum MetadataProviderKind {
         'manga' => const [
           MetadataProviderKind.anilistManga,
           MetadataProviderKind.openLibrary,
+          MetadataProviderKind.myAnimeList,
         ],
         'novel' => const [
           MetadataProviderKind.anilistManga,
           MetadataProviderKind.openLibrary,
+          MetadataProviderKind.myAnimeList,
         ],
         'audiobook' => const [
           MetadataProviderKind.audible,
@@ -102,6 +118,21 @@ MetadataProvider providerFor(
   ),
   MetadataProviderKind.anilistManga => AniListProvider(
     type: 'MANGA',
+    client: client,
+  ),
+  MetadataProviderKind.anilistAdultAnime => AniListProvider(
+    type: 'ANIME',
+    includeAdult: true,
+    client: client,
+  ),
+  MetadataProviderKind.anilistAdultManga => AniListProvider(
+    type: 'MANGA',
+    includeAdult: true,
+    client: client,
+  ),
+  MetadataProviderKind.myAnimeList => MyAnimeListProvider(client: client),
+  MetadataProviderKind.myAnimeListAdult => MyAnimeListProvider(
+    includeAdult: true,
     client: client,
   ),
   MetadataProviderKind.tmdb => TmdbProvider(apiKey: apiKey, client: client),
@@ -176,15 +207,16 @@ final class MetadataSearch {
 final class AniListProvider implements MetadataProvider {
   AniListProvider({
     this.type = 'ANIME',
+    this.includeAdult = false,
     http.Client? client,
     this.endpoint = _defaultEndpoint,
   }) : _client = client ?? http.Client();
 
   static const _defaultEndpoint = 'https://graphql.anilist.co';
   static const _query = r'''
-query ($search: String!, $perPage: Int!, $type: MediaType!) {
+query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
   Page(perPage: $perPage) {
-    media(search: $search, type: $type, sort: SEARCH_MATCH) {
+    media(search: $search, type: $type, isAdult: $isAdult, sort: SEARCH_MATCH) {
       id
       type
       format
@@ -222,6 +254,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!) {
   /// `ANIME` or `MANGA`. AniList's manga side carries manhwa and light
   /// novels too, which is where most of a Fundus manga shelf lives.
   final String type;
+  final bool includeAdult;
   final http.Client _client;
   final String endpoint;
 
@@ -253,6 +286,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!) {
             'search': normalizedQuery,
             'perPage': limit.clamp(1, 50),
             'type': type,
+            'isAdult': includeAdult ? true : null,
           },
         }),
       ),
@@ -276,7 +310,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!) {
     } on MetadataProviderException {
       rethrow;
     } on Object catch (error) {
-      throw MetadataProviderException(provider, 'Netzwerk: $error');
+      throw MetadataProviderException(provider, _networkMessage(error));
     }
   }
 
@@ -477,7 +511,7 @@ final class TmdbProvider implements MetadataProvider {
     } on MetadataProviderException {
       rethrow;
     } on Object catch (error) {
-      throw MetadataProviderException(provider, 'Netzwerk: $error');
+      throw MetadataProviderException(provider, _networkMessage(error));
     }
   }
 
@@ -502,18 +536,68 @@ final class TmdbProvider implements MetadataProvider {
       final response = await _request(
         _client.get(
           Uri.parse(
-            'https://api.themoviedb.org/3/$area/${candidate.providerId}/credits',
-          ).replace(queryParameters: {'api_key': apiKey}),
+            'https://api.themoviedb.org/3/$area/${candidate.providerId}',
+          ).replace(
+            queryParameters: {
+              'api_key': apiKey,
+              'append_to_response': 'credits,external_ids',
+            },
+          ),
           headers: const {'accept': 'application/json'},
         ),
       );
       final data = _decodeObject(response, provider);
+      Map credits = data['credits'] is Map ? data['credits'] as Map : data;
+      // Older or compatible endpoints may not implement append_to_response.
+      if (credits['cast'] is! List && credits['crew'] is! List) {
+        final fallback = await _request(
+          _client.get(
+            Uri.parse(
+              'https://api.themoviedb.org/3/$area/${candidate.providerId}/credits',
+            ).replace(queryParameters: {'api_key': apiKey}),
+            headers: const {'accept': 'application/json'},
+          ),
+        );
+        credits = _decodeObject(fallback, provider);
+      }
       final people = [
-        ..._people(data['cast'], roleKey: 'character', fallback: 'Darsteller'),
-        ..._people(data['crew'], roleKey: 'job', fallback: 'Crew'),
+        ..._people(
+          credits['cast'],
+          roleKey: 'character',
+          fallback: 'Darsteller',
+        ),
+        ..._people(credits['crew'], roleKey: 'job', fallback: 'Crew'),
       ];
-      if (people.isEmpty) return candidate;
-      return candidate.copyWith(credits: people.take(_peopleLimit).toList());
+      final genres = [
+        for (final entry
+            in data['genres'] is List ? data['genres'] as List : const [])
+          if (entry is Map && entry['name'] is String) entry['name'] as String,
+      ];
+      final companies = [
+        for (final entry
+            in data['production_companies'] is List
+                ? data['production_companies'] as List
+                : const [])
+          if (entry is Map && entry['name'] is String) entry['name'] as String,
+        for (final entry
+            in data['networks'] is List ? data['networks'] as List : const [])
+          if (entry is Map && entry['name'] is String) entry['name'] as String,
+      ];
+      final ids = <String, String>{...candidate.externalIds};
+      final external = data['external_ids'];
+      if (external is Map && external['imdb_id'] is String) {
+        ids['imdb'] = external['imdb_id'] as String;
+      }
+      return candidate.copyWith(
+        genres: genres.isEmpty ? null : genres,
+        publisher: companies.isEmpty ? null : companies.join(', '),
+        series: data['belongs_to_collection'] is Map
+            ? (data['belongs_to_collection'] as Map)['name'] as String?
+            : null,
+        episodeCount: (data['number_of_episodes'] as num?)?.round(),
+        credits: people.isEmpty ? null : people.take(_peopleLimit).toList(),
+        externalIds: ids,
+      );
     } on MetadataProviderException {
       // Ohne Besetzung ist der Abgleich immer noch ein Abgleich.
       return candidate;
@@ -531,16 +615,46 @@ final class TmdbProvider implements MetadataProvider {
         if (entry is Map && entry['name'] is String)
           MetadataPerson(
             name: (entry['name']! as String).trim(),
-            role:
-                entry[roleKey] is String &&
-                    (entry[roleKey]! as String).trim().isNotEmpty
-                ? (entry[roleKey]! as String).trim()
-                : fallback,
+            role: _roleLabel(
+              roleKey == 'character'
+                  ? 'Darsteller'
+                  : (entry['department'] is String
+                        ? entry['department'] as String
+                        : fallback),
+              entry[roleKey] is String ? entry[roleKey] as String : null,
+            ),
+            roleGroup: roleKey == 'character'
+                ? 'Darsteller'
+                : _crewGroup(entry['department'] as String?),
             imageUrl: entry['profile_path'] is String
                 ? '$_portraitBase${entry['profile_path']}'
                 : null,
           ),
     ];
+  }
+
+  static String _crewGroup(String? department) {
+    final value = (department ?? '').toLowerCase();
+    if (value.contains('direct')) return 'Regie';
+    if (value.contains('writing') || value.contains('writer')) {
+      return 'Drehbuch';
+    }
+    if (value.contains('production')) return 'Produktion';
+    if (value.contains('camera') || value.contains('visual')) {
+      return 'Kamera & Bild';
+    }
+    return department ?? 'Crew';
+  }
+
+  static String _roleLabel(String department, String? detail) {
+    final label = department == 'Darsteller'
+        ? 'Darsteller'
+        : (detail ?? department);
+    return department == 'Darsteller' &&
+            detail != null &&
+            detail.trim().isNotEmpty
+        ? detail.trim()
+        : label;
   }
 
   MetadataCandidate? _candidate(Map value) {
@@ -575,6 +689,128 @@ final class TmdbProvider implements MetadataProvider {
       posterUrl: _tmdbImage(value['poster_path'], 'w500'),
       backdropUrl: _tmdbImage(value['backdrop_path'], 'w1280'),
       externalIds: {'tmdb': '${id.round()}'},
+    );
+  }
+}
+
+/// MyAnimeList through the public Jikan API. Jikan exposes MAL's adult
+/// catalogue when `sfw=false`, without requiring a MAL account or secret.
+final class MyAnimeListProvider implements MetadataProvider {
+  MyAnimeListProvider({http.Client? client, this.includeAdult = false})
+    : _client = client ?? http.Client();
+
+  final http.Client _client;
+  final bool includeAdult;
+
+  @override
+  String get provider => 'myanimelist';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
+
+  @override
+  Future<List<MetadataCandidate>> search(
+    String query, {
+    int limit = 10,
+    String? language,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    final responses = await Future.wait([
+      for (final kind in const ['anime', 'manga'])
+        _request(
+          _client.get(
+            Uri.https('api.jikan.moe', '/v4/$kind', {
+              'q': q,
+              'limit': '${limit.clamp(1, 25)}',
+              'sfw': includeAdult ? 'false' : 'true',
+            }),
+            headers: const {'accept': 'application/json'},
+          ),
+        ),
+    ]);
+    return [
+      for (var index = 0; index < responses.length; index++)
+        if (_decodeObject(responses[index], provider)['data']
+            case final List data)
+          for (final item in data)
+            if (item is Map)
+              ?_candidate(item, kind: index == 0 ? 'anime' : 'manga'),
+    ];
+  }
+
+  Future<http.Response> _request(Future<http.Response> request) async {
+    try {
+      return await request.timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      throw MetadataProviderException(provider, 'Zeitüberschreitung');
+    } on MetadataProviderException {
+      rethrow;
+    } on Object catch (error) {
+      throw MetadataProviderException(provider, _networkMessage(error));
+    }
+  }
+
+  MetadataCandidate? _candidate(Map value, {required String kind}) {
+    final id = value['mal_id'];
+    final title = _firstString([
+      value['title'],
+      value['title_english'],
+      value['title_japanese'],
+    ]);
+    if (id is! num || title == null) return null;
+    final type = '${value['type'] ?? ''}'.toLowerCase();
+    final images = value['images'];
+    final jpg = images is Map ? images['jpg'] : null;
+    final image = jpg is Map
+        ? _firstString([jpg['large_image_url'], jpg['image_url']])
+        : null;
+    final published = value['published'];
+    final from = published is Map ? published['from'] : null;
+    final year = from is String
+        ? int.tryParse(from.substring(0, from.length.clamp(0, 4)))
+        : null;
+    final titles = <String>{
+      for (final raw in [
+        value['title_english'],
+        value['title_japanese'],
+        ...(value['titles'] is List ? value['titles'] as List : const []),
+      ])
+        if (raw is String && raw.trim().isNotEmpty) raw.trim(),
+    }..remove(title);
+    final genres = <String>[
+      for (final raw in [
+        ...(value['genres'] is List ? value['genres'] as List : const []),
+        ...(value['themes'] is List ? value['themes'] as List : const []),
+      ])
+        if (raw is Map && raw['name'] is String) raw['name'] as String,
+    ];
+    final authors = <String>[
+      for (final raw
+          in value['authors'] is List ? value['authors'] as List : const [])
+        if (raw is Map && raw['name'] is String) raw['name'] as String,
+    ];
+    return MetadataCandidate(
+      provider: provider,
+      providerId: '$id',
+      title: title,
+      alternateTitles: titles.toList(growable: false),
+      authors: authors,
+      workKind: kind == 'anime'
+          ? 'anime'
+          : type.contains('light novel') || type == 'novel'
+          ? 'novel'
+          : 'manga',
+      contentStyle: 'anime',
+      contentSensitivity: includeAdult ? 'adult_explicit' : null,
+      releaseYear: year,
+      isAdult: includeAdult,
+      description: _cleanDescription(value['synopsis']),
+      language: 'ja',
+      genres: genres,
+      posterUrl: image,
+      externalIds: {'mal': '$id'},
     );
   }
 }
@@ -639,7 +875,7 @@ final class OpenLibraryProvider implements MetadataProvider {
     } on MetadataProviderException {
       rethrow;
     } on Object catch (error) {
-      throw MetadataProviderException(provider, 'Netzwerk: $error');
+      throw MetadataProviderException(provider, _networkMessage(error));
     }
   }
 
@@ -754,7 +990,7 @@ final class AudibleProvider implements MetadataProvider {
     } on MetadataProviderException {
       rethrow;
     } on Object catch (error) {
-      throw MetadataProviderException(provider, 'Netzwerk: $error');
+      throw MetadataProviderException(provider, _networkMessage(error));
     }
   }
 
@@ -907,7 +1143,7 @@ final class ApplePodcastProvider implements MetadataProvider {
     } on MetadataProviderException {
       rethrow;
     } on Object catch (error) {
-      throw MetadataProviderException(provider, 'Netzwerk: $error');
+      throw MetadataProviderException(provider, _networkMessage(error));
     }
   }
 

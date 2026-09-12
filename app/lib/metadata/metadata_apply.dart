@@ -220,7 +220,11 @@ Future<MetadataApplyResult> applyMetadata({
           );
         }
       }
-      people.add((name: person.name, role: person.role, imagePath: path));
+      people.add((
+        name: person.name,
+        role: person.roleGroup ?? person.role,
+        imagePath: path,
+      ));
     }
     library.replaceWorkPeople(work.id, people);
   }

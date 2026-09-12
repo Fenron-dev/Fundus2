@@ -30,6 +30,36 @@ final class PersonCredit {
   final String? imagePath;
 }
 
+/// Turns provider-specific role strings into the thematic rows shown on a
+/// film page. Character names remain on the person, but never create one row
+/// per character.
+String creditGroupLabel(String role) {
+  final base = role.split(' · ').first.trim().toLowerCase();
+  if (base == 'darsteller' ||
+      base == 'actor' ||
+      base == 'actress' ||
+      base == 'cast') {
+    return 'Darsteller';
+  }
+  if (base.contains('director') || base.contains('regie')) return 'Regie';
+  if (base.contains('writer') ||
+      base.contains('writing') ||
+      base.contains('drehbuch')) {
+    return 'Drehbuch';
+  }
+  if (base.contains('producer') ||
+      base.contains('production') ||
+      base.contains('produktion')) {
+    return 'Produktion';
+  }
+  if (base.contains('camera') ||
+      base.contains('cinematograph') ||
+      base.contains('kamera')) {
+    return 'Kamera & Bild';
+  }
+  return role.split(' · ').first.trim();
+}
+
 /// Wer an einem Werk beteiligt ist.
 ///
 /// Steht im Katalog eine Besetzung — vom Abgleich mitgebracht —, dann ist sie
