@@ -204,7 +204,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     downloads.addListener(_bump);
     photos.addListener(_bump);
     protection.addListener(_applyProtection);
-    library.hides = protection.hides;
+    library.hides = _hidesFromLists;
     peerLibraries.addListener(_wireSources);
     player.addListener(_syncWhenClosed);
     reader.addListener(_syncWhenClosed);
@@ -339,9 +339,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       if (room == null || entry == null) return null;
       return PeerFileCache(
         proxy: entry.proxy,
-        directory: Directory(
-          p.join(room.path, 'peer-cache', entry.peer.serverId),
-        ),
+        directory: Directory(p.join(room.path, 'peer-cache', entry.sourceId)),
       );
     }
 
@@ -363,7 +361,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         fileId: volume.fileId,
         name: volume.title,
         cacheDirectory: Directory(
-          p.join(room.path, 'peer-cache', entry.peer.serverId, 'pages'),
+          p.join(room.path, 'peer-cache', entry.sourceId, 'pages'),
         ),
       );
     };
@@ -417,10 +415,17 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// lists have to be built again — otherwise unlocking would show nothing
   /// until something else happened to trigger a reload.
   void _applyProtection() {
-    library.hides = protection.hides;
+    library.hides = _hidesFromLists;
     library.refresh();
     _bump();
   }
+
+  /// Protection is session state; source visibility is an installation-local
+  /// preference. Both are applied at the one catalogue gate so search,
+  /// shelves, navigation counts and „Fortsetzen" agree.
+  bool _hidesFromLists(WorkView work) =>
+      protection.hides(work) ||
+      settings.hiddenSourceIds.contains(work.summary.sourceId);
 
   /// Tells the screens below that something they read has changed.
   ///

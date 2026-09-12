@@ -14,6 +14,7 @@ import '../work/bulk_metadata.dart';
 import 'shelf_sections.dart';
 import 'stage_screen.dart';
 import 'work_grid.dart';
+import 'work_poster.dart';
 import 'work_row.dart';
 
 /// The one library view.
@@ -75,6 +76,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final onStage = _showsStage(context, scope, type);
     final tools =
         !onStage || FundusStageSize.of(context) != FundusStageSize.handset;
+    final sourceGroups = _sourceGroups(scope, works, grouping, filter);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -101,6 +103,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
         Expanded(
           child: works.isEmpty
               ? _empty(context, scope)
+              : sourceGroups != null
+              ? _sourceBody(context, sourceGroups, grouping)
               : _body(context, scope, works, grouping, type),
         ),
         if (_selected.isNotEmpty)
@@ -117,6 +121,126 @@ class _LibraryScreenState extends State<LibraryScreen> {
             }),
           ),
       ],
+    );
+  }
+
+  /// Plex-like sections for a combined shell catalogue. The normal one-source
+  /// view and all drilled-in/search views keep their existing layout; source
+  /// sections appear only on the top-level shelf where they add orientation.
+  List<({String name, List<WorkView> works})>? _sourceGroups(
+    FundusScopeState scope,
+    List<WorkView> works,
+    GroupingMode grouping,
+    WorkFilter filter,
+  ) {
+    if (grouping != GroupingMode.tiles && grouping != GroupingMode.table) {
+      return null;
+    }
+    if (route.section != null ||
+        route.group != null ||
+        route.subgroup != null) {
+      return null;
+    }
+    if (filter.text.trim().isNotEmpty) return null;
+    final names = {
+      for (final source in scope.library.sources) source.id: source.displayName,
+    };
+    final grouped = <String, List<WorkView>>{};
+    for (final work in works) {
+      grouped.putIfAbsent(work.summary.sourceId, () => []).add(work);
+    }
+    if (grouped.length < 2) return null;
+    final result = [
+      for (final entry in grouped.entries)
+        (
+          name: names[entry.key] ?? 'Bibliothek',
+          works: List<WorkView>.unmodifiable(entry.value),
+        ),
+    ];
+    result.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return result;
+  }
+
+  Widget _sourceBody(
+    BuildContext context,
+    List<({String name, List<WorkView> works})> groups,
+    GroupingMode grouping,
+  ) {
+    final stage = FundusStageSize.of(context);
+    final compact = context.fundus.density == FundusDensity.compact;
+    final target = compact ? stage.posterWidth * .78 : stage.posterWidth;
+    final margin = EdgeInsets.fromLTRB(
+      stage.gutter,
+      FundusSpace.x4,
+      stage.gutter,
+      FundusSpace.x10,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxWidth - margin.horizontal;
+        final columns = ((available + stage.railGap) / (target + stage.railGap))
+            .floor()
+            .clamp(2, 12);
+        final width = (available - stage.railGap * (columns - 1)) / columns;
+        final extent = workPosterExtent(
+          width: width,
+          textScaler: MediaQuery.textScalerOf(context),
+        );
+        return CustomScrollView(
+          slivers: [
+            for (final group in groups) ...[
+              SliverToBoxAdapter(
+                child: _SourceSectionHeader(
+                  name: group.name,
+                  count: group.works.length,
+                ),
+              ),
+              if (grouping == GroupingMode.tiles)
+                SliverPadding(
+                  padding: margin,
+                  sliver: SliverGrid(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => WorkPoster(
+                        work: group.works[index],
+                        width: width,
+                        selected: _selected.contains(group.works[index].id),
+                        onTap: () => _selected.isEmpty
+                            ? FundusScope.of(
+                                context,
+                              ).navigation.go(WorkRoute(group.works[index].id))
+                            : _toggle(group.works[index]),
+                        onLongPress: () => _toggle(group.works[index]),
+                      ),
+                      childCount: group.works.length,
+                    ),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      mainAxisSpacing: FundusSpace.x6,
+                      crossAxisSpacing: stage.railGap,
+                      mainAxisExtent: extent,
+                    ),
+                  ),
+                )
+              else
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => WorkRow(
+                      work: group.works[index],
+                      selected: _selected.contains(group.works[index].id),
+                      onTap: () => _selected.isEmpty
+                          ? FundusScope.of(
+                              context,
+                            ).navigation.go(WorkRoute(group.works[index].id))
+                          : _toggle(group.works[index]),
+                      onLongPress: () => _toggle(group.works[index]),
+                    ),
+                    childCount: group.works.length,
+                  ),
+                ),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -374,6 +498,50 @@ class _GroupRow extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SourceSectionHeader extends StatelessWidget {
+  const _SourceSectionHeader({required this.name, required this.count});
+
+  final String name;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        FundusSpace.x6,
+        FundusSpace.x6,
+        FundusSpace.x6,
+        FundusSpace.x1,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            FundusIcons.lists,
+            size: FundusIcons.sizeSm,
+            color: tokens.accent,
+          ),
+          const SizedBox(width: FundusSpace.x2),
+          Expanded(
+            child: Text(
+              name,
+              style: theme.textTheme.titleSmall,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Text(
+            '$count Werke',
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: tokens.textFaint,
+            ),
+          ),
+        ],
       ),
     );
   }

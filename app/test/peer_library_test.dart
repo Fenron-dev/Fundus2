@@ -120,6 +120,34 @@ void main() {
   });
 
   test(
+    'mehrere Bibliotheken eines Servers werden als Quellen gespiegelt',
+    () async {
+      final hhhRoot = Directory('${temporary.path}/hhh');
+      await Directory('${hhhRoot.path}/Hörbücher/HHH').create(recursive: true);
+      await File(
+        '${hhhRoot.path}/Hörbücher/HHH/Beispiel.mp3',
+      ).writeAsBytes(List.filled(128, 4));
+      final hhh = await FundusLibrary.create(hhhRoot);
+      await for (final _ in hhh.index()) {}
+      registry.register(hhh, name: 'HHH');
+      addTearDown(() {
+        hhh.close();
+      });
+
+      expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
+      expect(peers.connected, hasLength(2));
+      expect(
+        library.sources.map((source) => source.displayName),
+        contains('Mac · HHH'),
+      );
+      expect(
+        library.works.map((work) => work.title),
+        containsAll(['Der Schacht', 'HHH']),
+      );
+    },
+  );
+
+  test(
     'paralleles Öffnen des Shell-Vaults schließt die Datenbank nicht',
     () async {
       await Future.wait([peers.ensureShellVault(), peers.ensureShellVault()]);

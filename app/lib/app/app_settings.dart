@@ -249,6 +249,26 @@ class AppSettings extends ChangeNotifier {
   Future<void> setServerLibraries(List<ServerLibraryPreference> value) =>
       _set('server_libraries', [for (final entry in value) entry.toJson()]);
 
+  /// Peer sources hidden from this installation's combined catalogue. The
+  /// source rows and their catalogues remain in the shell vault; this is only
+  /// a local visibility preference, like Plex's library visibility setting.
+  List<String> get hiddenSourceIds {
+    final value = _values['hidden_source_ids'];
+    return value is List
+        ? value.whereType<String>().where((id) => id.isNotEmpty).toList()
+        : const [];
+  }
+
+  Future<void> setSourceVisible(String sourceId, bool visible) async {
+    final hidden = {...hiddenSourceIds};
+    if (visible) {
+      hidden.remove(sourceId);
+    } else {
+      hidden.add(sourceId);
+    }
+    await _set('hidden_source_ids', hidden.toList()..sort());
+  }
+
   /// Renames this device, unless the new name says nothing.
   ///
   /// An empty field is a field someone cleared on the way to typing, not a

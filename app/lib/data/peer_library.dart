@@ -20,6 +20,8 @@ final class ConnectedPeer {
     required this.client,
     required this.proxy,
     required this.libraryId,
+    required this.sourceId,
+    this.libraryName,
     this.lastContactAt,
     this.refused = false,
     this.lastMirror,
@@ -33,13 +35,15 @@ final class ConnectedPeer {
 
   /// The library over there that this device mirrors.
   final String libraryId;
+  final String? libraryName;
+
+  /// The local shell source row. One server may expose several libraries, so
+  /// this is no longer necessarily just `peer-<serverId>`.
+  final String sourceId;
 
   DateTime? lastContactAt;
   bool refused;
   RemoteMirrorReport? lastMirror;
-
-  /// The source id its works are filed under here.
-  String get sourceId => PeerLibraries.sourceIdFor(peer);
 
   FundusConnectionState get connection {
     if (refused) return FundusConnectionState.refused;
@@ -108,7 +112,12 @@ class PeerLibraries extends ChangeNotifier {
   static const staleAfter = Duration(seconds: 45);
 
   /// The source id a peer's works are filed under.
-  static String sourceIdFor(PeerConnection peer) => 'peer-${peer.serverId}';
+  static String sourceIdFor(PeerConnection peer, [String? libraryId]) {
+    final id = libraryId?.trim();
+    if (id == null || id.isEmpty) return 'peer-${peer.serverId}';
+    final safe = id.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_');
+    return 'peer-${peer.serverId}--$safe';
+  }
 
   final Map<String, ConnectedPeer> _connected = {};
   Timer? _pulse;
@@ -118,7 +127,9 @@ class PeerLibraries extends ChangeNotifier {
   List<ConnectedPeer> get connected =>
       _connected.values.toList(growable: false);
 
-  ConnectedPeer? peerFor(String serverId) => _connected[serverId];
+  ConnectedPeer? peerFor(String serverId) => _connected.values
+      .where((entry) => entry.peer.serverId == serverId)
+      .firstOrNull;
 
   /// The peer a work belongs to, by the source it was mirrored under.
   ConnectedPeer? forSource(String sourceId) => _connected.values
@@ -182,13 +193,19 @@ class PeerLibraries extends ChangeNotifier {
 
   /// Connects to one machine and fetches its catalogue.
   Future<bool> connect(PeerConnection peer, {bool mirror = true}) async {
-    final current = _connected[peer.serverId];
-    if (current != null &&
-        current.connection == FundusConnectionState.connected) {
+    final current = _connected.values
+        .where((entry) => entry.peer.serverId == peer.serverId)
+        .toList(growable: false);
+    if (current.isNotEmpty &&
+        current.any(
+          (entry) => entry.connection == FundusConnectionState.connected,
+        )) {
       // Tapping an already-open peer must not replace the proxy that a player
       // is using. Replacing it closes the old loopback socket and makes an
       // otherwise healthy stream look like „Nicht erreichbar“.
-      library.library?.setSourceReachable(current.sourceId, reachable: true);
+      for (final entry in current) {
+        library.library?.setSourceReachable(entry.sourceId, reachable: true);
+      }
       library.refresh();
       return true;
     }
@@ -207,58 +224,81 @@ class PeerLibraries extends ChangeNotifier {
     final vault = library.library;
     if (vault == null) return false;
 
-    final client = _connect(peer);
+    final discovery = _connect(peer);
     try {
-      final libraryId = await _libraryIdFor(peer, client);
-      if (libraryId == null) {
-        client.close();
+      final offered = await discovery.libraries();
+      if (offered.isEmpty) {
+        discovery.close();
         _failure =
             'Auf „${peer.name}" ist gerade keine Bibliothek freigegeben. '
             'Schalte dort die Freigabe ein und öffne eine Bibliothek.';
         return false;
       }
 
-      final proxy = await FundusStreamProxy.start(
-        baseUri: peer.baseUri,
-        token: peer.token,
-        libraryId: libraryId,
-        certificateFingerprint: peer.certificateFingerprint.isEmpty
-            ? null
-            : peer.certificateFingerprint,
+      discovery.close();
+      await _removePeerEntries(peer.serverId);
+      final entries = <ConnectedPeer>[];
+      for (final offeredLibrary in offered) {
+        final client = _connect(peer);
+        try {
+          final proxy = await FundusStreamProxy.start(
+            baseUri: peer.baseUri,
+            token: peer.token,
+            libraryId: offeredLibrary.id,
+            certificateFingerprint: peer.certificateFingerprint.isEmpty
+                ? null
+                : peer.certificateFingerprint,
+          );
+          final sourceId = offered.length == 1
+              ? sourceIdFor(peer)
+              : sourceIdFor(peer, offeredLibrary.id);
+          final entry = ConnectedPeer(
+            peer: peer.copyWith(libraryId: offeredLibrary.id),
+            client: client,
+            proxy: proxy,
+            libraryId: offeredLibrary.id,
+            libraryName: offeredLibrary.name,
+            sourceId: sourceId,
+            lastContactAt: DateTime.now(),
+          );
+          _connected[sourceId] = entry;
+          entries.add(entry);
+          vault.registerPeerSource(
+            sourceId: sourceId,
+            displayName: offered.length == 1
+                ? peer.name
+                : '${peer.name} · ${offeredLibrary.name}',
+            libraryId: offeredLibrary.id,
+            certificatePin: peer.certificateFingerprint.isEmpty
+                ? null
+                : peer.certificateFingerprint,
+            baseUrl: peer.baseUrl,
+          );
+          vault.setSourceReachable(sourceId, reachable: true);
+        } on Object {
+          client.close();
+        }
+      }
+      if (entries.isEmpty) {
+        throw const FundusRemoteException(
+          'Keine der freigegebenen Bibliotheken konnte geöffnet werden.',
+        );
+      }
+      await settings.savePeer(
+        peer.copyWith(libraryId: entries.first.libraryId),
       );
-
-      await _connected.remove(peer.serverId)?.close();
-      final entry = ConnectedPeer(
-        peer: peer.copyWith(libraryId: libraryId),
-        client: client,
-        proxy: proxy,
-        libraryId: libraryId,
-        lastContactAt: DateTime.now(),
-      );
-      _connected[peer.serverId] = entry;
-      await settings.savePeer(entry.peer);
-
-      vault.registerPeerSource(
-        sourceId: entry.sourceId,
-        displayName: peer.name,
-        libraryId: libraryId,
-        certificatePin: peer.certificateFingerprint.isEmpty
-            ? null
-            : peer.certificateFingerprint,
-        baseUrl: peer.baseUrl,
-      );
-      vault.setSourceReachable(entry.sourceId, reachable: true);
-
-      if (mirror) await _mirror(entry);
+      for (final entry in entries) {
+        if (mirror) await _mirror(entry);
+      }
       library.refresh();
       return true;
     } on FundusRemoteException catch (error) {
-      client.close();
+      discovery.close();
       _failure = error.message;
       _markUnreachable(peer, refused: error.statusCode == 401);
       return false;
     } on Object catch (error) {
-      client.close();
+      discovery.close();
       _failure = 'Die Verbindung zu „${peer.name}" kam nicht zustande: $error';
       _markUnreachable(peer, refused: false);
       return false;
@@ -329,8 +369,14 @@ class PeerLibraries extends ChangeNotifier {
   /// Lets go of one machine. Its works stay in the index — that is what
   /// makes the library readable when nothing answers.
   Future<void> disconnect(String serverId) async {
-    await _connected.remove(serverId)?.close();
-    library.library?.setSourceReachable('peer-$serverId', reachable: false);
+    final entries = _connected.values
+        .where((entry) => entry.peer.serverId == serverId)
+        .toList(growable: false);
+    for (final entry in entries) {
+      _connected.remove(entry.sourceId);
+      await entry.close();
+      library.library?.setSourceReachable(entry.sourceId, reachable: false);
+    }
     library.refresh();
     if (_connected.isEmpty) _stopPulse();
     notifyListeners();
@@ -340,7 +386,20 @@ class PeerLibraries extends ChangeNotifier {
   /// this device only knew about through it.
   Future<void> forget(String serverId) async {
     await disconnect(serverId);
-    library.library?.dropSource('peer-$serverId');
+    final sourceIds =
+        library.library
+            ?.listSources()
+            .where(
+              (source) =>
+                  source.kind == LibrarySourceKind.peer &&
+                  source.id.startsWith('peer-$serverId'),
+            )
+            .map((source) => source.id)
+            .toList(growable: false) ??
+        const <String>[];
+    for (final sourceId in sourceIds) {
+      library.library?.dropSource(sourceId);
+    }
     await settings.forgetPeer(serverId);
     library.refresh();
     notifyListeners();
@@ -366,17 +425,29 @@ class PeerLibraries extends ChangeNotifier {
   }
 
   void _markUnreachable(PeerConnection peer, {required bool refused}) {
-    final entry = _connected[peer.serverId];
-    if (entry != null) {
-      entry.refused = refused;
+    final entries = _connected.values
+        .where((entry) => entry.peer.serverId == peer.serverId)
+        .toList(growable: false);
+    if (entries.isNotEmpty) {
+      for (final entry in entries) {
+        entry.refused = refused;
+        library.library?.setSourceReachable(entry.sourceId, reachable: false);
+      }
       // A failed re-open is not proof that the already-running connection is
       // gone. Keep its source available until its own heartbeat goes stale.
-      if (entry.connection == FundusConnectionState.connected) {
+      if (entries.any(
+        (entry) => entry.connection == FundusConnectionState.connected,
+      )) {
         library.refresh();
         return;
       }
     }
-    library.library?.setSourceReachable(sourceIdFor(peer), reachable: false);
+    for (final source in library.library?.listSources() ?? const []) {
+      if (source.kind == LibrarySourceKind.peer &&
+          source.id.startsWith('peer-${peer.serverId}')) {
+        library.library?.setSourceReachable(source.id, reachable: false);
+      }
+    }
     library.refresh();
   }
 
@@ -404,13 +475,13 @@ class PeerLibraries extends ChangeNotifier {
     _pulse = null;
   }
 
-  Future<String?> _libraryIdFor(
-    PeerConnection peer,
-    FundusRemoteClient client,
-  ) async {
-    if (peer.libraryId.isNotEmpty) return peer.libraryId;
-    final libraries = await client.libraries();
-    if (libraries.isEmpty) return null;
-    return libraries.first.id;
+  Future<void> _removePeerEntries(String serverId) async {
+    final entries = _connected.values
+        .where((entry) => entry.peer.serverId == serverId)
+        .toList(growable: false);
+    for (final entry in entries) {
+      _connected.remove(entry.sourceId);
+      await entry.close();
+    }
   }
 }

@@ -398,7 +398,8 @@ class _Libraries extends StatelessWidget {
       title: 'Bibliotheken',
       subtitle:
           'Die geöffnete Bibliothek ist selbst eine Quelle — gekoppelte Server '
-          'erscheinen später in derselben Liste.',
+          'erscheinen später in derselben Liste. Mit dem Schalter rechts legst '
+          'du fest, welche Quellen im Mobile-Katalog sichtbar sind.',
       children: [
         const UnassignedFoldersCard(),
         SettingsCard(
@@ -471,10 +472,29 @@ class _Libraries extends StatelessWidget {
                     ],
                   ),
                 ),
-                FundusTag(
-                  source.isVault ? 'Bibliothek' : 'Server',
-                  tone: FundusTagTone.outline,
-                ),
+                if (source.isVault)
+                  FundusTag('Auf diesem Gerät', tone: FundusTagTone.outline)
+                else ...[
+                  FundusTag('Server', tone: FundusTagTone.outline),
+                  const SizedBox(width: FundusSpace.x2),
+                  Tooltip(
+                    message: scope.settings.hiddenSourceIds.contains(source.id)
+                        ? 'Bibliothek einblenden'
+                        : 'Bibliothek ausblenden',
+                    child: Switch.adaptive(
+                      value: !scope.settings.hiddenSourceIds.contains(
+                        source.id,
+                      ),
+                      onChanged: (visible) async {
+                        await scope.settings.setSourceVisible(
+                          source.id,
+                          visible,
+                        );
+                        scope.library.refresh();
+                      },
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

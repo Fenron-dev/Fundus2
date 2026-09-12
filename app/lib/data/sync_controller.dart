@@ -279,10 +279,11 @@ class SyncController extends ChangeNotifier {
   ) async {
     final client = _connect(peer);
     try {
-      final libraryId = await _libraryIdFor(
+      final libraryId = await _libraryIdForWork(
         peer,
         client,
         vault,
+        workId,
       ).timeout(askTimeout);
       if (libraryId == null) return const [];
       final revisions = await client
@@ -320,10 +321,11 @@ class SyncController extends ChangeNotifier {
   ) async {
     final client = _connect(peer);
     try {
-      final libraryId = await _libraryIdFor(
+      final libraryId = await _libraryIdForWork(
         peer,
         client,
         vault,
+        workId,
       ).timeout(askTimeout);
       if (libraryId == null) return null;
       final progress = await client
@@ -346,7 +348,7 @@ class SyncController extends ChangeNotifier {
     for (final peer in peers) {
       final client = _connect(peer);
       try {
-        final libraryId = await _libraryIdFor(peer, client, vault);
+        final libraryId = await _libraryIdForWork(peer, client, vault, workId);
         if (libraryId == null) continue;
         final report = await FundusSync(
           library: vault,
@@ -404,34 +406,57 @@ class SyncController extends ChangeNotifier {
     for (final peer in peers) {
       final client = _connect(peer);
       try {
-        final libraryId = await _libraryIdFor(peer, client, vault);
-        if (libraryId == null) continue;
-        final changed = await client.progressChangedSince(
-          libraryId,
-          since: _lastPull[peer.serverId],
-        );
-        if (changed.isEmpty) continue;
-        // Von hinten nach vorn: die ältesten zuerst, damit der Merkzeitpunkt
-        // lückenlos weiterwandert, wenn eine Runde nicht alles schafft.
-        final queue = changed.toList()
-          ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
-        var done = 0;
-        for (final entry in queue) {
-          if (done >= catchUpBatch) break;
-          _lastPull[peer.serverId] = entry.updatedAt;
-          done++;
-          final mine = vault.loadProgress(entry.workId);
-          // Nur ein nachweislich älterer Stand kann sicher übersprungen werden.
-          // Millisekunden sind keine eindeutige Änderungs-ID: zwei Geräte
-          // können denselben Zeitstempel erzeugen. Gleich alte Einträge müssen
-          // deshalb geladen und von _carryOver anhand der Position entschieden
-          // werden, sonst gehen Fortschritte oder Konfliktfragen verloren.
-          if (mine != null && entry.updatedAt.isBefore(mine.updatedAt)) {
-            continue;
+        final sources = vault
+            .listSources()
+            .where(
+              (source) =>
+                  source.kind == LibrarySourceKind.peer &&
+                  source.baseUrl == peer.baseUrl &&
+                  source.libraryId.isNotEmpty,
+            )
+            .toList(growable: false);
+        final targets = sources.isEmpty
+            ? <({String key, String libraryId})>[]
+            : [
+                for (final source in sources)
+                  (key: source.id, libraryId: source.libraryId),
+              ];
+        if (targets.isEmpty) {
+          final libraryId = await _libraryIdFor(peer, client, vault);
+          if (libraryId == null) continue;
+          targets.add((key: peer.serverId, libraryId: libraryId));
+        }
+        for (final target in targets) {
+          final changed = await client.progressChangedSince(
+            target.libraryId,
+            since: _lastPull[target.key],
+          );
+          if (changed.isEmpty) continue;
+          // Von hinten nach vorn: die ältesten zuerst, damit der Merkzeitpunkt
+          // lückenlos weiterwandert, wenn eine Runde nicht alles schafft.
+          final queue = changed.toList()
+            ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+          var done = 0;
+          for (final entry in queue) {
+            if (done >= catchUpBatch) break;
+            _lastPull[target.key] = entry.updatedAt;
+            done++;
+            final mine = vault.loadProgress(entry.workId);
+            // Nur ein nachweislich älterer Stand kann sicher übersprungen
+            // werden. Gleich alte Einträge müssen geladen und von
+            // _carryOver anhand der Position entschieden werden.
+            if (mine != null && entry.updatedAt.isBefore(mine.updatedAt)) {
+              continue;
+            }
+            final theirs = await client.progress(
+              target.libraryId,
+              entry.workId,
+            );
+            if (theirs == null) continue;
+            if (_carryOver(vault, peer, mine, theirs)) {
+              touched.add(entry.workId);
+            }
           }
-          final theirs = await client.progress(libraryId, entry.workId);
-          if (theirs == null) continue;
-          if (_carryOver(vault, peer, mine, theirs)) touched.add(entry.workId);
         }
       } on Object {
         // Ein Gerät, das gerade schläft, ist keine Meldung wert — dies läuft
@@ -647,7 +672,12 @@ class SyncController extends ChangeNotifier {
     notifyListeners();
     final client = _connect(peer);
     try {
-      final libraryId = await _libraryIdFor(peer, client, vault);
+      final libraryId = await _libraryIdForWork(
+        peer,
+        client,
+        vault,
+        entry.workId,
+      );
       if (libraryId == null) return _finish(false);
       final theirs = await client.progress(libraryId, entry.workId);
       if (theirs == null) {
@@ -729,5 +759,29 @@ class SyncController extends ChangeNotifier {
       if (candidate.id == vault.manifest.libraryId) return candidate.id;
     }
     return null;
+  }
+
+  /// A shell vault can contain several sources from one server. Progress and
+  /// annotations must follow the work's source instead of falling back to the
+  /// first library remembered on the peer.
+  Future<String?> _libraryIdForWork(
+    PeerConnection peer,
+    FundusRemoteClient client,
+    FundusLibrary vault,
+    String workId,
+  ) async {
+    final work = vault.workSummary(workId);
+    if (work != null) {
+      final source = vault
+          .listSources()
+          .where((candidate) => candidate.id == work.sourceId)
+          .firstOrNull;
+      if (source?.kind == LibrarySourceKind.peer &&
+          source?.baseUrl == peer.baseUrl &&
+          source!.libraryId.isNotEmpty) {
+        return source.libraryId;
+      }
+    }
+    return _libraryIdFor(peer, client, vault);
   }
 }
