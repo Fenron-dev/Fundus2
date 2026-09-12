@@ -50,6 +50,7 @@ abstract final class FundusIcons {
   static final photo = PhosphorIcons.imageSquare();
   static final music = PhosphorIcons.musicNotes();
   static final protected = PhosphorIcons.lockSimple();
+  static final unprotected = PhosphorIcons.lockSimpleOpen();
   static final folder = PhosphorIcons.folder();
 
   // Origin marks — see [FundusOrigin]. Always these five, never recoloured.

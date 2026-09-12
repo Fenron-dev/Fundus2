@@ -218,7 +218,21 @@ class ServerHostController extends ChangeNotifier {
       FundusLog.instance.info('server.start', {
         'port': _socket!.port,
         'libraries': registry.libraries.length,
+        'configured': _libraries.length,
       });
+      for (final item in _libraries) {
+        FundusLog.instance.write(
+          item.error == null ? LogLevel.info : LogLevel.warn,
+          'server.library',
+          {
+            'name': item.name,
+            'shared': item.shared,
+            'available': item.available,
+            if (item.libraryId != null) 'id': item.libraryId,
+            if (item.error != null) 'error': item.error,
+          },
+        );
+      }
       if (remember) await _identityStore!.saveSharing(true);
       _presenceTick ??= Timer.periodic(
         const Duration(seconds: 15),

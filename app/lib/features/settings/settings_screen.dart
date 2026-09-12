@@ -2248,7 +2248,7 @@ class _SyncState extends State<_Sync> {
                 children: [
                   Expanded(
                     child: Text(
-                      'Verbundene Geräte',
+                      'Von diesem Gerät verwendete Server',
                       style: theme.textTheme.titleMedium,
                     ),
                   ),
@@ -2268,8 +2268,10 @@ class _SyncState extends State<_Sync> {
               const SizedBox(height: FundusSpace.x3),
               if (sync.peers.isEmpty)
                 Text(
-                  'Noch keins. Ein gekoppeltes Gerät steht hier mit dem '
-                  'Zeitpunkt seines letzten Abgleichs.',
+                  'Noch keiner. Server, mit denen dieses Gerät gekoppelt '
+                  'wurde, stehen hier mit dem letzten Abgleich. Geräte mit '
+                  'Zugriff auf diesen Server stehen weiter oben unter '
+                  '„Gekoppelte Geräte & Freigaben“.',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: tokens.textFaint,
                   ),
@@ -2901,8 +2903,8 @@ class _Sharing extends StatelessWidget {
           Text(
             'Hier legst du serverseitig fest, welche Bibliotheken und '
             'Schutzinhalte jedes bereits gekoppelte Gerät abrufen darf. '
-            '„Verbundene Geräte" weiter unten sind dagegen Server, die '
-            'dieses Gerät selbst verwendet.',
+            '„Von diesem Gerät verwendete Server" weiter unten sind dagegen '
+            'Server, die dieses Gerät selbst verwendet.',
             style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
           ),
           if (host.pairedDevices.isEmpty)

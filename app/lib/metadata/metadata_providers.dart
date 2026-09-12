@@ -19,7 +19,7 @@ String _networkMessage(Object error) {
   final text = '$error';
   if (text.contains('Certificate_Verify_Failed') ||
       text.contains('HandshakeException')) {
-    return 'TLS-Zertifikat konnte nicht geprüft werden. Bitte den Windows-/Flutter-Zertifikatsspeicher aktualisieren; Fundus akzeptiert absichtlich keine unsicheren Zertifikate.';
+    return 'TLS-Zertifikat konnte nicht geprüft werden. Fundus verwendet unter Windows den Windows-Zertifikatsspeicher, akzeptiert aber absichtlich keine unsicheren Zertifikate.';
   }
   return 'Netzwerk: $error';
 }

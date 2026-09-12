@@ -148,6 +148,37 @@ void main() {
   );
 
   test(
+    'eine später freigegebene Bibliothek kommt ohne Proxy-Abriss dazu',
+    () async {
+      expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
+      final firstProxy = peers.connected.single.proxy;
+
+      final secondRoot = Directory('${temporary.path}/spaeter');
+      await Directory('${secondRoot.path}/Filme/Neu').create(recursive: true);
+      await File(
+        '${secondRoot.path}/Filme/Neu/Film.mkv',
+      ).writeAsBytes(List.filled(256, 5));
+      final second = await FundusLibrary.create(secondRoot);
+      await for (final _ in second.index()) {}
+      registry.register(second, name: 'Später');
+      addTearDown(second.close);
+
+      // Eine schon grüne Verbindung muss /libraries trotzdem neu lesen. Der
+      // alte Proxy bleibt dabei am Leben, damit laufende Wiedergabe nicht
+      // plötzlich „Nicht erreichbar" wird.
+      expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
+      expect(peers.connected, hasLength(2));
+      expect(
+        peers.connected
+            .firstWhere((entry) => entry.libraryId == theirs.manifest.libraryId)
+            .proxy,
+        same(firstProxy),
+      );
+      expect(library.works.map((work) => work.title), contains('Neu'));
+    },
+  );
+
+  test(
     'paralleles Öffnen des Shell-Vaults schließt die Datenbank nicht',
     () async {
       await Future.wait([peers.ensureShellVault(), peers.ensureShellVault()]);

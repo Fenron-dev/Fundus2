@@ -117,7 +117,7 @@ void main() {
     expect(find.text('Dieses Gerät'), findsOneWidget);
     expect(find.text('MacBook'), findsOneWidget);
     expect(find.text('Dieses Gerät freigeben'), findsOneWidget);
-    expect(find.text('Verbundene Geräte'), findsOneWidget);
+    expect(find.text('Von diesem Gerät verwendete Server'), findsOneWidget);
   });
 }
 

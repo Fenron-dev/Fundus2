@@ -1,6 +1,9 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <vector>
+
+#include <wincrypt.h>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -25,6 +28,40 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  trust_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "dev.fundus/windows_trust",
+          &flutter::StandardMethodCodec::GetInstance());
+  trust_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() != "rootCertificates") {
+          result->NotImplemented();
+          return;
+        }
+        flutter::EncodableList roots;
+        const DWORD locations[] = {CERT_SYSTEM_STORE_CURRENT_USER,
+                                   CERT_SYSTEM_STORE_LOCAL_MACHINE};
+        for (const DWORD location : locations) {
+          HCERTSTORE store = CertOpenStore(
+              CERT_STORE_PROV_SYSTEM_W, X509_ASN_ENCODING, nullptr,
+              location | CERT_STORE_OPEN_EXISTING_FLAG |
+                  CERT_STORE_READONLY_FLAG,
+              L"ROOT");
+          if (store == nullptr) continue;
+          PCCERT_CONTEXT certificate = nullptr;
+          while ((certificate = CertEnumCertificatesInStore(store,
+                                                              certificate)) !=
+                 nullptr) {
+            roots.emplace_back(std::vector<uint8_t>(
+                certificate->pbCertEncoded,
+                certificate->pbCertEncoded + certificate->cbCertEncoded));
+          }
+          CertCloseStore(store, 0);
+        }
+        result->Success(flutter::EncodableValue(roots));
+      });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -41,6 +78,7 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
+    trust_channel_.reset();
     flutter_controller_ = nullptr;
   }
 

@@ -117,4 +117,16 @@ void main() {
     expect(afterRestart.isUnlocked, isFalse);
     expect(afterRestart.hasPin, isTrue);
   });
+
+  test('Geräteauthentifizierung öffnet nur die laufende Sitzung', () async {
+    await protection.setMode(ProtectionMode.hide);
+    protection.lock();
+
+    protection.unlockAuthenticatedSession();
+    expect(protection.isUnlocked, isTrue);
+
+    final afterRestart = ProtectionController(settings: settings);
+    addTearDown(afterRestart.dispose);
+    expect(afterRestart.isUnlocked, isFalse);
+  });
 }

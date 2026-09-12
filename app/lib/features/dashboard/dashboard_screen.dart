@@ -4,10 +4,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:local_auth/local_auth.dart';
 
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/media_type.dart';
+import '../../data/protection.dart';
 import '../../data/work_view.dart';
 import '../library/unassigned_folders_card.dart';
 import '../library/work_poster.dart';
@@ -351,7 +353,20 @@ class _Greeting extends StatelessWidget {
             ],
           ),
         ),
-        if (narrow)
+        if (narrow) ...[
+          if (scope.protection.mode != ProtectionMode.off)
+            IconButton(
+              onPressed: () => _toggleProtection(context, scope),
+              tooltip: scope.protection.isUnlocked
+                  ? 'Schutz wieder sperren'
+                  : 'Schutz kurz entsperren',
+              icon: Icon(
+                scope.protection.isUnlocked
+                    ? FundusIcons.unprotected
+                    : FundusIcons.protected,
+                size: FundusIcons.sizeMd,
+              ),
+            ),
           IconButton(
             onPressed: scope.library.isScanning
                 ? scope.library.cancelScan
@@ -363,8 +378,8 @@ class _Greeting extends StatelessWidget {
               scope.library.isScanning ? FundusIcons.close : FundusIcons.sync,
               size: FundusIcons.sizeMd,
             ),
-          )
-        else
+          ),
+        ] else
           OutlinedButton.icon(
             onPressed: scope.library.isScanning
                 ? scope.library.cancelScan
@@ -387,6 +402,87 @@ class _Greeting extends StatelessWidget {
   static void _lookForNews(FundusScopeState scope) {
     unawaited(scope.catchUpWithPeers());
     unawaited(scope.library.scan());
+  }
+
+  static Future<void> _toggleProtection(
+    BuildContext context,
+    FundusScopeState scope,
+  ) async {
+    final protection = scope.protection;
+    if (protection.isUnlocked) {
+      protection.lock();
+      return;
+    }
+    try {
+      final supported = await LocalAuthentication().isDeviceSupported();
+      if (supported) {
+        final authenticated = await LocalAuthentication().authenticate(
+          localizedReason: 'Geschützte Werke für diese Sitzung entsperren',
+          persistAcrossBackgrounding: true,
+        );
+        if (authenticated) protection.unlockAuthenticatedSession();
+        return;
+      }
+    } on Object {
+      // Some devices have no configured platform credential. Fundus's own
+      // PIN remains a useful fallback instead of turning the quick lock into
+      // a dead button.
+    }
+    if (!context.mounted) return;
+    if (!protection.hasPin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Auf diesem Gerät ist weder eine Gerätesperre noch eine Fundus-PIN eingerichtet.',
+          ),
+        ),
+      );
+      return;
+    }
+    final controller = TextEditingController();
+    String? complaint;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Schutz entsperren'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Fundus-PIN',
+              errorText: complaint,
+            ),
+            onSubmitted: (_) {
+              if (protection.unlock(controller.text)) {
+                Navigator.of(dialogContext).pop();
+              } else {
+                setDialogState(() => complaint = 'Die PIN stimmt nicht.');
+              }
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (protection.unlock(controller.text)) {
+                  Navigator.of(dialogContext).pop();
+                } else {
+                  setDialogState(() => complaint = 'Die PIN stimmt nicht.');
+                }
+              },
+              child: const Text('Entsperren'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
   }
 
   /// Twelve thousand works is „12 480", not „12480".

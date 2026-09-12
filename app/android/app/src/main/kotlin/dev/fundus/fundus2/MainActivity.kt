@@ -7,7 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
-import com.ryanheise.audioservice.AudioServiceActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
@@ -29,7 +29,7 @@ import io.flutter.plugin.common.MethodChannel
  * pdfium now does that on every platform from one codebase. The old file is
  * kept verbatim under legacy/android/MainActivity.kt.reference.
  */
-class MainActivity : AudioServiceActivity() {
+class MainActivity : AudioServiceFragmentActivity() {
     private var pendingStorageResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

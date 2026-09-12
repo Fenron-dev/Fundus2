@@ -121,6 +121,20 @@ class ProtectionController extends ChangeNotifier {
     return true;
   }
 
+  /// Opens the protected shelf after the operating system has authenticated
+  /// the person with biometrics or the device credential.
+  ///
+  /// The caller must only invoke this after a successful platform prompt.
+  /// Nothing is persisted: just like the Fundus PIN, this grant belongs to
+  /// the current process and disappears when the app is closed.
+  void unlockAuthenticatedSession() {
+    if (mode == ProtectionMode.off || _unlocked) return;
+    _failedAttempts = 0;
+    _lockedUntil = null;
+    _unlocked = true;
+    notifyListeners();
+  }
+
   void lock() {
     if (!_unlocked) return;
     _unlocked = false;

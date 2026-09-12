@@ -613,10 +613,19 @@ class SyncController extends ChangeNotifier {
   /// waste of the network the sync is trying not to depend on. Null means
   /// „everything", which is right for a vault of one's own.
   static Iterable<String>? _worksOf(FundusLibrary vault, PeerConnection peer) {
-    final sourceId = 'peer-${peer.serverId}';
+    final sourceIds = vault
+        .listSources()
+        .where(
+          (source) =>
+              source.kind == LibrarySourceKind.peer &&
+              source.id.startsWith('peer-${peer.serverId}') &&
+              (peer.libraryId.isEmpty || source.libraryId == peer.libraryId),
+        )
+        .map((source) => source.id)
+        .toSet();
     final own = vault
         .listWorks(includeMissing: true)
-        .where((work) => work.sourceId == sourceId)
+        .where((work) => sourceIds.contains(work.sourceId))
         .map((work) => work.id)
         .toList();
     return own.isEmpty ? null : own;

@@ -193,22 +193,6 @@ class PeerLibraries extends ChangeNotifier {
 
   /// Connects to one machine and fetches its catalogue.
   Future<bool> connect(PeerConnection peer, {bool mirror = true}) async {
-    final current = _connected.values
-        .where((entry) => entry.peer.serverId == peer.serverId)
-        .toList(growable: false);
-    if (current.isNotEmpty &&
-        current.any(
-          (entry) => entry.connection == FundusConnectionState.connected,
-        )) {
-      // Tapping an already-open peer must not replace the proxy that a player
-      // is using. Replacing it closes the old loopback socket and makes an
-      // otherwise healthy stream look like „Nicht erreichbar“.
-      for (final entry in current) {
-        library.library?.setSourceReachable(entry.sourceId, reachable: true);
-      }
-      library.refresh();
-      return true;
-    }
     _busy = true;
     _failure = null;
     notifyListeners();
@@ -236,9 +220,32 @@ class PeerLibraries extends ChangeNotifier {
       }
 
       discovery.close();
-      await _removePeerEntries(peer.serverId);
+      // Reconcile instead of tearing every proxy down. A player may still be
+      // reading through an existing loopback proxy, while a newly shared
+      // second library must nevertheless be discovered immediately.
+      final current = {
+        for (final entry in _connected.values)
+          if (entry.peer.serverId == peer.serverId) entry.libraryId: entry,
+      };
+      final offeredIds = {for (final item in offered) item.id};
+      for (final entry in current.values.where(
+        (entry) => !offeredIds.contains(entry.libraryId),
+      )) {
+        _connected.remove(entry.sourceId);
+        await entry.close();
+        vault.setSourceReachable(entry.sourceId, reachable: false);
+      }
       final entries = <ConnectedPeer>[];
       for (final offeredLibrary in offered) {
+        final existing = current[offeredLibrary.id];
+        if (existing != null) {
+          existing.lastContactAt = DateTime.now();
+          existing.refused = false;
+          _connected[existing.sourceId] = existing;
+          entries.add(existing);
+          vault.setSourceReachable(existing.sourceId, reachable: true);
+          continue;
+        }
         final client = _connect(peer);
         try {
           final proxy = await FundusStreamProxy.start(
@@ -249,9 +256,12 @@ class PeerLibraries extends ChangeNotifier {
                 ? null
                 : peer.certificateFingerprint,
           );
-          final sourceId = offered.length == 1
-              ? sourceIdFor(peer)
-              : sourceIdFor(peer, offeredLibrary.id);
+          final sourceId = _sourceIdFor(
+            vault,
+            peer,
+            offeredLibrary.id,
+            offered.length,
+          );
           final entry = ConnectedPeer(
             peer: peer.copyWith(libraryId: offeredLibrary.id),
             client: client,
@@ -290,6 +300,14 @@ class PeerLibraries extends ChangeNotifier {
       for (final entry in entries) {
         if (mirror) await _mirror(entry);
       }
+      final activeSources = {for (final entry in entries) entry.sourceId};
+      for (final source in vault.listSources()) {
+        if (source.kind == LibrarySourceKind.peer &&
+            source.id.startsWith('peer-${peer.serverId}') &&
+            !activeSources.contains(source.id)) {
+          vault.setSourceReachable(source.id, reachable: false);
+        }
+      }
       library.refresh();
       return true;
     } on FundusRemoteException catch (error) {
@@ -307,27 +325,13 @@ class PeerLibraries extends ChangeNotifier {
 
   /// Fetches the catalogues again, for every machine that answers.
   Future<void> refresh() async {
-    if (_connected.isEmpty) {
-      await connectAll();
-      return;
-    }
     _busy = true;
     _failure = null;
     notifyListeners();
-    for (final entry in _connected.values.toList()) {
-      try {
-        await _mirror(entry);
-        entry.lastContactAt = DateTime.now();
-        entry.refused = false;
-        library.library?.setSourceReachable(entry.sourceId, reachable: true);
-      } on FundusRemoteException catch (error) {
-        _failure = error.message;
-        entry.refused = error.statusCode == 401 || error.statusCode == 403;
-        library.library?.setSourceReachable(entry.sourceId, reachable: false);
-      } on Object catch (error) {
-        _failure = 'Der Katalog von „${entry.peer.name}" kam nicht: $error';
-        library.library?.setSourceReachable(entry.sourceId, reachable: false);
-      }
+    // Asking /libraries again is important: the server's selection and the
+    // per-device allow-list can change while the first proxy remains green.
+    for (final peer in settings.peers) {
+      await _open(peer, mirror: true);
     }
     library.refresh();
     _busy = false;
@@ -479,13 +483,22 @@ class PeerLibraries extends ChangeNotifier {
     _pulse = null;
   }
 
-  Future<void> _removePeerEntries(String serverId) async {
-    final entries = _connected.values
-        .where((entry) => entry.peer.serverId == serverId)
-        .toList(growable: false);
-    for (final entry in entries) {
-      _connected.remove(entry.sourceId);
-      await entry.close();
+  static String _sourceIdFor(
+    FundusLibrary vault,
+    PeerConnection peer,
+    String libraryId,
+    int offeredCount,
+  ) {
+    final specific = sourceIdFor(peer, libraryId);
+    if (vault.listSources().any((source) => source.id == specific)) {
+      return specific;
     }
+    final legacy = sourceIdFor(peer);
+    if (offeredCount == 1) return legacy;
+    final legacySource = vault.listSources().where(
+      (source) => source.id == legacy && source.libraryId == libraryId,
+    );
+    if (legacySource.isNotEmpty) return legacy;
+    return specific;
   }
 }
