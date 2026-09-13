@@ -285,7 +285,11 @@ List<MetadataMatch> rankMetadataCandidates(
         bestTitle = title;
       }
     }
-    if (bestScore <= 0) continue;
+    // Früher wurde hier verworfen, was kein ganzes Wort mit der Anfrage
+    // teilt. Bei einer aus einem Dateinamen abgeleiteten Anfrage traf das
+    // auch den richtigen Treffer — und zwar unsichtbar, vor der Auswahl. Ein
+    // schwacher Kandidat gehört ans Ende der Liste, nicht in den Müll.
+    if (bestScore <= 0 && titles.isEmpty) continue;
     // A year that is known on both sides is the cheapest way to separate a
     // remake from what it remade.
     final sameYear = year != null && candidate.releaseYear == year;
@@ -323,6 +327,89 @@ List<MetadataMatch> rankMetadataCandidates(
     );
   });
   return matches;
+}
+
+/// Der Suchbegriff, wie ein Dienst ihn versteht.
+///
+/// Ein Werktitel kommt aus einem Ordner- oder Dateinamen und trägt mit, was
+/// beim Ablegen praktisch war: die Gruppe in eckigen Klammern, die Bandnummer,
+/// das Jahr, Unterstriche statt Leerzeichen. Die Suchen der Dienste sind
+/// dagegen nahezu exakt — AniList liefert zu `Solo Leveling (2018)` null
+/// Treffer und zu `Solo Leveling` einen.
+///
+/// Entfernt wird deshalb, was beschreibt *welche Datei*, und stehen bleibt,
+/// was benennt *welches Werk*.
+String normalizeSearchQuery(String value) {
+  var text = value.trim();
+  // Was in Klammern steht, ist fast nie Teil des Titels: Scanlation-Gruppe,
+  // Auflösung, Sprache, Jahr.
+  text = text.replaceAll(RegExp(r'\[[^\]]*\]|\{[^}]*\}'), ' ');
+  text = text.replaceAll(RegExp(r'\([^)]*\)'), ' ');
+  // Eine bekannte Dateiendung am Ende.
+  text = text.replaceAll(
+    RegExp(
+      r'\.(cbz|cbr|cb7|zip|rar|epub|pdf|mobi|azw3?|mp3|m4a|m4b|flac|opus|ogg'
+      r'|mkv|mp4|avi|mov|webm|txt)$',
+      caseSensitive: false,
+    ),
+    ' ',
+  );
+  text = text.replaceAll(RegExp(r'[_\.]+'), ' ');
+  // Band-, Kapitel- und Episodenangaben am Ende, mit oder ohne Nummer.
+  text = text.replaceAll(
+    RegExp(
+      r'\s+(v|vol|volume|band|bd|ch|chapter|kapitel|ep|episode|folge|teil|part)'
+      r'\s*\.?\s*\d+(\s*-\s*\d+)?\s*$',
+      caseSensitive: false,
+    ),
+    ' ',
+  );
+  text = text.replaceAll(
+    RegExp(r'\s+s\d{1,2}\s*e\d{1,3}\s*$', caseSensitive: false),
+    ' ',
+  );
+  // Eine nackte Zahl am Ende wird hier bewusst *nicht* entfernt: bei
+  // `Berserk 01` ist sie die Bandnummer, bei `Blade Runner 2049` der Titel.
+  // Das zu unterscheiden ist Sache der Leiter, die zuerst vollständig fragt.
+  text = text.replaceAll(RegExp(r'[\s\-–—]+$'), ' ');
+  return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+/// Immer kürzere Fassungen derselben Anfrage, beste zuerst.
+///
+/// Bereinigen allein genügt nicht: `Frieren - Beyond Journeys End` ist ein
+/// korrekter Titel und liefert trotzdem null Treffer, während `Frieren` zwei
+/// liefert. Wer nichts findet, fragt deshalb kürzer — aber erst dann, damit
+/// eine genaue Anfrage nicht durch eine ungenauere ersetzt wird.
+List<String> searchQueryLadder(String value) {
+  final steps = <String>[];
+  void add(String candidate) {
+    final trimmed = candidate.trim();
+    if (trimmed.isEmpty || steps.contains(trimmed)) return;
+    steps.add(trimmed);
+  }
+
+  final base = normalizeSearchQuery(value);
+  add(base);
+  // Erst danach ohne eine Zahl am Ende. `Blade Runner 2049` wird so
+  // vollständig gefragt und trifft; `Berserk 01` trifft nicht und kommt
+  // hier zu `Berserk`.
+  add(base.replaceAll(RegExp(r'\s+\d{1,4}\s*$'), ''));
+  // Ein Untertitel hinter Gedankenstrich oder Doppelpunkt.
+  final separator = RegExp(r'\s+[-–—:]\s+|:\s+');
+  final head = base.split(separator).first;
+  add(head);
+  add(head.replaceAll(RegExp(r'\s+\d{1,4}\s*$'), ''));
+  // Und zuletzt die ersten Wörter — ein Werktitel steht vorn.
+  final words = head
+      .replaceAll(RegExp(r'\s+\d{1,4}\s*$'), '')
+      .split(' ')
+      .where((word) => word.isNotEmpty)
+      .toList();
+  for (final count in const [3, 2]) {
+    if (words.length > count) add(words.take(count).join(' '));
+  }
+  return steps;
 }
 
 /// Titles as they compare: no case, no punctuation, no double spaces.

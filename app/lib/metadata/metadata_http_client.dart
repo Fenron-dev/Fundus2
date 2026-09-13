@@ -8,6 +8,13 @@ import 'package:http/http.dart' as http;
 
 /// Only public metadata traffic uses Schannel. Paired servers keep their
 /// separate certificate-pinned transport; no global TLS overrides are installed.
+/// Wie Fundus sich bei einem Metadatendienst vorstellt.
+///
+/// Eine Zeile, überall dieselbe. Mehrere Dienste bestehen auf einem
+/// aussagekräftigen Agenten, und unter Windows ist er zugleich der Agent der
+/// WinHTTP-Sitzung — zwei verschiedene wären zwei Zeilen im Request.
+const metadataUserAgent = 'Fundus/2 (+https://github.com/Fenron-dev/Fundus2)';
+
 http.Client createMetadataHttpClient() =>
     Platform.isWindows ? WindowsMetadataClient() : http.Client();
 
@@ -274,7 +281,7 @@ _Response _exchange(
   try {
     checkDeadline();
     session = _open(
-      'Fundus/2'.toNativeUtf16(allocator: arena),
+      metadataUserAgent.toNativeUtf16(allocator: arena),
       4,
       nullptr,
       nullptr,
@@ -314,10 +321,15 @@ _Response _exchange(
       if (RegExp(r'[\r\n]').hasMatch('${entry.key}${entry.value}')) {
         throw http.ClientException('Invalid HTTP header');
       }
+      // `user-agent` gehört dazu: WinHttpSendRequest hängt zusätzliche
+      // Header *an*, es ersetzt nicht. Der Session-Agent aus WinHttpOpen
+      // stünde dann neben dem des Aufrufers, und ein Request mit zwei
+      // User-Agent-Zeilen ist hinter einer Bot-Abwehr ein Ablehnungsgrund.
       if (![
         'content-length',
         'accept-encoding',
         'host',
+        'user-agent',
       ].contains(entry.key.toLowerCase())) {
         lines.add('${entry.key}: ${entry.value}\r\n');
       }

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/server_identity.dart';
 import 'package:fundus/metadata/metadata_apply.dart';
 import 'package:fundus/metadata/metadata_http_client.dart';
+import 'package:fundus/metadata/metadata_providers.dart';
 import 'package:http/http.dart' as http;
 
 void main() {
@@ -191,6 +192,44 @@ void main() {
             Uri.parse('https://api.themoviedb.org/3/configuration'),
           )).statusCode,
           401,
+        );
+      } finally {
+        client.close();
+      }
+    },
+    skip:
+        !Platform.isWindows || Platform.environment['FUNDUS_LIVE_HTTPS'] != '1',
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'Live Windows: MangaDex liefert die Kennungen, MyAnimeList antwortet',
+    () async {
+      // Beide sind neu im Abgleich und beide waren der Grund, warum unter
+      // Windows nie etwas gefunden wurde. Ein grüner Runner ersetzt keine
+      // Gegenprobe am betroffenen Rechner, aber ein roter erspart sie.
+      //
+      // Jikan wird hier bewusst *nicht* geprüft: dessen Ausfall liegt
+      // zwischen Jikan und MyAnimeList und hätte einen dauerhaft roten Lauf
+      // zur Folge, der nichts über Fundus aussagt.
+      final client = createMetadataHttpClient();
+      try {
+        final found = await MangaDexProvider(
+          client: client,
+        ).search('Solo Leveling');
+        expect(found, isNotEmpty, reason: 'MangaDex über WinHTTP');
+        expect(
+          found.any((candidate) => candidate.externalIds.containsKey('mal')),
+          isTrue,
+          reason: 'die Brücke zu den Kennungen trägt',
+        );
+        // Ohne Client-Kennung ist 403 die richtige Antwort — sie beweist,
+        // dass TLS zum MyAnimeList-Host steht.
+        expect(
+          (await client.get(
+            Uri.parse('https://api.myanimelist.net/v2/manga?q=frieren'),
+          )).statusCode,
+          403,
         );
       } finally {
         client.close();

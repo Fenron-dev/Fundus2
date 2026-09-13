@@ -39,17 +39,20 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   late final TextEditingController _query = TextEditingController(
     text: widget.work.title,
   );
-  late final TextEditingController _key = TextEditingController(
-    text: widget.settings.tmdbKey,
-  );
-  late final TextEditingController _hardcoverKey = TextEditingController(
-    text: widget.settings.hardcoverToken,
-  );
+
+  /// Ein Feld je Zugangsdatum, nicht je Dienst: die beiden
+  /// MyAnimeList-Einträge teilen sich eine Client-ID.
+  late final Map<String, TextEditingController> _credentials = {
+    for (final key in const ['tmdb', 'hardcover', 'mal'])
+      key: TextEditingController(text: widget.settings.credentialFor(key)),
+  };
   late final List<MetadataProviderKind> _suggested = [
     ...MetadataProviderKind.forMediaType(widget.work.mediaType?.id),
     if (widget.work.summary.contentSensitivity == 'adult_explicit') ...[
       MetadataProviderKind.anilistAdultAnime,
       MetadataProviderKind.anilistAdultManga,
+      MetadataProviderKind.mangaDexAdult,
+      MetadataProviderKind.myAnimeListApiAdult,
       MetadataProviderKind.myAnimeListAdult,
     ],
   ];
@@ -69,8 +72,9 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   @override
   void dispose() {
     _query.dispose();
-    _key.dispose();
-    _hardcoverKey.dispose();
+    for (final controller in _credentials.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -95,9 +99,10 @@ class _MetadataDialogState extends State<_MetadataDialog> {
     final credential = _credentialController.text.trim();
     if (_provider.needsKey && credential.isEmpty) {
       setState(
-        () => _error = _provider == MetadataProviderKind.hardcover
-            ? 'Für Hardcover wird ein eigener API-Token benötigt.'
-            : 'Für TMDB wird ein eigener Schlüssel benötigt.',
+        () => _error =
+            'Für ${_provider.label} wird ein eigenes Zugangsdatum benötigt: '
+            '${_provider.credentialLabel}, kostenlos unter '
+            '${_provider.credentialSource}.',
       );
       return;
     }
@@ -105,11 +110,7 @@ class _MetadataDialogState extends State<_MetadataDialog> {
       _loading = true;
       _error = null;
     });
-    if (_provider == MetadataProviderKind.hardcover) {
-      await widget.settings.setHardcoverToken(credential);
-    } else if (_provider == MetadataProviderKind.tmdb) {
-      await widget.settings.setTmdbKey(credential);
-    }
+    await widget.settings.setCredential(_provider.credentialKey, credential);
     await widget.settings.setMetadataLanguage(_language);
     try {
       final results = await MetadataSearch([
@@ -167,7 +168,7 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   });
 
   TextEditingController get _credentialController =>
-      _provider == MetadataProviderKind.hardcover ? _hardcoverKey : _key;
+      _credentials[_provider.credentialKey] ?? _credentials.values.first;
 
   @override
   Widget build(BuildContext context) {
@@ -258,11 +259,11 @@ class _MetadataDialogState extends State<_MetadataDialog> {
                 controller: _credentialController,
                 obscureText: true,
                 decoration: InputDecoration(
-                  labelText: _provider == MetadataProviderKind.hardcover
-                      ? 'Hardcover-API-Token'
-                      : 'TMDB-Schlüssel',
-                  helperText: 'Bleibt auf diesem Gerät, nie in der Bibliothek.',
-                  border: OutlineInputBorder(),
+                  labelText: _provider.credentialLabel,
+                  helperText:
+                      'Von ${_provider.credentialSource}. '
+                      'Bleibt auf diesem Gerät, nie in der Bibliothek.',
+                  border: const OutlineInputBorder(),
                 ),
               ),
             ],

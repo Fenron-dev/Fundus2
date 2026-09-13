@@ -456,24 +456,59 @@ class _External extends StatelessWidget {
   final bool centred;
 
   /// Die Adresse, unter der ein Dienst dieses Werk zeigt.
-  static Uri? addressFor(String service, String id) => switch (service) {
-    'tmdb' => Uri.parse('https://www.themoviedb.org/search?query=$id'),
-    'anilist' => Uri.parse('https://anilist.co/anime/$id'),
-    'openlibrary' => Uri.parse('https://openlibrary.org/works/$id'),
-    'itunes' => Uri.parse('https://podcasts.apple.com/podcast/id$id'),
-    'audible' || 'asin' => Uri.parse('https://www.audible.de/pd/$id'),
-    'feed' => Uri.tryParse(id),
-    _ => null,
-  };
+  ///
+  /// AniList trennt Anime und Manga im Pfad. Beides auf `/anime/` zu legen
+  /// führte bei jedem Manga und jeder Novel ins Leere, deshalb entscheidet die
+  /// Art des Werks — und wo sie nichts sagt, führt der Suchpfad hin, der für
+  /// beide Bestände gilt.
+  static Uri? addressFor(String service, String id, {String? workKind}) =>
+      switch (service) {
+        'tmdb' => Uri.parse('https://www.themoviedb.org/search?query=$id'),
+        'imdb' => Uri.parse('https://www.imdb.com/title/$id/'),
+        'anilist' => Uri.parse(switch (workKind) {
+          'anime' ||
+          'movie' ||
+          'tv' ||
+          'series' => 'https://anilist.co/anime/$id',
+          'manga' ||
+          'webnovel' ||
+          'novel' ||
+          'ebook' => 'https://anilist.co/manga/$id',
+          _ => 'https://anilist.co/search/manga?search=$id',
+        }),
+        'mal' => Uri.parse(switch (workKind) {
+          'anime' ||
+          'movie' ||
+          'tv' ||
+          'series' => 'https://myanimelist.net/anime/$id',
+          _ => 'https://myanimelist.net/manga/$id',
+        }),
+        'mangadex' => Uri.parse('https://mangadex.org/title/$id'),
+        'goodreads' => Uri.parse('https://www.goodreads.com/book/show/$id'),
+        'openlibrary' => Uri.parse('https://openlibrary.org/works/$id'),
+        'hardcover' => Uri.parse('https://hardcover.app/books/$id'),
+        'itunes' => Uri.parse('https://podcasts.apple.com/podcast/id$id'),
+        'audible' || 'asin' => Uri.parse('https://www.audible.de/pd/$id'),
+        // Was schon eine Adresse ist, bleibt eine.
+        'feed' || 'raw' || 'engtl' => Uri.tryParse(id),
+        _ => null,
+      };
 
   static const _names = {
     'tmdb': 'TMDB',
+    'imdb': 'IMDb',
     'anilist': 'AniList',
+    'mal': 'MyAnimeList',
+    'mangadex': 'MangaDex',
+    'goodreads': 'Goodreads',
     'openlibrary': 'Open Library',
+    'hardcover': 'Hardcover',
     'itunes': 'Apple Podcasts',
     'audible': 'Audible',
     'asin': 'ASIN',
     'feed': 'Feed',
+    'raw': 'Original',
+    'engtl': 'Offizielle Ausgabe',
   };
 
   @override
@@ -512,7 +547,11 @@ class _External extends StatelessWidget {
             avatar: Icon(FundusIcons.originStream, size: FundusIcons.sizeSm),
             label: Text(_names[entry.key] ?? entry.key),
             onPressed: () {
-              final address = addressFor(entry.key, entry.value);
+              final address = addressFor(
+                entry.key,
+                entry.value,
+                workKind: work.summary.kind,
+              );
               if (address != null) unawaited(launchUrl(address));
             },
           ),

@@ -2381,7 +2381,7 @@ final class FundusLibrary {
     if (work == null) return;
     await File(p.join(directory.path, 'meta.yaml')).writeAsString(
       '${const JsonEncoder.withIndent('  ').convert({
-        'format_version': 3,
+        'format_version': 4,
         'work_id': workId,
         'base_kind': work.kind,
         'custom_type': null,
@@ -2399,6 +2399,11 @@ final class FundusLibrary {
         'content_sensitivity': work.contentSensitivity,
         'content_style': work.contentStyle,
         'genres': work.genres,
+        // Ab Fassung 4 reisen die externen Kennungen mit. Vorher lebten sie
+        // nur in `index.db`, und eine neu angelegte Bibliothek über denselben
+        // Medien verlor sie — samt der einzigen Möglichkeit, dasselbe Werk
+        // später zweifelsfrei wiederzuerkennen.
+        'external_ids': work.externalIds,
         'field_sources': {
           for (final entry in work.metadataOrigins.entries) entry.key: {'source': entry.value.source.name, 'updated_at': entry.value.updatedAt.toUtc().toIso8601String()},
         },
@@ -2476,6 +2481,13 @@ final class FundusLibrary {
                 ? (value['genres'] as List).whereType<String>().toList(
                     growable: false,
                   )
+                : null,
+            externalIds: value['external_ids'] is Map
+                ? {
+                    for (final entry in (value['external_ids'] as Map).entries)
+                      if (entry.key is String && entry.value != null)
+                        '${entry.key}': '${entry.value}',
+                  }
                 : null,
             source: WorkMetadataSource.sidecar,
             updatedAt: await metaFile.lastModified(),

@@ -84,6 +84,7 @@ class AppSettings extends ChangeNotifier {
     'peers',
     'tmdb_key',
     'hardcover_token',
+    'mal_client_id',
     'protection_pin',
   };
 
@@ -182,6 +183,13 @@ class AppSettings extends ChangeNotifier {
   /// Personal Hardcover API token. It is device-local and never part of a
   /// shared vault, just like the TMDB key.
   String get hardcoverToken => _values['hardcover_token'] as String? ?? '';
+
+  /// Client-Kennung für die offizielle MyAnimeList-Schnittstelle.
+  ///
+  /// Kostenlos unter `myanimelist.net/apiconfig` anzulegen und ohne OAuth
+  /// gültig, solange nur öffentliche Angaben gelesen werden. Liegt wie die
+  /// übrigen Zugangsdaten im geschützten Speicher des Geräts, nie im Vault.
+  String get malClientId => _values['mal_client_id'] as String? ?? '';
 
   /// Whether the reading position question has been answered for good.
   ///
@@ -407,6 +415,28 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setHardcoverToken(String value) =>
       _set('hardcover_token', value.trim());
+
+  Future<void> setMalClientId(String value) =>
+      _set('mal_client_id', value.trim());
+
+  /// Das Zugangsdatum zu einem Dienst, über seinen stabilen Schlüssel.
+  ///
+  /// Ein Zugriffspunkt statt einer Fallunterscheidung an jeder Aufrufstelle —
+  /// der Massenabgleich hatte dadurch jedem Dienst den TMDB-Schlüssel
+  /// gereicht, auch denen, für die er nichts bedeutet.
+  String credentialFor(String? key) => switch (key) {
+    'tmdb' => tmdbKey,
+    'hardcover' => hardcoverToken,
+    'mal' => malClientId,
+    _ => '',
+  };
+
+  Future<void> setCredential(String? key, String value) async => switch (key) {
+    'tmdb' => setTmdbKey(value),
+    'hardcover' => setHardcoverToken(value),
+    'mal' => setMalClientId(value),
+    _ => null,
+  };
 
   Future<void> setMetadataLanguage(String value) =>
       _set('metadata_language', value);

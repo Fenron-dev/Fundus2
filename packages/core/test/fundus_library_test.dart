@@ -642,7 +642,7 @@ void main() {
       final metadata = await File(
         '${original.path}/_fundus/meta.yaml',
       ).readAsString();
-      expect(metadata, contains('"format_version": 3'));
+      expect(metadata, contains('"format_version": 4'));
       expect(metadata, contains('"work_id": "${originalWork.id}"'));
       expect(metadata, contains('"base_kind": "audiobook"'));
 
@@ -1368,6 +1368,47 @@ void main() {
     expect(single.coverPath, listed.coverPath);
     expect(single.coverPath, isNotNull);
     expect(File(single.coverPath!).existsSync(), isTrue);
+  });
+
+  test('externe Kennungen überleben eine neu angelegte Bibliothek', () async {
+    // Vor Fassung 4 lebten sie nur in `index.db`. Wer die Bibliothek neu
+    // anlegte, verlor damit die einzige Möglichkeit, dasselbe Werk später
+    // zweifelsfrei wiederzuerkennen — genau das, worauf ein Archiv über
+    // Bibliotheksgrenzen hinweg angewiesen ist.
+    final root = await Directory.systemTemp.createTemp('fundus-ids-');
+    addTearDown(() => root.delete(recursive: true));
+    final work = Directory('${root.path}/Manga/Klingenwind');
+    await work.create(recursive: true);
+    await File('${work.path}/01.cbz').writeAsBytes(List.filled(64, 1));
+
+    final library = await FundusLibrary.create(root);
+    await library.index().drain<void>();
+    final indexed = library.listWorks().single;
+    await library.updateWorkMetadata(
+      workId: indexed.id,
+      title: indexed.title,
+      authors: indexed.authors,
+      externalIds: const {'anilist': '179445', 'mal': '172429'},
+      source: WorkMetadataSource.online,
+    );
+    await library.flushSidecarWrites();
+    library.close();
+
+    // Der Katalog wird weggeworfen, die Medien bleiben liegen.
+    await Directory('${root.path}/.library').delete(recursive: true);
+
+    final rebuilt = await FundusLibrary.create(root);
+    addTearDown(rebuilt.close);
+    await rebuilt.index().drain<void>();
+    final recovered = rebuilt.listWorks().single;
+
+    expect(recovered.externalIds['anilist'], '179445');
+    expect(recovered.externalIds['mal'], '172429');
+    // Die Werk-ID wird hier bewusst nicht geprüft: `_readPortableIdentity`
+    // läuft nur für Hörbuch-Kandidaten, nicht für Dokumente und Comics.
+    // Deren ID wird beim Neuaufbau neu vergeben, womit der Lesestand
+    // verlorengeht. Ein eigener Befund, nicht Gegenstand dieser Änderung —
+    // die Kennungen kommen über den Sidecar trotzdem an.
   });
 }
 

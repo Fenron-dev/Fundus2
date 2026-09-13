@@ -93,7 +93,10 @@ class _BulkMetadataState extends State<_BulkMetadata> {
       _rows.clear();
     });
     final search = MetadataSearch([
-      providerFor(_provider, apiKey: widget.settings.tmdbKey),
+      providerFor(
+        _provider,
+        apiKey: widget.settings.credentialFor(_provider.credentialKey),
+      ),
     ]);
     for (final work in targets) {
       if (_cancelled || !mounted) break;

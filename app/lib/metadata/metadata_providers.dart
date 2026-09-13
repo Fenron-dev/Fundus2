@@ -32,8 +32,12 @@ enum MetadataProviderKind {
   anilistManga('AniList (Manga & Manhwa)'),
   anilistAdultAnime('AniList (Hentai Anime)'),
   anilistAdultManga('AniList (Hentai Manga & Novel)'),
-  myAnimeList('MyAnimeList (Anime & Manga)'),
-  myAnimeListAdult('MyAnimeList (Hentai)'),
+  myAnimeList('MyAnimeList über Jikan (Ausweichweg)'),
+  myAnimeListAdult('MyAnimeList über Jikan (Hentai)'),
+  myAnimeListApi('MyAnimeList (Anime & Manga)'),
+  myAnimeListApiAdult('MyAnimeList (Hentai)'),
+  mangaDex('MangaDex (Manga, Manhwa & Manhua)'),
+  mangaDexAdult('MangaDex (Hentai)'),
   tmdb('TMDB (Filme & Serien)'),
   openLibrary('Open Library (Bücher)'),
   hardcover('Hardcover.app (Bücher & Reihen)'),
@@ -44,10 +48,43 @@ enum MetadataProviderKind {
 
   final String label;
 
+  /// Welches Zugangsdatum dieser Dienst braucht — oder `null`.
+  ///
+  /// Ein stabiler Schlüssel, keine Beschriftung: zwei Dienste können sich
+  /// eines teilen (die beiden MyAnimeList-Einträge tun es), und der
+  /// angezeigte Text darf sich ändern, ohne dass ein gespeichertes
+  /// Zugangsdatum verlorengeht.
+  String? get credentialKey => switch (this) {
+    MetadataProviderKind.tmdb => 'tmdb',
+    MetadataProviderKind.hardcover => 'hardcover',
+    MetadataProviderKind.myAnimeListApi ||
+    MetadataProviderKind.myAnimeListApiAdult => 'mal',
+    _ => null,
+  };
+
+  /// Wie das Zugangsdatum heißt, das dieser Dienst braucht — oder `null`.
+  ///
+  /// Steht hier und nicht an drei Stellen in der Oberfläche: die Zuordnung von
+  /// Dienst zu Zugangsdatum ist eine Eigenschaft des Dienstes, und als
+  /// Fallunterscheidung im Dialog wäre sie beim nächsten Provider erneut zu
+  /// pflegen — an jeder Stelle einzeln.
+  String? get credentialLabel => switch (credentialKey) {
+    'tmdb' => 'TMDB-Schlüssel',
+    'hardcover' => 'Hardcover-API-Token',
+    'mal' => 'MyAnimeList-Client-ID',
+    _ => null,
+  };
+
+  /// Wo man sich dieses Zugangsdatum holt.
+  String? get credentialSource => switch (credentialKey) {
+    'tmdb' => 'themoviedb.org',
+    'hardcover' => 'hardcover.app',
+    'mal' => 'myanimelist.net/apiconfig',
+    _ => null,
+  };
+
   /// Whether this provider needs a key of the user's own.
-  bool get needsKey =>
-      this == MetadataProviderKind.tmdb ||
-      this == MetadataProviderKind.hardcover;
+  bool get needsKey => credentialLabel != null;
 
   /// The providers worth offering first for a media area.
   ///
@@ -57,23 +94,28 @@ enum MetadataProviderKind {
       switch (mediaTypeId) {
         'anime' => const [
           MetadataProviderKind.anilistAnime,
+          MetadataProviderKind.myAnimeListApi,
           MetadataProviderKind.tmdb,
           MetadataProviderKind.myAnimeList,
         ],
         'movie' || 'series' => const [
           MetadataProviderKind.tmdb,
           MetadataProviderKind.anilistAnime,
+          MetadataProviderKind.myAnimeListApi,
         ],
         'manga' => const [
+          MetadataProviderKind.mangaDex,
           MetadataProviderKind.anilistManga,
+          MetadataProviderKind.myAnimeListApi,
           MetadataProviderKind.openLibrary,
           MetadataProviderKind.myAnimeList,
         ],
         'novel' => const [
           MetadataProviderKind.anilistManga,
           MetadataProviderKind.hardcover,
+          MetadataProviderKind.mangaDex,
+          MetadataProviderKind.myAnimeListApi,
           MetadataProviderKind.openLibrary,
-          MetadataProviderKind.myAnimeList,
         ],
         'book' => const [
           MetadataProviderKind.hardcover,
@@ -90,6 +132,7 @@ enum MetadataProviderKind {
         _ => const [
           MetadataProviderKind.openLibrary,
           MetadataProviderKind.anilistManga,
+          MetadataProviderKind.mangaDex,
         ],
       };
 }
@@ -99,7 +142,7 @@ abstract interface class MetadataProvider {
 
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   });
 
@@ -145,6 +188,20 @@ MetadataProvider providerFor(
     includeAdult: true,
     client: client,
   ),
+  MetadataProviderKind.myAnimeListApi => MyAnimeListApiProvider(
+    clientId: apiKey,
+    client: client,
+  ),
+  MetadataProviderKind.myAnimeListApiAdult => MyAnimeListApiProvider(
+    clientId: apiKey,
+    includeAdult: true,
+    client: client,
+  ),
+  MetadataProviderKind.mangaDex => MangaDexProvider(client: client),
+  MetadataProviderKind.mangaDexAdult => MangaDexProvider(
+    includeAdult: true,
+    client: client,
+  ),
   MetadataProviderKind.tmdb => TmdbProvider(apiKey: apiKey, client: client),
   MetadataProviderKind.openLibrary => OpenLibraryProvider(client: client),
   MetadataProviderKind.hardcover => HardcoverProvider(
@@ -164,25 +221,44 @@ final class MetadataSearch {
 
   final List<MetadataProvider> providers;
 
+  /// Sucht, und fragt bei null Treffern kürzer nach.
+  ///
+  /// Ein Werktitel kommt aus einem Dateinamen und trägt mit, was beim Ablegen
+  /// praktisch war. Die Suchen der Dienste sind dagegen nahezu exakt: schon
+  /// ein angehängtes Jahr genügt für null Treffer. Deshalb wird zuerst
+  /// vollständig gefragt — eine genaue Anfrage soll nicht durch eine
+  /// ungenauere ersetzt werden — und erst danach schrittweise kürzer.
+  ///
+  /// Bewertet wird am Ende gegen die Fassung, die etwas gefunden hat, nicht
+  /// gegen den Rohtitel: sonst verlöre der Treffer ausgerechnet die Punkte für
+  /// den Titel, wegen dessen Beiwerk er zuvor nicht gefunden wurde.
   Future<List<MetadataMatch>> search(
     String query, {
-    int limitPerProvider = 10,
+    int limitPerProvider = 25,
     String? language,
     int? year,
   }) async {
-    final responses = await Future.wait([
-      for (final provider in providers)
-        _safeSearch(provider, query, limitPerProvider, language),
-    ]);
-    final candidates = responses.expand((result) => result.candidates);
-    if (candidates.isEmpty) {
-      final failure = responses
+    MetadataProviderException? firstFailure;
+    for (final step in searchQueryLadder(query)) {
+      final responses = await Future.wait([
+        for (final provider in providers)
+          _safeSearch(provider, step, limitPerProvider, language),
+      ]);
+      final candidates = responses
+          .expand((result) => result.candidates)
+          .toList(growable: false);
+      firstFailure ??= responses
           .map((result) => result.error)
           .whereType<MetadataProviderException>()
           .firstOrNull;
-      if (failure != null) throw failure;
+      if (candidates.isNotEmpty) {
+        return rankMetadataCandidates(step, candidates, year: year);
+      }
     }
-    return rankMetadataCandidates(query, candidates, year: year);
+    // Nichts gefunden. Lag ein Dienst quer, ist das die ehrlichere Auskunft
+    // als „keine Treffer".
+    if (firstFailure != null) throw firstFailure;
+    return const [];
   }
 
   Future<
@@ -282,7 +358,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
   @override
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   }) async {
     final normalizedQuery = query.trim();
@@ -293,7 +369,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
         headers: const {
           'accept': 'application/json',
           'content-type': 'application/json',
-          'user-agent': 'Fundus/2 metadata',
+          'user-agent': metadataUserAgent,
         },
         body: jsonEncode({
           'query': _query,
@@ -317,32 +393,8 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
     ];
   }
 
-  Future<http.Response> _request(
-    Future<http.Response> Function() request,
-  ) async {
-    try {
-      for (var attempt = 0; attempt < 3; attempt++) {
-        final response = await request().timeout(const Duration(seconds: 12));
-        if (response.statusCode != 429 && response.statusCode < 500) {
-          return response;
-        }
-        if (attempt < 2) {
-          await Future<void>.delayed(
-            Duration(milliseconds: 350 * (attempt + 1)),
-          );
-        } else {
-          return response;
-        }
-      }
-      throw StateError('unreachable');
-    } on TimeoutException {
-      throw MetadataProviderException(provider, 'Zeitüberschreitung');
-    } on MetadataProviderException {
-      rethrow;
-    } on Object catch (error) {
-      throw MetadataProviderException(provider, _networkMessage(error));
-    }
-  }
+  Future<http.Response> _request(Future<http.Response> Function() request) =>
+      retryTransport(request, provider: provider);
 
   MetadataCandidate? _candidate(Map value, {String? language}) {
     final id = value['id'];
@@ -498,7 +550,7 @@ final class TmdbProvider implements MetadataProvider {
   @override
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   }) async {
     final normalizedQuery = query.trim();
@@ -521,7 +573,10 @@ final class TmdbProvider implements MetadataProvider {
                 : 'de-DE',
           },
         ),
-        headers: const {'accept': 'application/json'},
+        headers: const {
+          'accept': 'application/json',
+          'user-agent': metadataUserAgent,
+        },
       ),
     );
     final data = _decodeObject(response, provider);
@@ -573,7 +628,10 @@ final class TmdbProvider implements MetadataProvider {
               'append_to_response': 'credits,external_ids',
             },
           ),
-          headers: const {'accept': 'application/json'},
+          headers: const {
+            'accept': 'application/json',
+            'user-agent': metadataUserAgent,
+          },
         ),
       );
       final data = _decodeObject(response, provider);
@@ -587,7 +645,7 @@ final class TmdbProvider implements MetadataProvider {
             ).replace(queryParameters: {'api_key': apiKey}),
             headers: const {
               'accept': 'application/json',
-              'user-agent': 'Fundus/2 metadata',
+              'user-agent': metadataUserAgent,
             },
           ),
         );
@@ -726,8 +784,322 @@ final class TmdbProvider implements MetadataProvider {
   }
 }
 
-/// MyAnimeList through the public Jikan API. Jikan exposes MAL's adult
-/// catalogue when `sfw=false`, without requiring a MAL account or secret.
+/// MyAnimeList über die offizielle Schnittstelle.
+///
+/// Der Weg über Jikan spiegelt MyAnimeList und ist deshalb nur so verfügbar
+/// wie die Verbindung zwischen beiden. Die offizielle Schnittstelle braucht
+/// dagegen eine Client-Kennung, die man sich kostenlos unter
+/// `myanimelist.net/apiconfig` anlegt — kein OAuth, solange nur öffentliche
+/// Angaben gelesen werden. Sie liegt wie der TMDB-Schlüssel ausschließlich im
+/// geschützten Speicher des Geräts.
+final class MyAnimeListApiProvider implements MetadataProvider {
+  MyAnimeListApiProvider({
+    required this.clientId,
+    http.Client? client,
+    this.includeAdult = false,
+  }) : _client = client ?? createMetadataHttpClient();
+
+  final http.Client _client;
+  final String clientId;
+  final bool includeAdult;
+
+  static const _endpoint = 'api.myanimelist.net';
+  static const _fields =
+      'id,title,alternative_titles,main_picture,start_date,synopsis,genres,'
+      'media_type,status,num_episodes,num_volumes,num_chapters,authors{first_name,last_name},'
+      'studios,nsfw';
+
+  @override
+  String get provider => 'myanimelist';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
+
+  @override
+  Future<List<MetadataCandidate>> search(
+    String query, {
+    int limit = 25,
+    String? language,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    if (clientId.trim().isEmpty) {
+      throw MetadataProviderException(
+        provider,
+        'Für MyAnimeList fehlt die Client-ID. '
+        'Sie lässt sich kostenlos unter myanimelist.net/apiconfig anlegen '
+        'und wird in den Einstellungen hinterlegt.',
+      );
+    }
+    // Anime und Manga sind getrennte Bestände. Fällt einer aus, darf das den
+    // anderen nicht verwerfen.
+    final found = <MetadataCandidate>[];
+    MetadataProviderException? firstFailure;
+    for (final kind in const ['anime', 'manga']) {
+      try {
+        final response = await retryTransport(
+          () => _client.get(
+            Uri.https(_endpoint, '/v2/$kind', {
+              'q': q,
+              'limit': '${limit.clamp(1, 100)}',
+              'fields': _fields,
+              if (includeAdult) 'nsfw': 'true',
+            }),
+            headers: {
+              'accept': 'application/json',
+              'user-agent': metadataUserAgent,
+              'X-MAL-CLIENT-ID': clientId.trim(),
+            },
+          ),
+          provider: provider,
+        );
+        final decoded = _decodeObject(response, provider);
+        if (decoded['data'] case final List data) {
+          for (final entry in data) {
+            if (entry is Map && entry['node'] is Map) {
+              final candidate = _candidate(entry['node'] as Map, kind: kind);
+              if (candidate != null) found.add(candidate);
+            }
+          }
+        }
+      } on MetadataProviderException catch (error) {
+        firstFailure ??= error;
+      }
+    }
+    if (found.isEmpty && firstFailure != null) throw firstFailure;
+    return found;
+  }
+
+  MetadataCandidate? _candidate(Map node, {required String kind}) {
+    final id = node['id'];
+    final title = node['title'];
+    if (id is! num || title is! String || title.trim().isEmpty) return null;
+
+    final alternates = <String>[];
+    if (node['alternative_titles'] case final Map other) {
+      for (final key in const ['en', 'ja']) {
+        final value = other[key];
+        if (value is String && value.trim().isNotEmpty) {
+          alternates.add(value.trim());
+        }
+      }
+      if (other['synonyms'] case final List synonyms) {
+        for (final entry in synonyms) {
+          if (entry is String && entry.trim().isNotEmpty) {
+            alternates.add(entry.trim());
+          }
+        }
+      }
+    }
+
+    final nsfw = '${node['nsfw'] ?? ''}';
+    // `white` ist unbedenklich, `gray` grenzwertig, `black` ausdrücklich.
+    final adult = nsfw == 'black';
+
+    return MetadataCandidate(
+      provider: provider,
+      providerId: '${id.round()}',
+      title: title.trim(),
+      alternateTitles: alternates,
+      workKind: kind == 'anime' ? 'anime' : 'manga',
+      authors: [
+        if (node['authors'] case final List authors)
+          for (final author in authors)
+            if (author is Map && author['node'] is Map)
+              ?_personName(author['node'] as Map),
+      ],
+      releaseYear: _yearFrom('${node['start_date'] ?? ''}'),
+      episodeCount: switch (node['num_episodes']) {
+        final num count when count > 0 => count.round(),
+        _ => null,
+      },
+      description: _firstString([node['synopsis']]),
+      contentSensitivity: adult ? 'adult_explicit' : null,
+      isAdult: adult,
+      genres: [
+        if (node['genres'] case final List genres)
+          for (final genre in genres)
+            if (genre is Map) ?_firstString([genre['name']]),
+      ],
+      posterUrl: switch (node['main_picture']) {
+        final Map picture => _firstString([
+          picture['large'],
+          picture['medium'],
+        ]),
+        _ => null,
+      },
+      externalIds: {'mal': '${id.round()}'},
+    );
+  }
+
+  static String? _personName(Map node) {
+    final parts = [
+      '${node['first_name'] ?? ''}'.trim(),
+      '${node['last_name'] ?? ''}'.trim(),
+    ].where((part) => part.isNotEmpty);
+    final name = parts.join(' ').trim();
+    return name.isEmpty ? null : name;
+  }
+
+  static int? _yearFrom(String value) =>
+      value.length >= 4 ? int.tryParse(value.substring(0, 4)) : null;
+}
+
+/// MangaDex — die Brücke zwischen Titel und Kennung.
+///
+/// Der eigentliche Wert liegt nicht in den Metadaten, sondern im Feld `links`:
+/// MangaDex führt zu fast jedem Eintrag die AniList- und MyAnimeList-Kennung
+/// mit. Damit wird aus einer unscharfen Titelsuche eine exakte Auflösung — man
+/// sucht einmal nach dem Namen und fragt die anderen Dienste danach über ihre
+/// eigene Kennung, statt jeden von ihnen erneut raten zu lassen.
+///
+/// Ohne Anmeldung, ohne Schlüssel. Nicht jugendfreie Einträge sind
+/// ausgeblendet, solange sie nicht ausdrücklich angefordert werden.
+final class MangaDexProvider implements MetadataProvider {
+  MangaDexProvider({http.Client? client, this.includeAdult = false})
+    : _client = client ?? createMetadataHttpClient();
+
+  final http.Client _client;
+  final bool includeAdult;
+
+  static const _endpoint = 'api.mangadex.org';
+
+  @override
+  String get provider => 'mangadex';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
+
+  @override
+  Future<List<MetadataCandidate>> search(
+    String query, {
+    int limit = 25,
+    String? language,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    final response = await retryTransport(
+      () => _client.get(
+        Uri.https(_endpoint, '/manga', {
+          'title': q,
+          'limit': '${limit.clamp(1, 100)}',
+          'contentRating[]': includeAdult
+              ? const ['safe', 'suggestive', 'erotica', 'pornographic']
+              : const ['safe', 'suggestive'],
+          'order[relevance]': 'desc',
+        }),
+        headers: const {
+          'accept': 'application/json',
+          'user-agent': metadataUserAgent,
+        },
+      ),
+      provider: provider,
+    );
+    final decoded = _decodeObject(response, provider);
+    if (decoded['data'] case final List data) {
+      return [
+        for (final item in data)
+          if (item is Map) ?_candidate(item, language: language),
+      ];
+    }
+    return const [];
+  }
+
+  MetadataCandidate? _candidate(Map value, {String? language}) {
+    final id = value['id'];
+    final attributes = value['attributes'];
+    if (id is! String || attributes is! Map) return null;
+
+    // Titel kommen als Sprachkarte. Bevorzugt wird die Sprache der Oberfläche,
+    // dann Englisch, dann was da ist — und alles Übrige bleibt als
+    // Alternativtitel erhalten, weil danach gesucht worden sein kann.
+    final preferred = (language ?? 'de').split('-').first.toLowerCase();
+    final titles = <String>[];
+    void collect(Object? source) {
+      if (source is Map) {
+        for (final entry in source.entries) {
+          final text = entry.value;
+          if (text is String && text.trim().isNotEmpty) titles.add(text.trim());
+        }
+      }
+    }
+
+    final primary = attributes['title'];
+    String? pick(String code) => primary is Map && primary[code] is String
+        ? (primary[code] as String).trim()
+        : null;
+    final title = pick(preferred) ?? pick('en') ?? pick('ja-ro');
+    collect(primary);
+    if (attributes['altTitles'] case final List alternates) {
+      for (final entry in alternates) {
+        collect(entry);
+      }
+    }
+    final chosen = title ?? titles.firstOrNull;
+    if (chosen == null || chosen.isEmpty) return null;
+
+    final links = attributes['links'];
+    String? link(String key) =>
+        links is Map &&
+            links[key] is String &&
+            (links[key] as String).trim().isNotEmpty
+        ? (links[key] as String).trim()
+        : null;
+
+    final rating = '${attributes['contentRating'] ?? ''}';
+    final adult = rating == 'pornographic' || rating == 'erotica';
+
+    return MetadataCandidate(
+      provider: provider,
+      providerId: id,
+      title: chosen,
+      alternateTitles: titles.where((entry) => entry != chosen).toList(),
+      workKind: 'manga',
+      contentStyle: switch ('${attributes['originalLanguage'] ?? ''}') {
+        'ko' => 'manhwa',
+        'zh' || 'zh-hk' => 'manhua',
+        _ => 'manga',
+      },
+      contentSensitivity: adult ? 'adult_explicit' : null,
+      isAdult: adult,
+      releaseYear: attributes['year'] is num
+          ? (attributes['year'] as num).round()
+          : null,
+      description: switch (attributes['description']) {
+        final Map description => _firstString([
+          description[preferred],
+          description['en'],
+        ]),
+        _ => null,
+      },
+      genres: [
+        if (attributes['tags'] case final List tags)
+          for (final tag in tags)
+            if (tag is Map && tag['attributes'] is Map)
+              if ((tag['attributes'] as Map)['name'] case final Map names)
+                ?_firstString([names['en']]),
+      ],
+      // Das eigentliche Ergebnis: die Kennungen der anderen Dienste.
+      externalIds: {
+        'mangadex': id,
+        'anilist': ?link('al'),
+        'mal': ?link('mal'),
+        'raw': ?link('raw'),
+        'engtl': ?link('engtl'),
+      },
+    );
+  }
+}
+
+/// MyAnimeList through the public Jikan API, without account or secret.
+///
+/// Jikan spiegelt MyAnimeList und ist deshalb nur so verfügbar wie die
+/// Verbindung zwischen beiden: fällt sie aus, antwortet Jikan mit HTTP 504,
+/// und zwar sofort statt nach einer Zeitüberschreitung. Daran ändert kein
+/// Wiederholen etwas. `includeAdult` steuert hier nur noch, wie ein Treffer
+/// gekennzeichnet wird — gefiltert wird nicht mehr beim Anbieter.
 final class MyAnimeListProvider implements MetadataProvider {
   MyAnimeListProvider({http.Client? client, this.includeAdult = false})
     : _client = client ?? createMetadataHttpClient();
@@ -745,7 +1117,7 @@ final class MyAnimeListProvider implements MetadataProvider {
   @override
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   }) async {
     final q = query.trim();
@@ -758,14 +1130,17 @@ final class MyAnimeListProvider implements MetadataProvider {
       try {
         final response = await _request(
           () => _client.get(
+            // `sfw=true` entfernte alles mit Ecchi-Kennzeichnung — darunter
+            // viele gewöhnliche Manga, die dadurch unauffindbar waren. Was
+            // geschützt gehört, entscheidet der Schutzmodus anhand des Werks,
+            // nicht eine Vorauswahl beim Anbieter.
             Uri.https('api.jikan.moe', '/v4/$kind', {
               'q': q,
               'limit': '${limit.clamp(1, 25)}',
-              'sfw': includeAdult ? 'false' : 'true',
             }),
             headers: const {
               'accept': 'application/json',
-              'user-agent': 'Fundus/2 metadata',
+              'user-agent': metadataUserAgent,
             },
           ),
         );
@@ -785,32 +1160,8 @@ final class MyAnimeListProvider implements MetadataProvider {
     ];
   }
 
-  Future<http.Response> _request(
-    Future<http.Response> Function() request,
-  ) async {
-    try {
-      for (var attempt = 0; attempt < 3; attempt++) {
-        final response = await request().timeout(const Duration(seconds: 12));
-        if (response.statusCode != 429 && response.statusCode < 500) {
-          return response;
-        }
-        if (attempt < 2) {
-          await Future<void>.delayed(
-            Duration(milliseconds: 350 * (attempt + 1)),
-          );
-        } else {
-          return response;
-        }
-      }
-      throw StateError('unreachable');
-    } on TimeoutException {
-      throw MetadataProviderException(provider, 'Zeitüberschreitung');
-    } on MetadataProviderException {
-      rethrow;
-    } on Object catch (error) {
-      throw MetadataProviderException(provider, _networkMessage(error));
-    }
-  }
+  Future<http.Response> _request(Future<http.Response> Function() request) =>
+      retryTransport(request, provider: provider);
 
   MetadataCandidate? _candidate(
     Map value, {
@@ -948,7 +1299,7 @@ query Books($ids: [Int!]!) {
   @override
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   }) async {
     if (_token.isEmpty) {
@@ -993,7 +1344,7 @@ query Books($ids: [Int!]!) {
               'accept': 'application/json',
               'content-type': 'application/json',
               'authorization': 'Bearer $_token',
-              'user-agent': 'Fundus/2 metadata',
+              'user-agent': metadataUserAgent,
             },
             body: jsonEncode({'query': query, 'variables': variables}),
           )
@@ -1102,7 +1453,7 @@ final class OpenLibraryProvider implements MetadataProvider {
   @override
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   }) async {
     final normalizedQuery = query.trim();
@@ -1118,7 +1469,10 @@ final class OpenLibraryProvider implements MetadataProvider {
                 'cover_i,subject,publisher,language,number_of_pages_median',
           },
         ),
-        headers: const {'accept': 'application/json'},
+        headers: const {
+          'accept': 'application/json',
+          'user-agent': metadataUserAgent,
+        },
       ),
     );
     final data = _decodeObject(response, provider);
@@ -1219,7 +1573,7 @@ final class AudibleProvider implements MetadataProvider {
   @override
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   }) async {
     final normalizedQuery = query.trim();
@@ -1233,7 +1587,10 @@ final class AudibleProvider implements MetadataProvider {
           'response_groups':
               'contributors,product_desc,product_attrs,media,series',
         }),
-        headers: const {'accept': 'application/json'},
+        headers: const {
+          'accept': 'application/json',
+          'user-agent': metadataUserAgent,
+        },
       ),
     );
     final data = _decodeObject(response, provider);
@@ -1369,7 +1726,7 @@ final class ApplePodcastProvider implements MetadataProvider {
   @override
   Future<List<MetadataCandidate>> search(
     String query, {
-    int limit = 10,
+    int limit = 25,
     String? language,
   }) async {
     final normalizedQuery = query.trim();
@@ -1386,7 +1743,10 @@ final class ApplePodcastProvider implements MetadataProvider {
               'country': language.toUpperCase(),
           },
         ),
-        headers: const {'accept': 'application/json'},
+        headers: const {
+          'accept': 'application/json',
+          'user-agent': metadataUserAgent,
+        },
       ),
     );
     final data = _decodeObject(response, provider);
@@ -1451,14 +1811,82 @@ final class ApplePodcastProvider implements MetadataProvider {
   }
 }
 
+/// Reads a JSON body as UTF-8, whatever the service forgot to declare.
+///
+/// `http` falls back to latin1 when the `content-type` carries no charset, and
+/// several of these services send bare `application/json`. Every Japanese
+/// title and every umlaut then arrives as mojibake — before the ranking gets
+/// to compare it with the query, which is where it does the real damage.
+String _decodeBody(http.Response response) {
+  try {
+    return utf8.decode(response.bodyBytes);
+  } on FormatException {
+    // Not valid UTF-8 after all: fall back rather than lose the body.
+    return response.body;
+  }
+}
+
+/// Wiederholt eine Abfrage, die vorübergehend gescheitert sein kann.
+///
+/// Zwei Arten von Fehlschlag sehen für den Aufrufer gleich aus und wurden
+/// bisher verschieden behandelt: eine Antwort mit 429 oder 5xx wurde
+/// wiederholt, ein *geworfener* Fehler — Zeitüberschreitung, abgerissene
+/// Verbindung, WinHTTP — verließ die Schleife beim ersten Versuch. Gerade der
+/// zweite Fall ist aber der, bei dem ein zweiter Versuch hilft.
+///
+/// Die Wartezeit beginnt bei einer Sekunde. Darunter liegt sie innerhalb des
+/// Ratenfensters der Dienste, und ein Wiederholen im selben Fenster ist kein
+/// Wiederholen, sondern ein zweiter Verstoß.
+Future<http.Response> retryTransport(
+  Future<http.Response> Function() request, {
+  required String provider,
+  int attempts = 3,
+}) async {
+  Object? lastError;
+  for (var attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      await Future<void>.delayed(Duration(seconds: 1 << (attempt - 1)));
+    }
+    try {
+      final response = await request().timeout(const Duration(seconds: 12));
+      if (response.statusCode != 429 && response.statusCode < 500) {
+        return response;
+      }
+      // Der letzte Durchgang gibt die Antwort heraus: ihr Status sagt mehr
+      // als ein selbst formulierter Netzwerkfehler.
+      if (attempt == attempts - 1) return response;
+      lastError = null;
+    } on MetadataProviderException {
+      rethrow;
+    } on Object catch (error) {
+      lastError = error;
+    }
+  }
+  throw switch (lastError) {
+    TimeoutException() => MetadataProviderException(
+      provider,
+      'Zeitüberschreitung',
+    ),
+    final Object error => MetadataProviderException(
+      provider,
+      _networkMessage(error),
+    ),
+    null => MetadataProviderException(provider, 'Die Abfrage ist gescheitert.'),
+  };
+}
+
 Map<String, Object?> _decodeObject(http.Response response, String provider) {
   if (response.statusCode < 200 || response.statusCode >= 300) {
     var detail = 'HTTP ${response.statusCode}';
     try {
-      final decoded = jsonDecode(response.body);
-      if (decoded is Map && decoded['message'] is String) {
-        detail = '$detail: ${(decoded['message'] as String).trim()}';
-      }
+      final decoded = jsonDecode(_decodeBody(response));
+      // Services disagree on where they put the reason: Jikan uses `message`
+      // for some failures and `error` for others. Saying „HTTP 504" alone
+      // hides that the fault is upstream of us.
+      final reason = _firstString([
+        if (decoded is Map) ...[decoded['message'], decoded['error']],
+      ]);
+      if (reason != null) detail = '$detail: $reason';
     } on Object {
       // Keep the status useful even when a proxy returned HTML/plain text.
     }
@@ -1468,7 +1896,7 @@ Map<String, Object?> _decodeObject(http.Response response, String provider) {
     );
   }
   try {
-    final decoded = jsonDecode(response.body);
+    final decoded = jsonDecode(_decodeBody(response));
     if (decoded is! Map) throw const FormatException();
     if (decoded['errors'] is List && (decoded['errors'] as List).isNotEmpty) {
       final first = (decoded['errors'] as List).first;
