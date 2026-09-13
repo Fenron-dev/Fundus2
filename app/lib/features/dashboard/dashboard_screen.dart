@@ -467,7 +467,7 @@ class _Greeting extends StatelessWidget {
           localizedReason: 'Geschützte Werke für diese Sitzung entsperren',
           persistAcrossBackgrounding: true,
         );
-        if (authenticated) protection.unlockAuthenticatedSession();
+        if (authenticated) await protection.unlockAuthenticatedSession();
       } on Object {
         // Cancellation and platform errors leave the shelf locked. The next
         // tap opens the same dialog again, with no dead-end native prompt.
@@ -490,11 +490,17 @@ class _Greeting extends StatelessWidget {
               labelText: 'Fundus-PIN',
               errorText: complaint,
             ),
-            onSubmitted: (_) {
-              if (protection.unlock(controller.text)) {
-                Navigator.of(dialogContext).pop();
+            onSubmitted: (_) async {
+              if (await protection.unlock(controller.text)) {
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
               } else {
-                setDialogState(() => complaint = 'Die PIN stimmt nicht.');
+                setDialogState(
+                  () => complaint = protection.isLockedOut
+                      ? 'Zu viele Fehlversuche. Bitte später erneut versuchen.'
+                      : 'Die PIN stimmt nicht.',
+                );
               }
             },
           ),
@@ -504,11 +510,17 @@ class _Greeting extends StatelessWidget {
               child: const Text('Abbrechen'),
             ),
             FilledButton(
-              onPressed: () {
-                if (protection.unlock(controller.text)) {
-                  Navigator.of(dialogContext).pop();
+              onPressed: () async {
+                if (await protection.unlock(controller.text)) {
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
                 } else {
-                  setDialogState(() => complaint = 'Die PIN stimmt nicht.');
+                  setDialogState(
+                    () => complaint = protection.isLockedOut
+                        ? 'Zu viele Fehlversuche. Bitte später erneut versuchen.'
+                        : 'Die PIN stimmt nicht.',
+                  );
                 }
               },
               child: const Text('Entsperren'),

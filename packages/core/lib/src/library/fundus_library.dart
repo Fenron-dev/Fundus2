@@ -2372,7 +2372,12 @@ final class FundusLibrary {
     final directory = _workSidecarDirectory(sourcePath);
     await directory.create(recursive: true);
     final annotations = loadAnnotations(workId);
-    final work = listWorks().where((work) => work.id == workId).firstOrNull;
+    // Ein einzelnes Werk, nicht der ganze Katalog: dieser Schreiber läuft
+    // während des Scans einmal je indexiertem Werk, und `listWorks()` las
+    // dafür jedes Mal die vollständige Bibliothek. `includeMissing` ist hier
+    // richtig — ein vorübergehend nicht erreichbares Werk soll seine
+    // Metadaten behalten.
+    final work = workSummary(workId);
     if (work == null) return;
     await File(p.join(directory.path, 'meta.yaml')).writeAsString(
       '${const JsonEncoder.withIndent('  ').convert({

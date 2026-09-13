@@ -137,8 +137,12 @@ void main() {
 
       await tester.runAsync(() async {
         await tester.tap(find.byTooltip('Seite speichern'));
+        // `sink.saved` füllt sich *innerhalb* des Speicherns; das Lesezeichen
+        // entsteht erst danach. Wer nur auf die Datei wartet, prüft in ein
+        // laufendes `await` hinein — auf einer belegten Maschine reicht das
+        // Rennen dann für einen roten Lauf.
         for (var tries = 0; tries < 100; tries++) {
-          if (sink.saved.isNotEmpty) break;
+          if (sink.saved.isNotEmpty && reader.bookmarks.isNotEmpty) break;
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
       });

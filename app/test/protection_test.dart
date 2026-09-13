@@ -51,7 +51,7 @@ void main() {
   test('ohne Schutz ist alles zu sehen', () {
     expect(protection.mode, ProtectionMode.off);
     expect(library.works, hasLength(1));
-    expect(protection.veils(library.works.single), isFalse);
+    expect(protection.hides(library.works.single), isFalse);
   });
 
   test('die alte Unscharf-Einstellung wird sicher ausgeblendet', () async {
@@ -77,10 +77,10 @@ void main() {
     library.refresh();
     expect(library.works, isEmpty);
 
-    expect(protection.unlock('0000'), isFalse);
+    expect(await protection.unlock('0000'), isFalse);
     expect(library.works, isEmpty);
 
-    expect(protection.unlock('2451'), isTrue);
+    expect(await protection.unlock('2451'), isTrue);
     library.refresh();
     expect(library.works, hasLength(1));
   });
@@ -100,10 +100,55 @@ void main() {
     await protection.setPin('2451');
     protection.lock();
     for (var attempt = 0; attempt < 5; attempt++) {
-      expect(protection.unlock('0000'), isFalse);
+      expect(await protection.unlock('0000'), isFalse);
     }
-    expect(protection.unlock('2451'), isFalse);
+    expect(await protection.unlock('2451'), isFalse);
   });
+
+  test('die Drosselung überlebt einen Neustart der App', () async {
+    // Eine Versuchsbegrenzung, die ein Neustart aufhebt, ist bei einer
+    // vierstelligen PIN keine Begrenzung.
+    await protection.setMode(ProtectionMode.hide);
+    await protection.setPin('2451');
+    protection.lock();
+    for (var attempt = 0; attempt < 5; attempt++) {
+      expect(await protection.unlock('0000'), isFalse);
+    }
+    expect(protection.isLockedOut, isTrue);
+
+    final afterRestart = ProtectionController(settings: settings);
+    addTearDown(afterRestart.dispose);
+    expect(afterRestart.isLockedOut, isTrue);
+    expect(
+      await afterRestart.unlock('2451'),
+      isFalse,
+      reason: 'auch die richtige PIN wartet, solange gesperrt ist',
+    );
+  });
+
+  test(
+    'der Zähler wird nicht durch das Auslösen der Sperre zurückgesetzt',
+    () async {
+      // Früher setzte `_failed()` den Zähler beim Auslösen auf 0 und
+      // verschenkte damit nach Ablauf der Wartezeit sofort fünf neue Versuche.
+      await protection.setPin('2451');
+      protection.lock();
+      for (var attempt = 0; attempt < 5; attempt++) {
+        await protection.unlock('0000');
+      }
+      expect(settings.protectionFailedAttempts, 5);
+
+      // Solange gesperrt ist, wird gar nicht geprüft — der Zähler bleibt
+      // stehen, statt sich zurückzusetzen.
+      await protection.unlock('0000');
+      expect(settings.protectionFailedAttempts, 5);
+
+      // Erst ein gelungenes Entsperren räumt ihn ab.
+      await settings.setProtectionLockout(failedAttempts: 5);
+      expect(await protection.unlock('2451'), isTrue);
+      expect(settings.protectionFailedAttempts, 0);
+    },
+  );
 
   test('gesperrt wird beim Start, nicht beim Beenden', () async {
     await protection.setMode(ProtectionMode.hide);
@@ -121,7 +166,7 @@ void main() {
     await protection.setMode(ProtectionMode.hide);
     protection.lock();
 
-    protection.unlockAuthenticatedSession();
+    await protection.unlockAuthenticatedSession();
     expect(protection.isUnlocked, isTrue);
 
     final afterRestart = ProtectionController(settings: settings);

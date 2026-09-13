@@ -1604,9 +1604,16 @@ class _ProtectionState extends State<_Protection> {
     );
   }
 
-  void _unlock(ProtectionController protection) {
-    final opened = protection.unlock(_unlockController.text);
-    setState(() => _complaint = opened ? null : 'Die PIN stimmt nicht.');
+  Future<void> _unlock(ProtectionController protection) async {
+    final opened = await protection.unlock(_unlockController.text);
+    if (!mounted) return;
+    setState(
+      () => _complaint = opened
+          ? null
+          : protection.isLockedOut
+          ? 'Zu viele Fehlversuche. Bitte später erneut versuchen.'
+          : 'Die PIN stimmt nicht.',
+    );
     if (opened) _unlockController.clear();
   }
 }

@@ -183,12 +183,22 @@ final class FundusPairingAuthority {
     }
     final token = _randomValue(32);
     final now = DateTime.now().toUtc();
+    // Ein Gerät, das sich erneut koppelt, ist dasselbe Gerät. Seine
+    // Bibliotheks-Allowlist ist eine Einschränkung, die jemand gesetzt hat —
+    // sie hier wegzulassen hieße `null`, und `libraryAllowed` liest `null`
+    // als „jede Bibliothek". Eine Beschränkung darf sich nicht dadurch
+    // auflösen, dass man den Kopplungsvorgang wiederholt.
+    //
+    // Die HHH-Freigabe wird bewusst *nicht* übernommen: dass sie auf `false`
+    // zurückfällt, ist die sichere Richtung.
+    final previous = _devices[normalizedId];
     final device = FundusPairedDevice(
       id: normalizedId,
       name: normalizedName,
       tokenHash: tokenDigest(token),
       pairedAt: now,
       lastSeenAt: now,
+      allowedLibraryIds: previous?.allowedLibraryIds,
     );
     _devices[device.id] = device;
     cancel();

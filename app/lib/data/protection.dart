@@ -43,8 +43,6 @@ class ProtectionController extends ChangeNotifier {
   final AppSettings settings;
 
   bool _unlocked = false;
-  int _failedAttempts = 0;
-  DateTime? _lockedUntil;
 
   static const _kdfIterations = 100000;
 
@@ -57,11 +55,11 @@ class ProtectionController extends ChangeNotifier {
   bool get hasPin => settings.protectionPin.isNotEmpty;
 
   /// Whether a work must not appear at all right now.
+  ///
+  /// There is one answer, not two. A preview build also veiled pictures while
+  /// still listing the work; that mode is gone, and a second method saying the
+  /// same thing only invites the two to drift apart.
   bool hides(WorkView work) =>
-      mode != ProtectionMode.off && work.summary.isHhh && !isUnlocked;
-
-  /// Whether a work's picture is veiled — it is listed, but not shown.
-  bool veils(WorkView work) =>
       mode != ProtectionMode.off && work.summary.isHhh && !isUnlocked;
 
   Future<void> setMode(ProtectionMode value) async {
@@ -81,9 +79,9 @@ class ProtectionController extends ChangeNotifier {
       return;
     }
     final salt = _salt();
-    await settings.setProtectionPin(
-      'v2:$_kdfIterations:$salt:${_derive(digits, salt, _kdfIterations)}',
-    );
+    final digest = await _deriveOffThread(digits, salt, _kdfIterations);
+    await settings.setProtectionPin('v2:$_kdfIterations:$salt:$digest');
+    await _clearAttempts();
     _unlocked = true;
     notifyListeners();
   }
@@ -92,11 +90,20 @@ class ProtectionController extends ChangeNotifier {
   ///
   /// A wrong PIN is answered with false rather than an exception: it is the
   /// expected case, not a fault.
-  bool unlock(String pin) {
-    final now = DateTime.now();
-    final lockedUntil = _lockedUntil;
-    if (lockedUntil != null && now.isBefore(lockedUntil)) return false;
-    _lockedUntil = null;
+  /// Whether the shelf is barred right now, and until when.
+  ///
+  /// Survives a restart, because a limit that a restart lifts is no limit at
+  /// all against a four-digit PIN.
+  DateTime? get lockedUntil {
+    final until = settings.protectionLockedUntil;
+    if (until == null) return null;
+    return DateTime.now().isBefore(until) ? until : null;
+  }
+
+  bool get isLockedOut => lockedUntil != null;
+
+  Future<bool> unlock(String pin) async {
+    if (isLockedOut) return false;
     final stored = settings.protectionPin;
     if (stored.isEmpty) return _failed();
     final parts = stored.split(':');
@@ -105,7 +112,7 @@ class ProtectionController extends ChangeNotifier {
       final iterations = int.tryParse(parts[1]);
       if (iterations != null && iterations >= 10000 && iterations <= 1000000) {
         valid = _constantTimeEquals(
-          _derive(pin.trim(), parts[2], iterations),
+          await _deriveOffThread(pin.trim(), parts[2], iterations),
           parts[3],
         );
       }
@@ -116,7 +123,7 @@ class ProtectionController extends ChangeNotifier {
       );
     }
     if (!valid) return _failed();
-    _failedAttempts = 0;
+    await _clearAttempts();
     _unlocked = true;
     notifyListeners();
     return true;
@@ -128,10 +135,9 @@ class ProtectionController extends ChangeNotifier {
   /// The caller must only invoke this after a successful platform prompt.
   /// Nothing is persisted: just like the Fundus PIN, this grant belongs to
   /// the current process and disappears when the app is closed.
-  void unlockAuthenticatedSession() {
+  Future<void> unlockAuthenticatedSession() async {
     if (mode == ProtectionMode.off || _unlocked) return;
-    _failedAttempts = 0;
-    _lockedUntil = null;
+    await _clearAttempts();
     _unlocked = true;
     notifyListeners();
   }
@@ -142,14 +148,34 @@ class ProtectionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool _failed() {
-    _failedAttempts++;
-    if (_failedAttempts >= 5) {
-      _failedAttempts = 0;
-      _lockedUntil = DateTime.now().add(const Duration(seconds: 30));
-    }
+  /// Counts a wrong attempt and bars the shelf once there have been enough.
+  ///
+  /// The counter is *not* cleared when the bar goes up — clearing it handed
+  /// out five fresh attempts the moment the bar expired. Only a successful
+  /// unlock clears it, and the wait grows with every further attempt.
+  Future<bool> _failed() async {
+    final attempts = settings.protectionFailedAttempts + 1;
+    await settings.setProtectionLockout(
+      failedAttempts: attempts,
+      lockedUntil: attempts >= _attemptsBeforeLockout
+          ? DateTime.now().add(_lockoutFor(attempts))
+          : null,
+    );
+    notifyListeners();
     return false;
   }
+
+  static const _attemptsBeforeLockout = 5;
+
+  /// Thirty seconds, then a minute, then four, capped at an hour.
+  static Duration _lockoutFor(int attempts) {
+    final steps = attempts - _attemptsBeforeLockout;
+    final seconds = 30 * (1 << (steps > 7 ? 7 : steps));
+    return Duration(seconds: seconds > 3600 ? 3600 : seconds);
+  }
+
+  Future<void> _clearAttempts() =>
+      settings.setProtectionLockout(failedAttempts: 0);
 
   static String _salt() {
     final random = Random.secure();
@@ -162,6 +188,19 @@ class ProtectionController extends ChangeNotifier {
   /// and then migrate the PIN on the next explicit change.
   static String _legacyDigest(String pin, String salt) =>
       sha256.convert(utf8.encode('$salt|$pin')).toString();
+
+  /// Runs the derivation off the interface thread.
+  ///
+  /// A hundred thousand HMAC rounds are a noticeable pause on a phone, and the
+  /// interface would sit frozen through every unlock and every PIN change.
+  static Future<String> _deriveOffThread(
+    String pin,
+    String salt,
+    int iterations,
+  ) => compute(_deriveMessage, (pin, salt, iterations));
+
+  static String _deriveMessage((String, String, int) message) =>
+      _derive(message.$1, message.$2, message.$3);
 
   /// PBKDF2-HMAC-SHA256 makes offline guessing substantially more expensive
   /// than the former single SHA-256 digest while keeping the settings format

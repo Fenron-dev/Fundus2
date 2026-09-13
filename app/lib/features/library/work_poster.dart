@@ -296,7 +296,7 @@ class WorkImage extends StatelessWidget {
         child: picture,
       );
     }
-    if (!FundusScope.of(context).protection.veils(work)) return picture;
+    if (!FundusScope.of(context).protection.hides(work)) return picture;
     return Stack(
       fit: StackFit.expand,
       children: [

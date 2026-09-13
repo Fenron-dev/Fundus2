@@ -325,6 +325,35 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setProtectionPin(String value) => _set('protection_pin', value);
 
+  /// Wie viele Fehlversuche seit dem letzten gelungenen Entsperren.
+  ///
+  /// Gehört bewusst in die Einstellungen und nicht bloß in den Speicher: eine
+  /// Versuchsbegrenzung, die ein Neustart der App aufhebt, ist bei einer
+  /// vierstelligen PIN keine Begrenzung. Der Wert ist kein Geheimnis, er
+  /// braucht deshalb auch nicht in den Schlüsselbund.
+  int get protectionFailedAttempts =>
+      switch (_values['protection_failed_attempts']) {
+        final int value when value >= 0 => value,
+        _ => 0,
+      };
+
+  /// Bis wann nicht weiter probiert werden darf, oder `null`.
+  DateTime? get protectionLockedUntil =>
+      switch (_values['protection_locked_until']) {
+        final String value => DateTime.tryParse(value),
+        _ => null,
+      };
+
+  Future<void> setProtectionLockout({
+    required int failedAttempts,
+    DateTime? lockedUntil,
+  }) async {
+    _values['protection_failed_attempts'] = failedAttempts;
+    _values['protection_locked_until'] = lockedUntil?.toUtc().toIso8601String();
+    notifyListeners();
+    await _persist();
+  }
+
   Future<void> setDeviceName(String value) async {
     final name = value.trim();
     if (name.isEmpty || name == deviceName) return;

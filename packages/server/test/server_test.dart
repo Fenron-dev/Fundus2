@@ -837,6 +837,105 @@ void main() {
     );
     expect((await _json(updatedResponse))['revision'], 2);
   });
+
+  test('re-pairing keeps the library allow-list it was given', () async {
+    // Eine Allowlist ist eine gesetzte Einschraenkung. Sie darf sich nicht
+    // dadurch aufloesen, dass dasselbe Geraet den Kopplungsvorgang wiederholt.
+    final authority = FundusPairingAuthority();
+    final first = authority.begin();
+    await authority.claim(
+      nonce: first.nonce,
+      pin: first.pin,
+      deviceId: 'phone-1',
+      deviceName: 'Telefon',
+    );
+    await authority.setAllowedLibraries('phone-1', {
+      firstLibrary.manifest.libraryId,
+    });
+    await authority.setAdultExplicitAllowed('phone-1', true);
+
+    final second = authority.begin();
+    await authority.claim(
+      nonce: second.nonce,
+      pin: second.pin,
+      deviceId: 'phone-1',
+      deviceName: 'Telefon',
+    );
+
+    expect(
+      authority.libraryAllowed('phone-1', firstLibrary.manifest.libraryId),
+      isTrue,
+    );
+    expect(
+      authority.libraryAllowed('phone-1', secondLibrary.manifest.libraryId),
+      isFalse,
+      reason: 'eine leere Allowlist waere eine stille Ausweitung',
+    );
+    // Die HHH-Freigabe faellt bewusst zurueck: das ist die sichere Richtung.
+    expect(authority.adultExplicitAllowed('phone-1'), isFalse);
+  });
+
+  test(
+    'playlist validation still accepts and rejects the right entries',
+    () async {
+      // Die Pruefung laeuft jetzt ueber den gehaltenen Katalogabzug statt je
+      // Eintrag ueber die ganze Bibliothek. Sie muss dabei genau dieselben
+      // Eintraege annehmen und ablehnen wie zuvor.
+      Future<Response> create(Map<String, Object?> body) async =>
+          server.handler(
+            Request(
+              'POST',
+              Uri.parse(
+                'http://localhost/v1/libraries/'
+                '${firstLibrary.manifest.libraryId}/playlists',
+              ),
+              headers: {
+                'authorization': 'Bearer secret',
+                'content-type': 'application/json',
+              },
+              body: jsonEncode(body),
+            ),
+          );
+
+      expect(
+        (await create({
+          'name': 'Passt',
+          'work_ids': [work.id],
+        })).statusCode,
+        201,
+      );
+      expect(
+        (await create({
+          'name': 'Passende Art',
+          'media_type': work.kind,
+          'work_ids': [work.id],
+        })).statusCode,
+        201,
+      );
+      expect(
+        (await create({
+          'name': 'Falsche Art',
+          'media_type': 'gibt-es-nicht',
+          'work_ids': [work.id],
+        })).statusCode,
+        400,
+      );
+      expect(
+        (await create({
+          'name': 'Fremdes Werk',
+          'work_ids': ['kein-werk'],
+        })).statusCode,
+        400,
+      );
+      expect(
+        (await create({
+          'name': 'Doppelt',
+          'work_ids': [work.id, work.id],
+        })).statusCode,
+        400,
+      );
+    },
+  );
 }
 
 Future<FundusLibrary> _library(

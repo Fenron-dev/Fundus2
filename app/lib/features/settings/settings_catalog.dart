@@ -72,7 +72,7 @@ abstract final class SettingsAreas {
       key: 'schutz',
       label: 'Schutzmodus',
       icon: FundusIcons.protected,
-      description: 'PIN, unscharfe Vorschau und Ausblenden.',
+      description: 'PIN, Ausblenden und Entsperren für die Sitzung.',
     ),
     SettingsArea(
       key: 'diagnose',

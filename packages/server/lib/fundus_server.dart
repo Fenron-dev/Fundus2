@@ -744,7 +744,7 @@ final class FundusServerHandler {
     }
     final decoded = await _readJson(request);
     if (decoded == null) return _badRequest('invalid_json');
-    final values = _playlistValues(entry.library, decoded);
+    final values = _playlistValues(entry, decoded);
     if (values == null) return _badRequest('invalid_playlist');
     if (!_canViewWorkIds(request, entry, values.workIds)) {
       return _badRequest('work_not_found');
@@ -796,7 +796,7 @@ final class FundusServerHandler {
             : _playlistJson(visibleCurrent),
       }, statusCode: HttpStatus.conflict);
     }
-    final values = _playlistValues(entry.library, decoded);
+    final values = _playlistValues(entry, decoded);
     if (values == null) return _badRequest('invalid_playlist');
     if (!_canViewWorkIds(request, entry, values.workIds)) {
       return _badRequest('work_not_found');
@@ -890,7 +890,7 @@ final class FundusServerHandler {
             : _playbackSessionJson(visibleCurrent),
       }, statusCode: HttpStatus.conflict);
     }
-    final session = _playbackSessionFromJson(entry.library, libraryId, decoded);
+    final session = _playbackSessionFromJson(entry, libraryId, decoded);
     if (session == null) return _badRequest('invalid_playback_session');
     if (!_canViewPlaybackSession(request, entry, session)) {
       return _badRequest('work_not_found');
@@ -906,7 +906,7 @@ final class FundusServerHandler {
   }
 
   static PlaybackSession? _playbackSessionFromJson(
-    FundusLibrary library,
+    SharedFundusLibrary entry,
     String libraryId,
     Map<String, dynamic> decoded,
   ) {
@@ -938,10 +938,10 @@ final class FundusServerHandler {
         return null;
       }
       final workId = value['work_id'] as String;
-      final work = _findWork(library, workId);
+      final work = entry.findWork(workId);
       if (work == null) return null;
-      final validFileIds = library
-          .playbackTracks(workId)
+      final validFileIds = entry
+          .tracksFor(workId)
           .map((track) => track.fileId)
           .toSet();
       final fileIds = (value['file_ids'] as List).cast<String>();
@@ -1004,7 +1004,7 @@ final class FundusServerHandler {
     List<String> workIds,
     List<PlaylistEntry> entries,
   })?
-  _playlistValues(FundusLibrary library, Map<String, dynamic> decoded) {
+  _playlistValues(SharedFundusLibrary entry, Map<String, dynamic> decoded) {
     final name = decoded['name'];
     final mediaType = decoded['media_type'];
     final workIds = decoded['work_ids'];
@@ -1036,7 +1036,7 @@ final class FundusServerHandler {
     // Dieselbe Zeile zweimal ist ein Versehen; derselbe Titel einmal als
     // Werk und einmal als Datei ist keins.
     if (entries.toSet().length != entries.length ||
-        entries.any((entry) => _findWork(library, entry.workId) == null)) {
+        entries.any((item) => entry.findWork(item.workId) == null)) {
       return null;
     }
     final normalizedMediaType =
@@ -1045,8 +1045,7 @@ final class FundusServerHandler {
         : null;
     if (normalizedMediaType != null &&
         entries.any(
-          (entry) =>
-              _findWork(library, entry.workId)?.kind != normalizedMediaType,
+          (item) => entry.findWork(item.workId)?.kind != normalizedMediaType,
         )) {
       return null;
     }
@@ -1710,9 +1709,6 @@ final class FundusServerHandler {
       };
     };
   }
-
-  static LibraryWorkSummary? _findWork(FundusLibrary library, String workId) =>
-      library.listWorks().where((work) => work.id == workId).firstOrNull;
 
   static Map<String, Object?> _libraryJson(
     SharedFundusLibrary entry, {
