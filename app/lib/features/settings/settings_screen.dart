@@ -433,21 +433,28 @@ class _Libraries extends StatelessWidget {
               ),
               const SizedBox(height: FundusSpace.x4),
               for (final entry in _mediaRoots(scope))
-                SwitchListTile.adaptive(
+                ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(entry.root),
+                  title: Text(entry.displayName),
                   subtitle: Text(
-                    '${entry.typeLabel} · ${entry.count} Werke'
+                    '${entry.root} · ${entry.typeLabel} · ${entry.count} Werke'
                     '${entry.sensitive ? ' · Schutzmodus' : ''}',
                     style: Theme.of(
                       context,
                     ).textTheme.bodySmall?.copyWith(color: tokens.textFaint),
                   ),
-                  value: scope.settings.navigationMediaRoots.contains(
-                    entry.root,
+                  leading: Switch.adaptive(
+                    value: scope.settings.navigationMediaRoots.contains(
+                      entry.root,
+                    ),
+                    onChanged: (visible) => scope.settings
+                        .setMediaRootInNavigation(entry.root, visible),
                   ),
-                  onChanged: (visible) => scope.settings
-                      .setMediaRootInNavigation(entry.root, visible),
+                  trailing: IconButton(
+                    tooltip: 'Medienordner bearbeiten',
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => _editMediaRoot(context, scope, entry),
+                  ),
                 ),
             ],
           ),
@@ -538,6 +545,43 @@ class _Libraries extends StatelessWidget {
       result.folder,
       result.kind,
       sensitive: result.sensitive,
+      displayName: result.displayName,
+    );
+  }
+
+  Future<void> _editMediaRoot(
+    BuildContext context,
+    FundusScopeState scope,
+    ({
+      String typeLabel,
+      String root,
+      bool sensitive,
+      int count,
+      String displayName,
+    })
+    entry,
+  ) async {
+    final assignable = MediaTypes.all
+        .where((type) => type.configurationKind != null)
+        .toList(growable: false);
+    final type = assignable.firstWhere(
+      (type) => type.label == entry.typeLabel,
+      orElse: () => assignable.first,
+    );
+    final result = await showMediaRootAssignmentDialog(
+      context,
+      folder: entry.root,
+      displayName: entry.displayName,
+      selectedKind: type.configurationKind,
+      initiallySensitive: entry.sensitive,
+      assignable: assignable,
+    );
+    if (result == null) return;
+    await scope.library.assignFolder(
+      result.folder,
+      result.kind,
+      sensitive: result.sensitive,
+      displayName: result.displayName,
     );
   }
 }
@@ -690,13 +734,28 @@ class _ScanCardState extends State<_ScanCard> {
 /// Defaults contain several language aliases, so listing every configured
 /// name would turn this into a long list of folders that do not exist. A root
 /// becomes relevant as soon as the index contains at least one work below it.
-List<({String typeLabel, String root, bool sensitive, int count})> _mediaRoots(
-  FundusScopeState scope,
-) {
+List<
+  ({
+    String typeLabel,
+    String root,
+    bool sensitive,
+    int count,
+    String displayName,
+  })
+>
+_mediaRoots(FundusScopeState scope) {
   final library = scope.library.library;
   if (library == null) return const [];
   final entries =
-      <({String typeLabel, String root, bool sensitive, int count})>[];
+      <
+        ({
+          String typeLabel,
+          String root,
+          bool sensitive,
+          int count,
+          String displayName,
+        })
+      >[];
   for (final type in MediaTypes.all) {
     final kind = type.configurationKind;
     if (kind == null) continue;
@@ -714,6 +773,7 @@ List<({String typeLabel, String root, bool sensitive, int count})> _mediaRoots(
       entries.add((
         typeLabel: type.label,
         root: root,
+        displayName: library.configuration.displayNameFor(root),
         sensitive: sensitive.contains(root),
         count: count,
       ));

@@ -80,7 +80,12 @@ class AppSettings extends ChangeNotifier {
   final FlutterSecureStorage? _secureStorage;
   Map<String, Object?> _values;
 
-  static const _sensitiveKeys = {'peers', 'tmdb_key', 'protection_pin'};
+  static const _sensitiveKeys = {
+    'peers',
+    'tmdb_key',
+    'hardcover_token',
+    'protection_pin',
+  };
 
   static Future<AppSettings> load() async {
     final directory = await getApplicationSupportDirectory();
@@ -173,6 +178,10 @@ class AppSettings extends ChangeNotifier {
   /// belonging to the person, not to the library. AniList and Open Library
   /// need none, so this stays empty for most people.
   String get tmdbKey => _values['tmdb_key'] as String? ?? '';
+
+  /// Personal Hardcover API token. It is device-local and never part of a
+  /// shared vault, just like the TMDB key.
+  String get hardcoverToken => _values['hardcover_token'] as String? ?? '';
 
   /// Whether the reading position question has been answered for good.
   ///
@@ -366,6 +375,9 @@ class AppSettings extends ChangeNotifier {
       _set('always_furthest', value);
 
   Future<void> setTmdbKey(String value) => _set('tmdb_key', value.trim());
+
+  Future<void> setHardcoverToken(String value) =>
+      _set('hardcover_token', value.trim());
 
   Future<void> setMetadataLanguage(String value) =>
       _set('metadata_language', value);

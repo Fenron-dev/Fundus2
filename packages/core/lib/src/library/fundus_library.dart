@@ -430,6 +430,7 @@ final class FundusLibrary {
     required String folder,
     required String kind,
     bool sensitive = false,
+    String? displayName,
   }) async {
     _ensureWritable();
     final name = folder.trim();
@@ -452,10 +453,34 @@ final class FundusLibrary {
     if (sensitive) {
       sensitiveRoots[kind] = [...?sensitiveRoots[kind], name];
     }
+    final labels = {...configuration.mediaRootLabels};
+    final label = displayName?.trim();
+    if (label != null && label.isNotEmpty && label != name) {
+      labels[name] = label;
+    } else {
+      labels.remove(name);
+    }
     await saveConfiguration(
-      LibraryConfiguration(mediaRoots: roots, sensitiveRoots: sensitiveRoots),
+      LibraryConfiguration(
+        mediaRoots: roots,
+        sensitiveRoots: sensitiveRoots,
+        mediaRootLabels: labels,
+      ),
     );
   }
+
+  /// Changes the label, type or protection policy without touching files.
+  Future<void> updateMediaRoot({
+    required String folder,
+    required String kind,
+    required String displayName,
+    required bool sensitive,
+  }) => assignMediaRoot(
+    folder: folder,
+    kind: kind,
+    displayName: displayName,
+    sensitive: sensitive,
+  );
 
   Future<void> saveConfiguration(LibraryConfiguration next) async {
     _ensureWritable();

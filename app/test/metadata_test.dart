@@ -133,6 +133,65 @@ void main() {
       },
     );
 
+    test('Hardcover liefert Buch, Reihe, Autor und Cover', () async {
+      final client = FakeHttp((request) {
+        final body = request is http.Request ? request.body : '';
+        if (body.contains('query Search')) {
+          return http.Response(
+            jsonEncode({
+              'data': {
+                'search': {
+                  'ids': [42],
+                  'results': [],
+                },
+              },
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'data': {
+              'books': [
+                {
+                  'id': 42,
+                  'title': 'The Wandering Inn',
+                  'subtitle': 'Volume One',
+                  'description': '<p>Eine Reihe.</p>',
+                  'release_year': 2016,
+                  'image': {'url': 'https://img/inn.jpg'},
+                  'contributions': [
+                    {
+                      'author': {'name': 'pirateaba'},
+                      'contribution': 'Writer',
+                    },
+                  ],
+                  'book_series': [
+                    {
+                      'position': 1,
+                      'series': {'name': 'The Wandering Inn'},
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+          200,
+        );
+      });
+      final result = await HardcoverProvider(
+        token: 'test-token',
+        client: client,
+      ).search('Wandering Inn');
+      expect(result.single.providerId, '42');
+      expect(result.single.series, 'The Wandering Inn');
+      expect(result.single.seriesSequence, 1);
+      expect(result.single.authors, ['pirateaba']);
+      expect(result.single.posterUrl, 'https://img/inn.jpg');
+      expect(result.single.description, 'Eine Reihe.');
+      expect(client.asked, hasLength(2));
+    });
+
     test('MAL übernimmt alternative Titel aus Jikans Titelobjekten', () async {
       final client = FakeHttp(
         (_) => http.Response(

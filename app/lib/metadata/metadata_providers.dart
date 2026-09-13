@@ -36,6 +36,7 @@ enum MetadataProviderKind {
   myAnimeListAdult('MyAnimeList (Hentai)'),
   tmdb('TMDB (Filme & Serien)'),
   openLibrary('Open Library (Bücher)'),
+  hardcover('Hardcover.app (Bücher & Reihen)'),
   audible('Audible (Hörbücher)'),
   applePodcasts('Apple Podcasts');
 
@@ -44,7 +45,9 @@ enum MetadataProviderKind {
   final String label;
 
   /// Whether this provider needs a key of the user's own.
-  bool get needsKey => this == MetadataProviderKind.tmdb;
+  bool get needsKey =>
+      this == MetadataProviderKind.tmdb ||
+      this == MetadataProviderKind.hardcover;
 
   /// The providers worth offering first for a media area.
   ///
@@ -68,8 +71,13 @@ enum MetadataProviderKind {
         ],
         'novel' => const [
           MetadataProviderKind.anilistManga,
+          MetadataProviderKind.hardcover,
           MetadataProviderKind.openLibrary,
           MetadataProviderKind.myAnimeList,
+        ],
+        'book' => const [
+          MetadataProviderKind.hardcover,
+          MetadataProviderKind.openLibrary,
         ],
         'audiobook' => const [
           MetadataProviderKind.audible,
@@ -107,8 +115,8 @@ abstract interface class MetadataProvider {
 
 /// Builds the adapter for one choice.
 ///
-/// Only TMDB takes a key, and it is passed in at the moment of the call — it
-/// lives in the platform's secure storage and is never written into a vault.
+/// Providers that need a credential receive it only at call time — it lives
+/// in the platform's secure storage and is never written into a vault.
 MetadataProvider providerFor(
   MetadataProviderKind kind, {
   String apiKey = '',
@@ -139,6 +147,10 @@ MetadataProvider providerFor(
   ),
   MetadataProviderKind.tmdb => TmdbProvider(apiKey: apiKey, client: client),
   MetadataProviderKind.openLibrary => OpenLibraryProvider(client: client),
+  MetadataProviderKind.hardcover => HardcoverProvider(
+    token: apiKey,
+    client: client,
+  ),
   MetadataProviderKind.audible => AudibleProvider(client: client),
   MetadataProviderKind.applePodcasts => ApplePodcastProvider(client: client),
 };
@@ -276,11 +288,12 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
     final normalizedQuery = query.trim();
     if (normalizedQuery.isEmpty) return const [];
     final response = await _request(
-      _client.post(
+      () => _client.post(
         Uri.parse(endpoint),
         headers: const {
           'accept': 'application/json',
           'content-type': 'application/json',
+          'user-agent': 'Fundus/2 metadata',
         },
         body: jsonEncode({
           'query': _query,
@@ -304,9 +317,24 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
     ];
   }
 
-  Future<http.Response> _request(Future<http.Response> request) async {
+  Future<http.Response> _request(
+    Future<http.Response> Function() request,
+  ) async {
     try {
-      return await request.timeout(const Duration(seconds: 12));
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final response = await request().timeout(const Duration(seconds: 12));
+        if (response.statusCode != 429 && response.statusCode < 500) {
+          return response;
+        }
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 350 * (attempt + 1)),
+          );
+        } else {
+          return response;
+        }
+      }
+      throw StateError('unreachable');
     } on TimeoutException {
       throw MetadataProviderException(provider, 'Zeitüberschreitung');
     } on MetadataProviderException {
@@ -557,7 +585,10 @@ final class TmdbProvider implements MetadataProvider {
             Uri.parse(
               'https://api.themoviedb.org/3/$area/${candidate.providerId}/credits',
             ).replace(queryParameters: {'api_key': apiKey}),
-            headers: const {'accept': 'application/json'},
+            headers: const {
+              'accept': 'application/json',
+              'user-agent': 'Fundus/2 metadata',
+            },
           ),
         );
         credits = _decodeObject(fallback, provider);
@@ -726,21 +757,19 @@ final class MyAnimeListProvider implements MetadataProvider {
     for (final kind in const ['anime', 'manga']) {
       try {
         final response = await _request(
-          _client.get(
+          () => _client.get(
             Uri.https('api.jikan.moe', '/v4/$kind', {
               'q': q,
               'limit': '${limit.clamp(1, 25)}',
               'sfw': includeAdult ? 'false' : 'true',
             }),
-            headers: const {'accept': 'application/json'},
+            headers: const {
+              'accept': 'application/json',
+              'user-agent': 'Fundus/2 metadata',
+            },
           ),
         );
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw const MetadataProviderException(
-            'myanimelist',
-            'Der Dienst hat mit einem Fehler geantwortet.',
-          );
-        }
+        _decodeObject(response, provider);
         responses.add((kind: kind, response: response));
       } on MetadataProviderException catch (error) {
         firstFailure ??= error;
@@ -756,9 +785,24 @@ final class MyAnimeListProvider implements MetadataProvider {
     ];
   }
 
-  Future<http.Response> _request(Future<http.Response> request) async {
+  Future<http.Response> _request(
+    Future<http.Response> Function() request,
+  ) async {
     try {
-      return await request.timeout(const Duration(seconds: 12));
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final response = await request().timeout(const Duration(seconds: 12));
+        if (response.statusCode != 429 && response.statusCode < 500) {
+          return response;
+        }
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 350 * (attempt + 1)),
+          );
+        } else {
+          return response;
+        }
+      }
+      throw StateError('unreachable');
     } on TimeoutException {
       throw MetadataProviderException(provider, 'Zeitüberschreitung');
     } on MetadataProviderException {
@@ -846,6 +890,191 @@ final class MyAnimeListProvider implements MetadataProvider {
       posterUrl: image,
       externalIds: {'mal': '$id'},
     );
+  }
+}
+
+/// Hardcover's public GraphQL catalogue for books, novels and series.
+///
+/// The search endpoint returns stable book ids; a second query resolves those
+/// ids into the fields Fundus can actually store. This avoids depending on
+/// the search result JSON shape, which is intentionally an opaque `jsonb`
+/// field in Hardcover's schema.
+final class HardcoverProvider implements MetadataProvider {
+  HardcoverProvider({
+    required String token,
+    http.Client? client,
+    this.endpoint = _defaultEndpoint,
+  }) : _token = token.trim(),
+       _client = client ?? createMetadataHttpClient();
+
+  static const _defaultEndpoint = 'https://api.hardcover.app/v1/graphql';
+  static const _searchQuery = r'''
+query Search($query: String!, $limit: Int!) {
+  search(query: $query, query_type: "book", per_page: $limit) {
+    ids
+    results
+  }
+}
+''';
+  static const _booksQuery = r'''
+query Books($ids: [Int!]!) {
+  books(where: {id: {_in: $ids}}) {
+    id
+    title
+    subtitle
+    description
+    release_year
+    release_date
+    pages
+    image { url }
+    cached_image
+    contributions { contribution author { name } }
+    book_series { position series { name } }
+  }
+}
+''';
+
+  final String _token;
+  final http.Client _client;
+  final String endpoint;
+
+  @override
+  String get provider => 'hardcover';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
+
+  @override
+  Future<List<MetadataCandidate>> search(
+    String query, {
+    int limit = 10,
+    String? language,
+  }) async {
+    if (_token.isEmpty) {
+      throw const MetadataProviderException(
+        'hardcover',
+        'Hardcover-API-Token fehlt. Hinterlege ihn in den Einstellungen.',
+      );
+    }
+    final normalized = query.trim();
+    if (normalized.isEmpty) return const [];
+    final search = await _request(_searchQuery, {
+      'query': normalized,
+      'limit': limit.clamp(1, 25),
+    });
+    final payload = _object(search['data']);
+    final result = _object(payload?['search']);
+    final ids = <int>{
+      for (final id
+          in result?['ids'] is List ? result!['ids'] as List : const [])
+        if (id is num) id.round(),
+    };
+    if (ids.isEmpty) return _candidatesFromSearchJson(result?['results']);
+    final books = await _request(_booksQuery, {'ids': ids.toList()});
+    final data = _object(books['data']);
+    final values = data?['books'];
+    if (values is! List) return const [];
+    return [
+      for (final value in values)
+        if (value is Map) ?_candidate(value, language: language),
+    ];
+  }
+
+  Future<Map<String, Object?>> _request(
+    String query,
+    Map<String, Object?> variables,
+  ) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse(endpoint),
+            headers: {
+              'accept': 'application/json',
+              'content-type': 'application/json',
+              'authorization': 'Bearer $_token',
+              'user-agent': 'Fundus/2 metadata',
+            },
+            body: jsonEncode({'query': query, 'variables': variables}),
+          )
+          .timeout(const Duration(seconds: 15));
+      return _decodeObject(response, provider);
+    } on TimeoutException {
+      throw MetadataProviderException(provider, 'Zeitüberschreitung');
+    } on MetadataProviderException {
+      rethrow;
+    } on Object catch (error) {
+      throw MetadataProviderException(provider, _networkMessage(error));
+    }
+  }
+
+  MetadataCandidate? _candidate(Map value, {String? language}) {
+    final id = value['id'];
+    final title = _firstString([value['title'], value['subtitle']]);
+    if (id is! num || title == null) return null;
+    final series = value['book_series'];
+    final firstSeries = series is List && series.isNotEmpty
+        ? series.first
+        : null;
+    final seriesMap = firstSeries is Map ? firstSeries['series'] : null;
+    final seriesName = seriesMap is Map
+        ? _firstString([seriesMap['name']])
+        : null;
+    final position = firstSeries is Map
+        ? (firstSeries['position'] as num?)?.toDouble()
+        : null;
+    final image = value['image'];
+    final cachedImage = value['cached_image'];
+    final poster = _firstString([
+      image is Map ? image['url'] : null,
+      cachedImage is Map ? cachedImage['url'] : null,
+    ]);
+    final contributions = value['contributions'];
+    final authors = <String>[];
+    if (contributions is List) {
+      for (final contribution in contributions) {
+        if (contribution is! Map) continue;
+        final author = contribution['author'];
+        final name = author is Map ? _firstString([author['name']]) : null;
+        if (name != null && !authors.contains(name)) authors.add(name);
+      }
+    }
+    final year =
+        (value['release_year'] as num?)?.round() ??
+        _year(value['release_date']);
+    return MetadataCandidate(
+      provider: provider,
+      providerId: '${id.round()}',
+      title: title,
+      alternateTitles: [
+        if (value['subtitle'] is String && value['subtitle'] != title)
+          value['subtitle'] as String,
+      ],
+      authors: authors,
+      workKind: 'novel',
+      series: seriesName,
+      seriesSequence: position,
+      releaseYear: year,
+      description: _cleanDescription(value['description']),
+      posterUrl: poster,
+      externalIds: {'hardcover': '${id.round()}'},
+    );
+  }
+
+  List<MetadataCandidate> _candidatesFromSearchJson(Object? raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final value in raw)
+        if (value is Map) ?_candidate(value),
+    ];
+  }
+
+  static Map<String, Object?>? _object(Object? value) =>
+      value is Map ? Map<String, Object?>.from(value) : null;
+
+  static int? _year(Object? value) {
+    if (value is! String || value.length < 4) return null;
+    return int.tryParse(value.substring(0, 4));
   }
 }
 
@@ -1224,16 +1453,29 @@ final class ApplePodcastProvider implements MetadataProvider {
 
 Map<String, Object?> _decodeObject(http.Response response, String provider) {
   if (response.statusCode < 200 || response.statusCode >= 300) {
+    var detail = 'HTTP ${response.statusCode}';
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['message'] is String) {
+        detail = '$detail: ${(decoded['message'] as String).trim()}';
+      }
+    } on Object {
+      // Keep the status useful even when a proxy returned HTML/plain text.
+    }
     throw MetadataProviderException(
       provider,
-      'Der Dienst hat mit einem Fehler geantwortet.',
+      'Der Dienst hat mit einem Fehler geantwortet ($detail).',
     );
   }
   try {
     final decoded = jsonDecode(response.body);
     if (decoded is! Map) throw const FormatException();
     if (decoded['errors'] is List && (decoded['errors'] as List).isNotEmpty) {
-      throw MetadataProviderException(provider, 'Die Antwort ist ungültig.');
+      final first = (decoded['errors'] as List).first;
+      final message = first is Map && first['message'] is String
+          ? (first['message'] as String).trim()
+          : 'Die Antwort ist ungültig.';
+      throw MetadataProviderException(provider, message);
     }
     return Map<String, Object?>.from(decoded);
   } on MetadataProviderException {

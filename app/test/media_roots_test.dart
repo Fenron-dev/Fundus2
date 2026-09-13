@@ -65,11 +65,16 @@ void main() {
     await library.assignFolder(
       'Meine Sachen',
       MediaTypes.books.configurationKind!,
+      displayName: 'Meine Romane',
     );
 
     expect(library.works, isNotEmpty);
     expect(library.works.first.mediaType?.id, MediaTypes.books.id);
     expect(library.unassignedFolders, isEmpty);
+    expect(
+      library.library!.configuration.displayNameFor('Meine Sachen'),
+      'Meine Romane',
+    );
 
     // Die Zuordnung gehört der Bibliothek, nicht dem Gerät.
     final config = File('${root.path}/.library/config.yaml');

@@ -214,7 +214,7 @@ class _NavigationPaneState extends State<NavigationPane> {
         if (count == 0) continue;
         entries.add((
           path: root,
-          label: root.split(RegExp(r'[/\\]')).last,
+          label: library.configuration.displayNameFor(root),
           type: type,
           count: count,
         ));
@@ -258,16 +258,17 @@ class _NavigationPaneState extends State<NavigationPane> {
   /// own only source has nothing to filter by, and a list with one entry
   /// called „dieses Gerät" is a line of furniture.
   List<Widget> _sourceEntries(BuildContext context, FundusScopeState scope) {
-    final mirrored = scope.library.sources
+    final counts = scope.library.worksPerSource;
+    final visibleSources = scope.library.sources
         .where(
           (source) =>
-              !source.isVault &&
-              !scope.settings.hiddenSourceIds.contains(source.id),
+              !scope.settings.hiddenSourceIds.contains(source.id) &&
+              (counts[source.id] ?? 0) > 0,
         )
         .toList();
+    final mirrored = visibleSources.where((source) => !source.isVault).toList();
     if (mirrored.isEmpty) return const [];
 
-    final counts = scope.library.worksPerSource;
     final route = scope.navigation.current;
     final active = route is LibraryRoute ? scope.filter.sourceId : null;
     final activeType = route is LibraryRoute ? route.mediaTypeId : null;
@@ -282,14 +283,7 @@ class _NavigationPaneState extends State<NavigationPane> {
           onTap: () {},
         ),
       ),
-      for (final source in [
-        ...scope.library.sources.where(
-          (source) =>
-              source.isVault &&
-              !scope.settings.hiddenSourceIds.contains(source.id),
-        ),
-        ...mirrored,
-      ])
+      for (final source in visibleSources)
         _SourceNavigationGroup(
           source: source,
           collapsed: collapsed,

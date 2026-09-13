@@ -130,6 +130,7 @@ class _AssignButton extends StatelessWidget {
       result.folder,
       result.kind,
       sensitive: result.sensitive,
+      displayName: result.displayName,
     );
   }
 }
@@ -138,17 +139,26 @@ class _AssignButton extends StatelessWidget {
 /// used by the settings page for folders that have not appeared in the scan
 /// yet, so custom labels such as `Hentai` can be mapped to `manga` without
 /// renaming anything on disk.
-Future<({String folder, String kind, bool sensitive})?>
+Future<({String folder, String kind, bool sensitive, String displayName})?>
 showMediaRootAssignmentDialog(
   BuildContext context, {
   String folder = '',
+  String? displayName,
+  String? selectedKind,
+  bool initiallySensitive = false,
   required List<MediaTypeDefinition> assignable,
 }) async {
   final folderController = TextEditingController(text: folder);
-  var selected = assignable.first;
-  var sensitive = false;
+  final displayController = TextEditingController(text: displayName ?? folder);
+  var selected = assignable.firstWhere(
+    (type) => type.configurationKind == selectedKind,
+    orElse: () => assignable.first,
+  );
+  var sensitive = initiallySensitive;
   final result =
-      await showDialog<({String folder, String kind, bool sensitive})>(
+      await showDialog<
+        ({String folder, String kind, bool sensitive, String displayName})
+      >(
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setState) => AlertDialog(
@@ -159,6 +169,15 @@ showMediaRootAssignmentDialog(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                TextField(
+                  controller: displayController,
+                  decoration: const InputDecoration(
+                    labelText: 'Anzeigename',
+                    hintText: 'z. B. H-Manga oder Meine Romane',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: FundusSpace.x3),
                 TextField(
                   controller: folderController,
                   autofocus: folder.isEmpty,
@@ -205,6 +224,9 @@ showMediaRootAssignmentDialog(
                     folder: value,
                     kind: selected.configurationKind!,
                     sensitive: sensitive,
+                    displayName: displayController.text.trim().isEmpty
+                        ? value.split(RegExp(r'[/\\]')).last
+                        : displayController.text.trim(),
                   ));
                 },
                 child: const Text('Speichern'),
@@ -214,5 +236,6 @@ showMediaRootAssignmentDialog(
         ),
       );
   folderController.dispose();
+  displayController.dispose();
   return result;
 }

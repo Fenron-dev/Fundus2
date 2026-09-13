@@ -42,6 +42,9 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   late final TextEditingController _key = TextEditingController(
     text: widget.settings.tmdbKey,
   );
+  late final TextEditingController _hardcoverKey = TextEditingController(
+    text: widget.settings.hardcoverToken,
+  );
   late final List<MetadataProviderKind> _suggested = [
     ...MetadataProviderKind.forMediaType(widget.work.mediaType?.id),
     if (widget.work.summary.contentSensitivity == 'adult_explicit') ...[
@@ -67,6 +70,7 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   void dispose() {
     _query.dispose();
     _key.dispose();
+    _hardcoverKey.dispose();
     super.dispose();
   }
 
@@ -88,19 +92,28 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   Future<void> _search() async {
     final query = _query.text.trim();
     if (query.isEmpty) return;
-    if (_provider.needsKey && _key.text.trim().isEmpty) {
-      setState(() => _error = 'Für TMDB wird ein eigener Schlüssel benötigt.');
+    final credential = _credentialController.text.trim();
+    if (_provider.needsKey && credential.isEmpty) {
+      setState(
+        () => _error = _provider == MetadataProviderKind.hardcover
+            ? 'Für Hardcover wird ein eigener API-Token benötigt.'
+            : 'Für TMDB wird ein eigener Schlüssel benötigt.',
+      );
       return;
     }
     setState(() {
       _loading = true;
       _error = null;
     });
-    if (_provider.needsKey) await widget.settings.setTmdbKey(_key.text);
+    if (_provider == MetadataProviderKind.hardcover) {
+      await widget.settings.setHardcoverToken(credential);
+    } else if (_provider == MetadataProviderKind.tmdb) {
+      await widget.settings.setTmdbKey(credential);
+    }
     await widget.settings.setMetadataLanguage(_language);
     try {
       final results = await MetadataSearch([
-        providerFor(_provider, apiKey: _key.text.trim()),
+        providerFor(_provider, apiKey: credential),
       ]).search(query, language: _language);
       if (!mounted) return;
       setState(() {
@@ -128,7 +141,7 @@ class _MetadataDialogState extends State<_MetadataDialog> {
     try {
       return await providerFor(
         _provider,
-        apiKey: _key.text.trim(),
+        apiKey: _credentialController.text.trim(),
       ).enrich(candidate);
     } on Object {
       return candidate;
@@ -152,6 +165,9 @@ class _MetadataDialogState extends State<_MetadataDialog> {
       ..clear()
       ..addAll(offeredFields(candidate));
   });
+
+  TextEditingController get _credentialController =>
+      _provider == MetadataProviderKind.hardcover ? _hardcoverKey : _key;
 
   @override
   Widget build(BuildContext context) {
@@ -239,10 +255,12 @@ class _MetadataDialogState extends State<_MetadataDialog> {
             if (_provider.needsKey) ...[
               const SizedBox(height: FundusSpace.x2),
               TextField(
-                controller: _key,
+                controller: _credentialController,
                 obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'TMDB-Schlüssel',
+                decoration: InputDecoration(
+                  labelText: _provider == MetadataProviderKind.hardcover
+                      ? 'Hardcover-API-Token'
+                      : 'TMDB-Schlüssel',
                   helperText: 'Bleibt auf diesem Gerät, nie in der Bibliothek.',
                   border: OutlineInputBorder(),
                 ),

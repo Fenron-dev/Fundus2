@@ -109,6 +109,7 @@ class LibraryController extends ChangeNotifier {
     String folder,
     String configurationKind, {
     bool sensitive = false,
+    String? displayName,
   }) async {
     final library = _library;
     if (library == null) return;
@@ -116,6 +117,7 @@ class LibraryController extends ChangeNotifier {
       folder: folder,
       kind: configurationKind,
       sensitive: sensitive,
+      displayName: displayName,
     );
     await scan();
   }
