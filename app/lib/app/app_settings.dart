@@ -253,6 +253,28 @@ class AppSettings extends ChangeNotifier {
         : const {};
   }
 
+  /// Welche Bibliotheken in der Seitenleiste aufgeklappt sind.
+  ///
+  /// Geräteeigene Darstellungssache, wie die Medienordner darüber. Vorher lag
+  /// das nur im Widget: die mobile Schublade baut die Leiste bei jedem Öffnen
+  /// neu, und damit klappte jede Bibliothek jedes Mal wieder zu.
+  Set<String> get expandedSources {
+    final value = _values['expanded_sources'];
+    return value is List
+        ? value.whereType<String>().where((id) => id.isNotEmpty).toSet()
+        : const {};
+  }
+
+  Future<void> setSourceExpanded(String sourceId, bool expanded) async {
+    final sources = {...expandedSources};
+    if (expanded) {
+      sources.add(sourceId);
+    } else {
+      sources.remove(sourceId);
+    }
+    await _set('expanded_sources', sources.toList()..sort());
+  }
+
   Future<void> setMediaRootInNavigation(String root, bool visible) async {
     final roots = {...navigationMediaRoots};
     if (visible) {

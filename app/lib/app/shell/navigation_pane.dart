@@ -56,8 +56,6 @@ class NavigationPane extends StatefulWidget {
 }
 
 class _NavigationPaneState extends State<NavigationPane> {
-  final Set<String> _expandedSources = <String>{};
-
   bool get collapsed => widget.collapsed;
   VoidCallback? get onNavigate => widget.onNavigate;
 
@@ -147,8 +145,14 @@ class _NavigationPaneState extends State<NavigationPane> {
         ),
       // In der Reihenfolge, die der Nutzer gesetzt hat, und ohne Trennlinie
       // mitten in der Liste: was oben und was unten steht, entscheidet er.
+      //
+      // Eine leere Art wird weggelassen. Die Bedingung lautete zuvor
+      // „Anzahl > 0 *oder* nicht geschützt"; da `protected` nur für das
+      // geschützte Regal gesetzt ist, war sie für jede gewöhnliche Art immer
+      // wahr — „Serien 0" stand dauerhaft in der Leiste. Ordner- und
+      // Quelleneinträge filtern schon lange richtig.
       for (final type in MediaTypes.ordered(scope.settings.mediaTypeOrder))
-        if ((counts[type.id] ?? 0) > 0 || !type.protected)
+        if ((counts[type.id] ?? 0) > 0)
           NavigationEntry(
             label: type.label,
             icon: type.icon,
@@ -179,16 +183,30 @@ class _NavigationPaneState extends State<NavigationPane> {
         ),
     ];
 
+    final sources = _sourceEntries(context, scope);
+    // Bei mehreren Bibliotheken tragen die Gruppen die Medienarten — je
+    // Bibliothek einmal, mit ihrem Namen darüber. Sie zusätzlich flach
+    // aufzuführen hieße dieselben Namen zweimal, einmal summiert und einmal
+    // aufgeschlüsselt, ohne dass die Leiste sagt welche welche ist.
+    final grouped = sources.isNotEmpty;
     return [
       for (final entry in entries)
-        _NavigationTile(
-          entry: entry,
-          collapsed: collapsed,
-          onNavigate: onNavigate,
-        ),
-      ..._sourceEntries(context, scope),
+        if (!grouped || !_isMediaTypeEntry(entry))
+          _NavigationTile(
+            entry: entry,
+            collapsed: collapsed,
+            onNavigate: onNavigate,
+          ),
+      ...sources,
     ];
   }
+
+  /// Ob dieser Eintrag eine Medienart ist — und damit in den Gruppen steht.
+  ///
+  /// „Dashboard", „Alle Werke", „Favoriten" und „Nicht zugeordnet" gelten
+  /// über alle Bibliotheken hinweg und bleiben deshalb oben stehen.
+  static bool _isMediaTypeEntry(NavigationEntry entry) =>
+      MediaTypes.all.any((type) => type.label == entry.label);
 
   List<({String path, String label, MediaTypeDefinition type, int count})>
   _configuredRootEntries(FundusScopeState scope) {
@@ -266,35 +284,28 @@ class _NavigationPaneState extends State<NavigationPane> {
               (counts[source.id] ?? 0) > 0,
         )
         .toList();
-    final mirrored = visibleSources.where((source) => !source.isVault).toList();
-    if (mirrored.isEmpty) return const [];
+    // Gruppiert wird, sobald es etwas zu unterscheiden gibt. Das galt bisher
+    // nur für gespiegelte Quellen; zwei lokal geöffnete Bibliotheken standen
+    // dadurch flach und ununterscheidbar nebeneinander.
+    if (visibleSources.length < 2) return const [];
 
     final route = scope.navigation.current;
     final active = route is LibraryRoute ? scope.filter.sourceId : null;
     final activeType = route is LibraryRoute ? route.mediaTypeId : null;
 
     return [
-      _NavigationTile(
-        collapsed: collapsed,
-        onNavigate: onNavigate,
-        entry: NavigationEntry(
-          label: 'GERÄTE',
-          icon: FundusIcons.devices,
-          onTap: () {},
-        ),
-      ),
+      if (!collapsed) const _SectionHeading('BIBLIOTHEKEN'),
       for (final source in visibleSources)
         _SourceNavigationGroup(
           source: source,
           collapsed: collapsed,
-          expanded: _expandedSources.contains(source.id),
+          expanded: scope.settings.expandedSources.contains(source.id),
           count: _formatCount(counts[source.id] ?? 0),
           active: active == source.id,
-          onToggle: () => setState(() {
-            if (!_expandedSources.add(source.id)) {
-              _expandedSources.remove(source.id);
-            }
-          }),
+          onToggle: () => scope.settings.setSourceExpanded(
+            source.id,
+            !scope.settings.expandedSources.contains(source.id),
+          ),
           onNavigate: onNavigate,
           onSelect: () =>
               scope.showSource(active == source.id ? null : source.id),
@@ -308,6 +319,7 @@ class _NavigationPaneState extends State<NavigationPane> {
                       0)
                 _NavigationTile(
                   collapsed: false,
+                  indented: true,
                   onNavigate: onNavigate,
                   entry: NavigationEntry(
                     label: type.label,
@@ -457,15 +469,51 @@ class _SourceNavigationGroup extends StatelessWidget {
   }
 }
 
+/// Eine Überschrift über einem Abschnitt der Leiste.
+///
+/// Vorher stand hier eine gewöhnliche Kachel mit leerem `onTap` — sie sah
+/// anklickbar aus und tat nichts. Eine Überschrift ist keine Schaltfläche.
+class _SectionHeading extends StatelessWidget {
+  const _SectionHeading(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(
+      FundusSpace.x3,
+      FundusSpace.x4,
+      FundusSpace.x3,
+      FundusSpace.x2,
+    ),
+    child: Text(
+      label,
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+        color: context.fundus.textFaint,
+        letterSpacing: 0.8,
+      ),
+    ),
+  );
+}
+
 class _NavigationTile extends StatelessWidget {
   const _NavigationTile({
     required this.entry,
     required this.collapsed,
+    this.indented = false,
     this.onNavigate,
   });
 
   final NavigationEntry entry;
   final bool collapsed;
+
+  /// Ob dieser Eintrag unter einer Bibliothek steht.
+  ///
+  /// Ohne Einzug las sich ein aufgeklappter Bereich wie ein weiterer flacher
+  /// Block: das Kind saß bündig unter der Überschrift und war von einem
+  /// Eintrag der obersten Ebene nicht zu unterscheiden.
+  final bool indented;
+
   final VoidCallback? onNavigate;
 
   @override
@@ -521,7 +569,11 @@ class _NavigationTile extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.only(
-        left: collapsed ? FundusSpace.x2 : 0,
+        left: collapsed
+            ? FundusSpace.x2
+            : indented
+            ? FundusSpace.x6
+            : 0,
         right: collapsed ? FundusSpace.x2 : 0,
         bottom: entry.ruleAfter ? 0 : 1,
       ),

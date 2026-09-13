@@ -7,6 +7,7 @@ import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/app/fundus_scope.dart';
 import 'package:fundus/app/shell/fundus_shell.dart';
 import 'package:fundus/data/library_controller.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 /// Wide enough for the two-column shell; the compact layout is a second state
@@ -53,6 +54,25 @@ Future<T> waitForDisk<T>(
     fail('Die Platte hat in ${timeout.inSeconds} s nichts geliefert');
   }
   return result;
+}
+
+/// Legt ein Hörbuch an und liest es ein.
+///
+/// Seit leere Medienarten nicht mehr in der Leiste stehen, braucht ein Test
+/// über die Leiste auch etwas darin — sonst prüft er die Abwesenheit von
+/// allem.
+Future<void> seedAudiobook(
+  WidgetTester tester,
+  LibraryController library,
+  Directory root,
+) async {
+  await tester.runAsync(() async {
+    final book = Directory('${root.path}/Hörbücher/Karl May/Winnetou');
+    await book.create(recursive: true);
+    await File('${book.path}/01 - Kapitel.mp3').writeAsBytes([1, 2, 3]);
+    await library.open(root, createIfMissing: true);
+    await library.scan();
+  });
 }
 
 Future<void> openVault(
@@ -139,19 +159,30 @@ void main() {
   testWidgets('die Seitenleiste trägt Ort, Bereiche und Fußzeile', (
     tester,
   ) async {
-    await openVault(tester, library, root);
+    await seedAudiobook(tester, library, root);
     await pumpShell(tester, library: library, settings: settings);
 
     expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('Alle Werke'), findsOneWidget);
     expect(find.text('Hörbücher'), findsOneWidget);
-    expect(find.text('Manga & Comics'), findsOneWidget);
     expect(find.text('Downloads'), findsOneWidget);
     expect(find.text('Einstellungen'), findsOneWidget);
   });
 
+  testWidgets('leere Medienarten stehen nicht in der Leiste', (tester) async {
+    // „Serien 0" stand dauerhaft da: die Bedingung lautete „Anzahl > 0 oder
+    // nicht geschützt", und geschützt ist nur das geschützte Regal.
+    await seedAudiobook(tester, library, root);
+    await pumpShell(tester, library: library, settings: settings);
+
+    expect(find.text('Hörbücher'), findsOneWidget);
+    expect(find.text('Serien'), findsNothing);
+    expect(find.text('Manga & Comics'), findsNothing);
+    expect(find.text('Filme'), findsNothing);
+  });
+
   testWidgets('eingeklappt bleibt es dieselbe Navigation', (tester) async {
-    await openVault(tester, library, root);
+    await seedAudiobook(tester, library, root);
     await settings.setNavigationCollapsed(true);
     await pumpShell(tester, library: library, settings: settings);
 
@@ -219,5 +250,70 @@ void main() {
 
     expect(find.text('Alle Werke'), findsWidgets);
     expect(find.text('Ordnen nach'), findsOneWidget);
+  });
+
+  testWidgets('zwei Bibliotheken werden gruppiert statt flach verdoppelt', (
+    tester,
+  ) async {
+    // Vorher standen die Gruppen *zusätzlich* zur flachen Liste: dieselben
+    // Namen zweimal, einmal summiert und einmal aufgeschlüsselt, ohne dass
+    // die Leiste sagt welche welche ist.
+    await seedAudiobook(tester, library, root);
+    await tester.runAsync(() async {
+      final vault = library.library!;
+      vault.registerPeerSource(
+        sourceId: 'peer-zweite',
+        displayName: 'Zweite Bibliothek',
+        libraryId: 'lib-2',
+        baseUrl: 'https://127.0.0.1:1',
+      );
+      vault.mirrorRemoteCatalogue(
+        sourceId: 'peer-zweite',
+        works: const [
+          RemoteWorkRecord(
+            id: 'remote-werk-1',
+            kind: 'manga',
+            title: 'Klingenwind',
+            files: [
+              RemoteFileRecord(
+                id: 'remote-datei-1',
+                filename: '01.cbz',
+                position: 0,
+                extension: 'cbz',
+              ),
+            ],
+          ),
+        ],
+      );
+      library.refresh();
+    });
+    await pumpShell(tester, library: library, settings: settings);
+
+    // Die Überschrift und beide Bibliotheken stehen da.
+    expect(find.text('BIBLIOTHEKEN'), findsOneWidget);
+    expect(find.text('Auf diesem Gerät'), findsOneWidget);
+    expect(find.text('Zweite Bibliothek'), findsOneWidget);
+
+    // „Alle Werke" bleibt oben: es gilt über beide hinweg.
+    expect(find.text('Alle Werke'), findsOneWidget);
+
+    // Die Medienart steht nicht mehr flach daneben — sie gehört jetzt in die
+    // Gruppe der Bibliothek, die sie enthält.
+    expect(find.text('Hörbücher'), findsNothing);
+  });
+
+  testWidgets('eine aufgeklappte Bibliothek bleibt aufgeklappt', (
+    tester,
+  ) async {
+    // Der Zustand lag nur im Widget; die mobile Schublade baut die Leiste bei
+    // jedem Öffnen neu, und damit klappte jede Bibliothek jedes Mal wieder zu.
+    await settings.setSourceExpanded('peer-zweite', true);
+    expect(settings.expandedSources, contains('peer-zweite'));
+
+    final wieder = AppSettings.inMemory();
+    await wieder.setSourceExpanded('peer-zweite', true);
+    expect(wieder.expandedSources, contains('peer-zweite'));
+    await wieder.setSourceExpanded('peer-zweite', false);
+    expect(wieder.expandedSources, isEmpty);
   });
 }

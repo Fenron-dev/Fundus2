@@ -89,7 +89,15 @@ void main() {
   }
 
   testWidgets('die Seitenleiste kommt von der Seite herein', (tester) async {
-    await tester.runAsync(() => library.open(root, createIfMissing: true));
+    // Mit Inhalt: leere Medienarten stehen nicht mehr in der Leiste, eine
+    // leere Bibliothek hätte hier also nichts zu zeigen.
+    await tester.runAsync(() async {
+      final book = Directory('${root.path}/Hörbücher/Karl May/Winnetou');
+      await book.create(recursive: true);
+      await File('${book.path}/01 - Kapitel.mp3').writeAsBytes([1, 2, 3]);
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+    });
     await pumpPhone(tester);
 
     // Ohne sie ist auf dem Telefon nichts davon erreichbar.

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/app_navigation.dart';
@@ -673,6 +674,29 @@ class _ShelfBar extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: FundusSpace.x6),
         children: [
+          // „Alle Werke" hat keine Medienart aus der Route und bekam bisher
+          // auch keine zum Anhaken: die Ansicht, in der am meisten steht, war
+          // die einzige ohne dieses Sieb.
+          if (scope.navigation.current case LibraryRoute(
+            mediaTypeId: null,
+          )) ...[
+            _MediaTypeChip(
+              filter: filter,
+              counts: scope.library.worksPerMediaType,
+              onChanged: scope.setFilter,
+            ),
+            const SizedBox(width: FundusSpace.x2),
+          ],
+          if (_selectableSources(scope) case final sources
+              when sources.length > 1) ...[
+            _SourceChip(
+              filter: filter,
+              sources: sources,
+              counts: scope.library.worksPerSource,
+              onChanged: scope.setFilter,
+            ),
+            const SizedBox(width: FundusSpace.x2),
+          ],
           _OriginChip(filter: filter, onChanged: scope.setFilter),
           const SizedBox(width: FundusSpace.x2),
           _LabelChip(
@@ -797,6 +821,146 @@ class _ShelfBar extends StatelessWidget {
 }
 
 /// „Wo liegt es?" — lokal, gestreamt, offline mitgenommen, nicht erreichbar.
+/// Die sichtbaren Quellen, in der Reihenfolge der Bibliothek.
+List<LibrarySource> _selectableSources(FundusScopeState scope) {
+  final counts = scope.library.worksPerSource;
+  return scope.library.sources
+      .where(
+        (source) =>
+            !scope.settings.hiddenSourceIds.contains(source.id) &&
+            (counts[source.id] ?? 0) > 0,
+      )
+      .toList(growable: false);
+}
+
+/// Welche Medienart gezeigt wird, wenn die Ansicht keine vorgibt.
+class _MediaTypeChip extends StatelessWidget {
+  const _MediaTypeChip({
+    required this.filter,
+    required this.counts,
+    required this.onChanged,
+  });
+
+  final WorkFilter filter;
+  final Map<String, int> counts;
+  final void Function(WorkFilter) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final selected = filter.mediaTypeId == null
+        ? null
+        : MediaTypes.byId(filter.mediaTypeId!);
+    // `null` taugt hier nicht als Wert: `PopupMenuButton` wertet ein null
+    // zurückgereichtes Ergebnis als Abbruch und ruft `onSelected` gar nicht
+    // erst auf. „Alles zeigen" wäre damit ein Eintrag, der nichts tut.
+    return PopupMenuButton<String>(
+      tooltip: 'Nach Medienart filtern',
+      position: PopupMenuPosition.under,
+      color: tokens.surface,
+      onSelected: (id) => onChanged(
+        id.isEmpty
+            ? filter.copyWith(clearMediaType: true)
+            : filter.copyWith(mediaTypeId: id),
+      ),
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: '', child: Text('Alle Medienarten')),
+        for (final type in MediaTypes.all)
+          // Leere Arten stehen nicht zur Wahl: ein Filter, der sicher nichts
+          // übriglässt, ist keine Auswahl.
+          if ((counts[type.id] ?? 0) > 0)
+            PopupMenuItem(
+              value: type.id,
+              child: Row(
+                children: [
+                  Icon(type.icon, size: FundusIcons.sizeSm),
+                  const SizedBox(width: FundusSpace.x3),
+                  Expanded(child: Text(type.label)),
+                  Text(
+                    '${counts[type.id]}',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: tokens.textFaint),
+                  ),
+                ],
+              ),
+            ),
+      ],
+      child: FilterChip(
+        selected: selected != null,
+        onSelected: null,
+        avatar: Icon(
+          selected?.icon ?? FundusIcons.viewGrid,
+          size: FundusIcons.sizeSm,
+        ),
+        label: Text(selected?.label ?? 'Medienart'),
+      ),
+    );
+  }
+}
+
+/// Aus welcher Bibliothek gezeigt wird.
+class _SourceChip extends StatelessWidget {
+  const _SourceChip({
+    required this.filter,
+    required this.sources,
+    required this.counts,
+    required this.onChanged,
+  });
+
+  final WorkFilter filter;
+  final List<LibrarySource> sources;
+  final Map<String, int> counts;
+  final void Function(WorkFilter) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final selected = sources
+        .where((source) => source.id == filter.sourceId)
+        .firstOrNull;
+    String name(LibrarySource source) =>
+        source.isVault ? 'Auf diesem Gerät' : source.displayName;
+
+    // Siehe oben: ein null-Ergebnis gilt als Abbruch.
+    return PopupMenuButton<String>(
+      tooltip: 'Nach Bibliothek filtern',
+      position: PopupMenuPosition.under,
+      color: tokens.surface,
+      onSelected: (id) => onChanged(
+        id.isEmpty
+            ? filter.copyWith(clearSource: true)
+            : filter.copyWith(sourceId: id),
+      ),
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: '', child: Text('Alle Bibliotheken')),
+        for (final source in sources)
+          PopupMenuItem(
+            value: source.id,
+            child: Row(
+              children: [
+                Expanded(child: Text(name(source))),
+                const SizedBox(width: FundusSpace.x3),
+                Text(
+                  '${counts[source.id] ?? 0}',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: tokens.textFaint),
+                ),
+              ],
+            ),
+          ),
+      ],
+      child: FilterChip(
+        selected: selected != null,
+        onSelected: null,
+        avatar: Icon(FundusIcons.vault, size: FundusIcons.sizeSm),
+        label: Text(selected == null ? 'Bibliothek' : name(selected)),
+      ),
+    );
+  }
+}
+
 class _OriginChip extends StatelessWidget {
   const _OriginChip({required this.filter, required this.onChanged});
 

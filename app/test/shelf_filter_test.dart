@@ -14,6 +14,20 @@ import 'package:fundus_design/fundus_design.dart';
 ///
 /// Sie gehört zum Regal, nicht zur Kopfzeile — sonst hat das Handy sie
 /// nicht, und dort ist „was liegt offline hier?" die häufigste Frage.
+/// Öffnet das Medienart-Menü.
+///
+/// Über die Schaltfläche, nicht über den Chip: der ist mit `onSelected: null`
+/// abgeschaltet und dient nur als Beschriftung dessen, was gerade gilt.
+Future<void> openMediaTypeMenu(WidgetTester tester) async {
+  // Über den Tooltip, nicht über die Beschriftung: sobald eine Art gewählt
+  // ist, trägt der Chip deren Namen statt „Medienart".
+  await tester.tap(
+    find.byTooltip('Nach Medienart filtern'),
+    warnIfMissed: false,
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   late Directory root;
   late LibraryController library;
@@ -89,9 +103,21 @@ void main() {
     expect(find.text('Herkunft'), findsOneWidget);
     expect(find.text('Genre'), findsOneWidget);
     // Der Rest der Leiste liegt rechts daneben und wird herangeschoben —
-    // eine liegende Liste baut nur, was zu sehen ist.
-    await tester.drag(find.text('Herkunft'), const Offset(-260, 0));
-    await tester.pumpAndSettle();
+    // eine liegende Liste baut nur, was zu sehen ist. Geschoben wird bis der
+    // Eintrag da ist, nicht um eine feste Strecke: die Leiste bekommt mit
+    // jedem neuen Sieb einen Chip mehr, und eine geratene Strecke wird dann
+    // still zu kurz.
+    // Geschoben wird, bis der Eintrag da ist — nicht um eine geratene
+    // Strecke: die Leiste bekommt mit jedem neuen Sieb einen Chip mehr, und
+    // eine feste Strecke wird dann still zu kurz.
+    // Gezogen wird von einer festen Stelle in der Leiste: der Chip, an dem man
+    // anfasst, wandert beim Schieben selbst aus dem Bild.
+    final griff = tester.getCenter(find.text('Herkunft'));
+    for (var tries = 0; tries < 12; tries++) {
+      if (find.text('Favoriten').evaluate().isNotEmpty) break;
+      await tester.dragFrom(griff, const Offset(-120, 0));
+      await tester.pumpAndSettle();
+    }
     expect(find.text('Favoriten'), findsOneWidget);
   });
 
@@ -113,7 +139,7 @@ void main() {
 
     // Der gewählte Filter steht als eigener Chip daneben: ein Tipp darauf
     // nimmt ihn wieder weg. Er liegt rechts, also erst heranschieben.
-    await tester.drag(find.text('Herkunft'), const Offset(-320, 0));
+    await tester.drag(find.text('Herkunft'), const Offset(-480, 0));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(InputChip, 'Shōnen'));
     await tester.pumpAndSettle();
@@ -135,5 +161,49 @@ void main() {
     expect(filter.apply(library.works).map((work) => work.title), [
       'Sonnenlauf',
     ]);
+  });
+
+  testWidgets('„Alle Werke" bekommt einen Medienart-Filter', (tester) async {
+    // Die Ansicht, in der am meisten steht, war die einzige ohne dieses Sieb:
+    // die Medienart ließ sich nur über die Seitenleiste wählen.
+    final scope = await pump(tester, const Size(1440, 900));
+    expect(scope.filter.mediaTypeId, isNull);
+    expect(find.text('Medienart'), findsOneWidget);
+
+    await openMediaTypeMenu(tester);
+    expect(find.text('Alle Medienarten'), findsOneWidget);
+
+    await tester.tap(find.text('Manga & Comics').last);
+    await tester.pumpAndSettle();
+    expect(scope.filter.mediaTypeId, 'manga');
+
+    // Und wieder zurück. Geöffnet wird über die Schaltfläche: der Chip selbst
+    // ist abgeschaltet und dient nur als Beschriftung.
+    await openMediaTypeMenu(tester);
+    await tester.tap(find.text('Alle Medienarten'));
+    await tester.pumpAndSettle();
+    expect(scope.filter.mediaTypeId, isNull);
+  });
+
+  testWidgets('in einem Medienart-Regal steht der Filter nicht', (
+    tester,
+  ) async {
+    // Dort gibt die Route die Art vor; ein Sieb daneben, das sie überschreibt,
+    // wäre zwei Wahrheiten an einer Stelle.
+    final scope = await pump(tester, const Size(1440, 900));
+    scope.openMediaType('manga');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Medienart'), findsNothing);
+    expect(find.text('Herkunft'), findsOneWidget);
+  });
+
+  testWidgets('leere Medienarten stehen nicht zur Wahl', (tester) async {
+    await pump(tester, const Size(1440, 900));
+    await openMediaTypeMenu(tester);
+
+    expect(find.text('Manga & Comics'), findsWidgets);
+    expect(find.text('Hörbücher'), findsNothing);
+    expect(find.text('Serien'), findsNothing);
   });
 }
