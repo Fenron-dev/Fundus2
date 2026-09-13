@@ -133,6 +133,67 @@ void main() {
       },
     );
 
+    test('MAL übernimmt alternative Titel aus Jikans Titelobjekten', () async {
+      final client = FakeHttp(
+        (_) => http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'mal_id': 100,
+                'title': 'Yao Shen Ji',
+                'title_english': 'Tales of Demons and Gods',
+                'title_japanese': '妖神记',
+                'titles': [
+                  {'type': 'English', 'title': 'Tales of Demons and Gods'},
+                  {'type': 'Synonym', 'title': 'TDG'},
+                ],
+                'type': 'Manga',
+                'authors': [
+                  {'name': 'Mad Snail'},
+                ],
+              },
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
+      final results = await MyAnimeListProvider(
+        client: client,
+      ).search('Tales of Demons and Gods');
+      final candidate = results.firstWhere((item) => item.providerId == '100');
+      expect(candidate.title, 'Tales of Demons and Gods');
+      expect(candidate.alternateTitles, contains('Yao Shen Ji'));
+      expect(candidate.alternateTitles, contains('TDG'));
+    });
+
+    test(
+      'MAL behält die Medienart, wenn eine der beiden Suchen ausfällt',
+      () async {
+        final client = FakeHttp((request) {
+          if (request.url.path.endsWith('/anime')) {
+            return http.Response('rate limited', 429);
+          }
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {
+                  'mal_id': 101,
+                  'title': 'Tales of Demons and Gods',
+                  'type': 'Manga',
+                },
+              ],
+            }),
+            200,
+          );
+        });
+        final result = await MyAnimeListProvider(
+          client: client,
+        ).search('Tales');
+        expect(result.single.workKind, 'manga');
+      },
+    );
+
     test('TMDB ohne Schlüssel fragt gar nicht erst', () async {
       final client = FakeHttp((_) => http.Response('{}', 200));
 

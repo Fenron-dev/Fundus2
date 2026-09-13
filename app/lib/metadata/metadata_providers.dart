@@ -719,9 +719,13 @@ final class MyAnimeListProvider implements MetadataProvider {
   }) async {
     final q = query.trim();
     if (q.isEmpty) return const [];
-    final responses = await Future.wait([
-      for (final kind in const ['anime', 'manga'])
-        _request(
+    // Jikan rate-limits anime and manga independently. One 429 or transient
+    // failure must not discard valid results from the other catalogue.
+    final responses = <({String kind, http.Response response})>[];
+    MetadataProviderException? firstFailure;
+    for (final kind in const ['anime', 'manga']) {
+      try {
+        final response = await _request(
           _client.get(
             Uri.https('api.jikan.moe', '/v4/$kind', {
               'q': q,
@@ -730,15 +734,25 @@ final class MyAnimeListProvider implements MetadataProvider {
             }),
             headers: const {'accept': 'application/json'},
           ),
-        ),
-    ]);
+        );
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw const MetadataProviderException(
+            'myanimelist',
+            'Der Dienst hat mit einem Fehler geantwortet.',
+          );
+        }
+        responses.add((kind: kind, response: response));
+      } on MetadataProviderException catch (error) {
+        firstFailure ??= error;
+      }
+    }
+    if (responses.isEmpty && firstFailure != null) throw firstFailure;
     return [
-      for (var index = 0; index < responses.length; index++)
-        if (_decodeObject(responses[index], provider)['data']
+      for (final entry in responses)
+        if (_decodeObject(entry.response, provider)['data']
             case final List data)
           for (final item in data)
-            if (item is Map)
-              ?_candidate(item, kind: index == 0 ? 'anime' : 'manga'),
+            if (item is Map) ?_candidate(item, kind: entry.kind, query: q),
     ];
   }
 
@@ -754,13 +768,27 @@ final class MyAnimeListProvider implements MetadataProvider {
     }
   }
 
-  MetadataCandidate? _candidate(Map value, {required String kind}) {
+  MetadataCandidate? _candidate(
+    Map value, {
+    required String kind,
+    String? query,
+  }) {
     final id = value['mal_id'];
-    final title = _firstString([
+    final titleOptions = [
       value['title'],
       value['title_english'],
       value['title_japanese'],
-    ]);
+    ];
+    final normalizedQuery = query?.trim().toLowerCase();
+    final title = normalizedQuery == null || normalizedQuery.isEmpty
+        ? _firstString(titleOptions)
+        : _firstString([
+            for (final option in titleOptions)
+              if (option is String &&
+                  option.toLowerCase().contains(normalizedQuery))
+                option,
+            ...titleOptions,
+          ]);
     if (id is! num || title == null) return null;
     final type = '${value['type'] ?? ''}'.toLowerCase();
     final images = value['images'];
@@ -775,11 +803,15 @@ final class MyAnimeListProvider implements MetadataProvider {
         : null;
     final titles = <String>{
       for (final raw in [
+        value['title'],
         value['title_english'],
         value['title_japanese'],
         ...(value['titles'] is List ? value['titles'] as List : const []),
       ])
-        if (raw is String && raw.trim().isNotEmpty) raw.trim(),
+        if (raw is String && raw.trim().isNotEmpty)
+          raw.trim()
+        else if (raw is Map && raw['title'] is String)
+          (raw['title'] as String).trim(),
     }..remove(title);
     final genres = <String>[
       for (final raw in [

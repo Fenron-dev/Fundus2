@@ -5,7 +5,7 @@ import 'package:fundus/data/work_view.dart';
 import 'package:fundus/media/playback_controller.dart';
 import 'package:fundus_core/fundus_core.dart';
 
-import 'playback_controller_test.dart' show FakeEngine;
+import 'playback_controller_test.dart' show FakeEngine, waitForPlayback;
 
 /// Wiedergabe, die abreißt, fängt von selbst wieder an — und „abspielen"
 /// heißt immer, dass etwas spielt.
@@ -56,8 +56,15 @@ void main() {
     expect(engine.opened, hasLength(1));
 
     // mpv meldet ein Ende, das keines sein kann: 38 Minuten fehlen.
+    engine.emitPlaying(false);
     engine.emitCompleted();
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await waitForPlayback(
+      player,
+      () =>
+          engine.opened.length == 2 &&
+          player.isPlaying &&
+          !player.isLoadingTrack,
+    );
 
     expect(engine.opened, hasLength(2));
     expect(engine.starts.last, const Duration(minutes: 12));
@@ -72,7 +79,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     engine.emitCompleted();
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await waitForPlayback(player, () => player.hasStopped);
 
     expect(engine.opened, hasLength(1));
     expect(player.hasStopped, isTrue);
@@ -85,7 +92,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     engine.emitCompleted();
     engine.emitPlaying(false);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await waitForPlayback(player, () => player.hasStopped && !player.isPlaying);
     expect(player.isPlaying, isFalse);
 
     // Der Druck, der vorher ins Leere ging.
@@ -118,8 +125,13 @@ void main() {
     engine.emitPosition(const Duration(minutes: 4));
     await Future<void>.delayed(Duration.zero);
 
+    engine.emitPlaying(false);
     engine.emitCompleted();
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await waitForPlayback(
+      player,
+      () =>
+          player.trackIndex == 1 && player.isPlaying && !player.isLoadingTrack,
+    );
 
     expect(player.trackIndex, 1);
     expect(player.currentSource?.title, contains('02'));
@@ -141,8 +153,10 @@ void main() {
       final bytes = await second.readAsBytes();
       await second.delete();
       engine.emitCompleted();
-      // Gefragt wird zweimal, mit einer Pause dazwischen.
-      await Future<void>.delayed(const Duration(seconds: 2));
+      await waitForPlayback(
+        player,
+        () => player.failure != null && !player.isLoadingTrack,
+      );
 
       expect(player.failure, contains('nicht erreichbar'));
       expect(player.trackIndex, 1);

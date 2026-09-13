@@ -12,6 +12,19 @@ import 'package:fundus_core/fundus_core.dart';
 
 /// A stand-in for libmpv: it records what the controller asked for and lets a
 /// test push positions back, which is exactly the surface the rules need.
+Future<void> waitForPlayback(PlaybackController player, bool Function() ready) {
+  if (ready()) return Future.value();
+  final completed = Completer<void>();
+  void changed() {
+    if (ready() && !completed.isCompleted) completed.complete();
+  }
+
+  player.addListener(changed);
+  return completed.future.timeout(const Duration(seconds: 5)).whenComplete(() {
+    player.removeListener(changed);
+  });
+}
+
 final class FakeEngine implements PlaybackEngine {
   final _position = StreamController<Duration>.broadcast();
   final _duration = StreamController<Duration>.broadcast();

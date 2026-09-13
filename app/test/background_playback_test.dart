@@ -7,7 +7,7 @@ import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/media/background_playback.dart';
 import 'package:fundus/media/playback_controller.dart';
 
-import 'playback_controller_test.dart' show FakeEngine;
+import 'playback_controller_test.dart' show FakeEngine, waitForPlayback;
 
 /// The media session mirrors the player. It is the only thing that keeps an
 /// audiobook alive once the window is gone, so what it publishes has to be
@@ -92,7 +92,7 @@ void main() {
     await player.playOrPause();
     // Der Zustand kommt aus dem Strom der Engine, nicht aus dem Knopf.
     engine.emitPlaying(false);
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await waitForPlayback(player, () => !player.isPlaying);
 
     expect(handler.playbackState.value.playing, isFalse);
   });
@@ -105,10 +105,14 @@ void main() {
       await player.open(library.library!, library.works.first);
       for (var track = 1; track <= 2; track++) {
         final loading = Completer<void>();
-        engine.onOpen = () => loading.future;
+        final entered = Completer<void>();
+        engine.onOpen = () {
+          entered.complete();
+          return loading.future;
+        };
         engine.emitPlaying(false); // Native EOF precedes the next file opening.
         engine.emitCompleted();
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await entered.future.timeout(const Duration(seconds: 5));
         expect(player.trackIndex, track);
         expect(handler.playbackState.value.playing, isTrue);
         expect(
@@ -116,12 +120,15 @@ void main() {
           AudioProcessingState.buffering,
         );
         loading.complete();
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await waitForPlayback(
+          player,
+          () => !player.isLoadingTrack && player.isPlaying,
+        );
         expect(engine.playing, isTrue);
       }
       engine.emitPlaying(false);
       engine.emitCompleted();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await waitForPlayback(player, () => player.hasStopped);
       expect(
         handler.playbackState.value.playing,
         isFalse,
@@ -137,13 +144,17 @@ void main() {
       await library.scan();
       await player.open(library.library!, library.works.first);
       final loading = Completer<void>();
-      engine.onOpen = () => loading.future;
+      final entered = Completer<void>();
+      engine.onOpen = () {
+        entered.complete();
+        return loading.future;
+      };
       engine.emitPlaying(false);
       engine.emitCompleted();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await entered.future.timeout(const Duration(seconds: 5));
       await player.pause(); // Same entry point as the native focus callback.
       loading.complete();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await waitForPlayback(player, () => !player.isLoadingTrack);
       expect(engine.playing, isFalse);
       expect(handler.playbackState.value.playing, isFalse);
     },
@@ -167,6 +178,51 @@ void main() {
     expect(released, 1);
     expect(engine.playing, isFalse);
   });
+
+  test(
+    'Schließen während des Nachladens startet die alte Datei nicht wieder',
+    () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+      final entered = Completer<void>();
+      final loading = Completer<void>();
+      engine.onOpen = () {
+        entered.complete();
+        return loading.future;
+      };
+      final changing = player.next();
+      await entered.future;
+      await player.close();
+      loading.complete();
+      await changing;
+      expect(engine.playing, isFalse);
+      expect(player.work, isNull);
+      expect(player.isLoadingTrack, isFalse);
+    },
+  );
+
+  test(
+    'Freigeben während des Nachladens erzeugt keinen späten Callback',
+    () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await player.open(library.library!, library.works.first);
+      final entered = Completer<void>();
+      final loading = Completer<void>();
+      engine.onOpen = () {
+        entered.complete();
+        return loading.future;
+      };
+      final changing = player.next();
+      await entered.future;
+      player.dispose();
+      loading.complete();
+      await changing; // Must not notify a disposed ChangeNotifier or play again.
+      expect(engine.disposed, isTrue);
+      expect(player.isPlaybackRequested, isFalse);
+    },
+  );
 
   test(
     'Pause während der Fokusabfrage wird nicht von spätem Erfolg überholt',

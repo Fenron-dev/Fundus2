@@ -116,6 +116,13 @@ class PlaybackController extends ChangeNotifier {
   bool _playbackRequested = false;
   bool _loadingTrack = false;
   int _pauseEpoch = 0;
+  int _loadEpoch = 0;
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
 
   /// Remains true through engine EOF/open gaps, until pause, stop or queue end.
   /// Android must not drop its foreground service/wake lock at every track.
@@ -139,6 +146,7 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> _play() async {
+    if (_disposed) return;
     final epoch = _pauseEpoch;
     bool granted;
     try {
@@ -571,6 +579,7 @@ class PlaybackController extends ChangeNotifier {
   /// Werk. Die Reihenfolge ist der Punkt — den Stand des alten Werks unter
   /// dem neuen Namen zu speichern wäre schlimmer als ihn zu verlieren.
   Future<void> _stopWhatIsPlaying() async {
+    _loadEpoch++;
     if (_work == null && _sources.isEmpty) return;
     _endPlaybackRequest();
     saveProgress(checkpoint: true);
@@ -615,20 +624,26 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> _openCurrent({Duration at = Duration.zero}) async {
+    if (_disposed) return;
+    final epoch = ++_loadEpoch;
     _loadingTrack = true;
     notifyListeners();
     try {
-      await _loadCurrent(at: at);
+      await _loadCurrent(epoch, at: at);
     } on Object {
+      if (_disposed || epoch != _loadEpoch) return;
       _endPlaybackRequest();
       rethrow;
     } finally {
-      _loadingTrack = false;
-      notifyListeners();
+      if (!_disposed && epoch == _loadEpoch) {
+        _loadingTrack = false;
+        notifyListeners();
+      }
     }
   }
 
-  Future<void> _loadCurrent({Duration at = Duration.zero}) async {
+  Future<void> _loadCurrent(int epoch, {Duration at = Duration.zero}) async {
+    bool cancelled() => _disposed || epoch != _loadEpoch;
     final source = currentSource;
     if (source == null) return;
     // Wechselt die Zeile das Werk, gehört der bisherige Stand noch dem alten
@@ -637,8 +652,11 @@ class PlaybackController extends ChangeNotifier {
     if (owner != null && owner.id != _work?.id) {
       saveProgress();
       _work = owner;
-      _chapters = await _library?.playbackChapters(owner.id) ?? const [];
+      final chapters = await _library?.playbackChapters(owner.id) ?? const [];
+      if (cancelled()) return;
+      _chapters = chapters;
     }
+    if (cancelled()) return;
     // The tracks belong to the file, not to the work: a new file starts
     // without a menu until the engine has said what it holds — and the
     // remembered language is applied again, because the next file numbers
@@ -655,6 +673,7 @@ class PlaybackController extends ChangeNotifier {
     _position = at;
     final reach = Stopwatch()..start();
     final reachable = await _reach(source);
+    if (cancelled()) return;
     if (reach.elapsedMilliseconds > 200) {
       FundusLog.instance.write(LogLevel.warn, 'player.reachable.slow', {
         'file': source.title,
@@ -677,9 +696,11 @@ class PlaybackController extends ChangeNotifier {
       'origin': source.origin.name,
     });
     final uri = await source.resolve();
+    if (cancelled()) return;
     span.step('resolved');
     await _engine.open(uri, start: at);
     span.done();
+    if (cancelled()) return;
     _ended = false;
     _startSaveTimer();
     // After playback has started, never before it: reading the chapters means
@@ -711,7 +732,7 @@ class PlaybackController extends ChangeNotifier {
     if (!(work.mediaType?.hasChapterImages ?? false)) return;
     try {
       final chapters = await library.trackChapters(work.id, fileId);
-      if (currentSource?.fileId != fileId) return;
+      if (_disposed || currentSource?.fileId != fileId) return;
       _trackChapters = chapters;
       notifyListeners();
     } on Object catch (failure) {
@@ -963,7 +984,7 @@ class PlaybackController extends ChangeNotifier {
           'at': _position.inSeconds,
           'try': _resumeTries,
         });
-        unawaited(pickUpAgain());
+        unawaited(_resumeAfterBreak());
         return;
       }
       // Zweimal abgerissen ist kein Zufall mehr. Angehalten wird gesagt, und
@@ -1017,6 +1038,20 @@ class PlaybackController extends ChangeNotifier {
     final left = total - _position;
     return left > const Duration(seconds: 30) &&
         left.inMilliseconds * 20 > total.inMilliseconds;
+  }
+
+  Future<void> _resumeAfterBreak() async {
+    try {
+      await pickUpAgain();
+    } on Object catch (error) {
+      if (_disposed) return;
+      _endPlaybackRequest();
+      _ended = true;
+      _failure =
+          'Die Wiedergabe konnte nach dem Abbruch nicht fortgesetzt werden.';
+      FundusLog.instance.warn('player.resume.failed', {'error': '$error'});
+      notifyListeners();
+    }
   }
 
   Timer? _nextTick;
@@ -1141,6 +1176,8 @@ class PlaybackController extends ChangeNotifier {
   }
 
   Future<void> close() async {
+    _loadEpoch++;
+    _loadingTrack = false;
     saveProgress();
     await pause();
     await _engineOrNull?.stop();
@@ -1237,7 +1274,10 @@ class PlaybackController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
     saveProgress(checkpoint: true);
+    _disposed = true;
+    _loadEpoch++;
     _endPlaybackRequest();
     _saveTimer?.cancel();
     _sleepTimer?.cancel();

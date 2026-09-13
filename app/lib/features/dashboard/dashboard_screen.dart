@@ -253,6 +253,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
+enum _UnlockMethod { biometric, pin }
+
 /// The big picks at the top of the start screen.
 class _Spotlights extends StatelessWidget {
   const _Spotlights({
@@ -413,23 +415,15 @@ class _Greeting extends StatelessWidget {
       protection.lock();
       return;
     }
+    var biometricSupported = false;
     try {
-      final supported = await LocalAuthentication().isDeviceSupported();
-      if (supported) {
-        final authenticated = await LocalAuthentication().authenticate(
-          localizedReason: 'Geschützte Werke für diese Sitzung entsperren',
-          persistAcrossBackgrounding: true,
-        );
-        if (authenticated) protection.unlockAuthenticatedSession();
-        return;
-      }
+      biometricSupported = await LocalAuthentication().isDeviceSupported();
     } on Object {
-      // Some devices have no configured platform credential. Fundus's own
-      // PIN remains a useful fallback instead of turning the quick lock into
-      // a dead button.
+      // Some devices have no configured platform credential. The PIN remains
+      // available and the quick lock still has a visible cancel path.
     }
     if (!context.mounted) return;
-    if (!protection.hasPin) {
+    if (!biometricSupported && !protection.hasPin) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -437,6 +431,47 @@ class _Greeting extends StatelessWidget {
           ),
         ),
       );
+      return;
+    }
+    final method = await showDialog<_UnlockMethod>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Schutz entsperren'),
+        content: const Text(
+          'Geschützte Werke werden nur für diese Sitzung eingeblendet.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Abbrechen'),
+          ),
+          if (protection.hasPin)
+            OutlinedButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_UnlockMethod.pin),
+              child: const Text('PIN'),
+            ),
+          if (biometricSupported)
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_UnlockMethod.biometric),
+              child: const Text('Biometrie'),
+            ),
+        ],
+      ),
+    );
+    if (!context.mounted || method == null) return;
+    if (method == _UnlockMethod.biometric) {
+      try {
+        final authenticated = await LocalAuthentication().authenticate(
+          localizedReason: 'Geschützte Werke für diese Sitzung entsperren',
+          persistAcrossBackgrounding: true,
+        );
+        if (authenticated) protection.unlockAuthenticatedSession();
+      } on Object {
+        // Cancellation and platform errors leave the shelf locked. The next
+        // tap opens the same dialog again, with no dead-end native prompt.
+      }
       return;
     }
     final controller = TextEditingController();

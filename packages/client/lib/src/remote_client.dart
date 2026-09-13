@@ -623,16 +623,28 @@ final class FundusRemoteClient {
     String path, {
     Map<String, String> query = const {},
   }) async {
-    final http.Response response;
     final uri = query.isEmpty
         ? baseUri.resolve(path)
         : baseUri.resolve(path).replace(queryParameters: query);
-    try {
-      response = await _http.get(uri, headers: _headers).timeout(timeout);
-    } on Object catch (error) {
-      throw _unreachable(error);
+    // A sleeping network share or a just-woken server can answer one request
+    // with 5xx while recovering. GETs are safe to repeat and a short bounded
+    // retry avoids forcing the user to restart the app or re-pair the device.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final http.Response response;
+      try {
+        response = await _http.get(uri, headers: _headers).timeout(timeout);
+      } on Object catch (error) {
+        if (attempt == 2) throw _unreachable(error);
+        await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+        continue;
+      }
+      if (response.statusCode >= 500 && attempt < 2) {
+        await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+        continue;
+      }
+      return _decode(response);
     }
-    return _decode(response);
+    throw const FundusRemoteException('Die Gegenstelle antwortet nicht.');
   }
 
   Future<Map<String, Object?>> _put(

@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -73,6 +76,10 @@ class _MetadataEditorState extends State<_MetadataEditor> {
   bool _wholeSeries = false;
   late String _kind = widget.work.summary.kind;
   late bool _hhh = widget.work.summary.isHhh;
+  Uint8List? _coverBytes;
+  String _coverExtension = 'jpg';
+  Uint8List? _backdropBytes;
+  String _backdropExtension = 'jpg';
   bool _saving = false;
   String? _error;
 
@@ -91,6 +98,27 @@ class _MetadataEditorState extends State<_MetadataEditor> {
       .map((value) => value.trim())
       .where((value) => value.isNotEmpty)
       .toList(growable: false);
+
+  Future<void> _pickImage({required bool backdrop}) async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+      allowMultiple: false,
+    );
+    if (!mounted || result == null || result.files.single.bytes == null) return;
+    final file = result.files.single;
+    final rawExtension = (file.extension ?? 'jpg').toLowerCase();
+    final extension = rawExtension == 'png' ? 'png' : 'jpg';
+    setState(() {
+      if (backdrop) {
+        _backdropBytes = file.bytes;
+        _backdropExtension = extension;
+      } else {
+        _coverBytes = file.bytes;
+        _coverExtension = extension;
+      }
+    });
+  }
 
   Future<void> _save() async {
     final authors = _list('authors');
@@ -124,6 +152,20 @@ class _MetadataEditorState extends State<_MetadataEditor> {
         kind: _kind,
         contentSensitivity: _hhh ? 'adult_explicit' : 'general',
       );
+      if (_coverBytes != null) {
+        await widget.library.cacheGeneratedCover(
+          workId: widget.work.id,
+          bytes: _coverBytes!,
+          extension: _coverExtension,
+        );
+      }
+      if (_backdropBytes != null) {
+        await widget.library.cacheBackdrop(
+          workId: widget.work.id,
+          bytes: _backdropBytes!,
+          extension: _backdropExtension,
+        );
+      }
       // „Für alle Bände" schreibt nur, was eine Reihe gemeinsam hat. Ein
       // Band, der dabei nicht angenommen wird, hält den Rest nicht auf.
       if (_wholeSeries) {
@@ -236,6 +278,18 @@ class _MetadataEditorState extends State<_MetadataEditor> {
                 controller: _fields['description']!,
                 lines: 5,
               ),
+              _ImagePickerTile(
+                label: 'Cover',
+                currentPath: widget.work.summary.coverPath,
+                replacement: _coverBytes,
+                onPressed: _saving ? null : () => _pickImage(backdrop: false),
+              ),
+              _ImagePickerTile(
+                label: 'Hintergrundbild / Fanart',
+                currentPath: widget.work.summary.backdropPath,
+                replacement: _backdropBytes,
+                onPressed: _saving ? null : () => _pickImage(backdrop: true),
+              ),
               DropdownButtonFormField<String>(
                 initialValue: _kind,
                 decoration: const InputDecoration(
@@ -340,6 +394,62 @@ class _Field extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _ImagePickerTile extends StatelessWidget {
+  const _ImagePickerTile({
+    required this.label,
+    required this.currentPath,
+    required this.replacement,
+    required this.onPressed,
+  });
+
+  final String label;
+  final String? currentPath;
+  final Uint8List? replacement;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasImage = replacement != null || currentPath != null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: FundusSpace.x3),
+      child: Row(
+        children: [
+          if (replacement != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.memory(
+                replacement!,
+                width: 48,
+                height: 48,
+                fit: BoxFit.cover,
+              ),
+            )
+          else
+            Icon(
+              hasImage
+                  ? Icons.image_outlined
+                  : Icons.image_not_supported_outlined,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          const SizedBox(width: FundusSpace.x2),
+          Expanded(
+            child: Text(
+              hasImage ? '$label · vorhanden' : '$label · kein Bild',
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: onPressed,
+            icon: const Icon(Icons.upload_file_outlined),
+            label: const Text('Bild wählen'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// The other volumes of the same series.
