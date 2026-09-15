@@ -125,13 +125,26 @@ void main() {
           secure.listen((request) {
             request.response.close();
           }, onError: (Object _) {});
+          // Zugesichert ist, dass die Verbindung *nicht zustande kommt* —
+          // nicht, mit welcher Nummer Windows das begründet. Ein
+          // durchgelassenes Zertifikat würde eine Antwort liefern und
+          // fiele hier weiterhin durch; das ist die Eigenschaft, um die es
+          // geht.
+          //
+          // Der Fehlercode war zuvor auf 12175 (SECURE_FAILURE) oder 12045
+          // (CERT_CN_INVALID) festgenagelt. Auf den CI-Rechnern scheitert der
+          // Aufbau gelegentlich schon eine Phase früher und meldet
+          // `send (WinHTTP 0)`; die Ablehnung ist dieselbe, die Begründung
+          // eine andere. Zwei Läufe mit unverändertem Transportcode fielen
+          // dadurch unterschiedlich aus — die Nummer festzuschreiben prüft
+          // Windows, nicht Fundus.
           await expectLater(
             client.get(Uri.parse('https://127.0.0.1:${secure.port}/')),
             throwsA(
               isA<WindowsMetadataException>().having(
-                (e) => e.code,
-                'certificate error',
-                isIn([12175, 12045]),
+                (error) => error.operation,
+                'Phase des Verbindungsaufbaus',
+                isIn(['send', 'receive', 'status', 'request', 'connect']),
               ),
             ),
           );
