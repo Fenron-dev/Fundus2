@@ -936,6 +936,115 @@ void main() {
       );
     },
   );
+
+  test(
+    'eine geschlossene Bibliothek meldet sich als nicht verfügbar',
+    () async {
+      // Vorher: jede Anfrage flog, wurde zu einem blanken 500 verschluckt, und
+      // im Protokoll stand nichts über die Ursache. Genau das ist der Fehler,
+      // den ein Telefon am Morgen nach einer Nacht am Server sieht.
+      final events = <FundusServerRequestEvent>[];
+      final unusable = <String>[];
+      final registry = FundusLibraryRegistry()
+        ..register(firstLibrary, name: 'Hörbücher');
+      final handler = FundusServerHandler(
+        token: 'secret',
+        serverId: 'server-test',
+        registry: registry,
+        requestObserver: events.add,
+        onLibraryUnusable: unusable.add,
+      );
+
+      firstLibrary.close();
+
+      final response = await handler.handler(
+        Request(
+          'GET',
+          Uri.parse(
+            'http://localhost/v1/libraries/'
+            '${firstLibrary.manifest.libraryId}/works',
+          ),
+          headers: {'authorization': 'Bearer secret'},
+        ),
+      );
+
+      expect(
+        response.statusCode,
+        503,
+        reason: '„später nochmal", nicht „kaputt"',
+      );
+      expect((await _json(response))['error'], 'library_unavailable');
+      expect(unusable, [
+        firstLibrary.manifest.libraryId,
+      ], reason: 'wer sie hält, soll sie wieder öffnen können');
+      expect(
+        events.single.failure,
+        isNotNull,
+        reason: 'die Ursache steht im Log',
+      );
+      expect(events.single.libraryId, firstLibrary.manifest.libraryId);
+    },
+  );
+
+  test('health sagt nicht ok, wenn keine Bibliothek antwortet', () async {
+    // „ok" hieß hier nur, dass der Steckplatz besetzt ist. Der Heartbeat blieb
+    // grün, während jede echte Anfrage scheiterte — das Gerät meldete sich
+    // verbunden, und nichts davon stimmte.
+    final registry = FundusLibraryRegistry()
+      ..register(firstLibrary, name: 'Hörbücher');
+    final handler = FundusServerHandler(
+      token: 'secret',
+      serverId: 'server-test',
+      registry: registry,
+    );
+
+    final gesund = await handler.handler(
+      Request('GET', Uri.parse('http://localhost/health')),
+    );
+    expect(gesund.statusCode, 200);
+    expect((await _json(gesund))['status'], 'ok');
+
+    firstLibrary.close();
+
+    final krank = await handler.handler(
+      Request('GET', Uri.parse('http://localhost/health')),
+    );
+    expect(krank.statusCode, 503);
+    // Einmal lesen, dann prüfen: der Körper einer shelf-Antwort ist ein Strom.
+    final gelesen = await _json(krank);
+    expect(gelesen['status'], 'unavailable');
+    expect(gelesen['libraries_usable'], 0);
+  });
+
+  test('eine lebende Bibliothek wird nicht als tot gemeldet', () async {
+    // Nicht jeder Fehlschlag ist eine tote Bibliothek. Eine fehlerhafte
+    // Anfrage an eine gesunde Bibliothek darf nicht als „versuch es später"
+    // ausgegeben werden — das verdeckt sie, und der Host würde vergeblich
+    // eine Bibliothek neu öffnen, der nichts fehlt.
+    final unusable = <String>[];
+    final handler = FundusServerHandler(
+      token: 'secret',
+      serverId: 'server-test',
+      registry: registry,
+      onLibraryUnusable: unusable.add,
+    );
+    final response = await handler.handler(
+      Request(
+        'PUT',
+        Uri.parse(
+          'http://localhost/v1/libraries/'
+          '${firstLibrary.manifest.libraryId}/progress/${work.id}',
+        ),
+        headers: {
+          'authorization': 'Bearer secret',
+          'content-type': 'application/json',
+        },
+        body: 'kein json',
+      ),
+    );
+    expect(response.statusCode, isNot(503));
+    expect(unusable, isEmpty);
+  });
 }
 
 Future<FundusLibrary> _library(

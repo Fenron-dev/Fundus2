@@ -804,10 +804,18 @@ final class MyAnimeListApiProvider implements MetadataProvider {
   final bool includeAdult;
 
   static const _endpoint = 'api.myanimelist.net';
-  static const _fields =
+
+  /// Was beide Bestände kennen.
+  static const _sharedFields =
       'id,title,alternative_titles,main_picture,start_date,synopsis,genres,'
-      'media_type,status,num_episodes,num_volumes,num_chapters,authors{first_name,last_name},'
-      'studios,nsfw';
+      'media_type,status,nsfw';
+
+  /// Anime und Manga haben getrennte Feldnamen, und die Schnittstelle weist
+  /// eine Anfrage zurück, die Felder des jeweils anderen Bestands nennt.
+  /// Eine gemeinsame Liste hätte deshalb beide Abfragen scheitern lassen.
+  static String _fieldsFor(String kind) => kind == 'anime'
+      ? '$_sharedFields,num_episodes,studios'
+      : '$_sharedFields,num_volumes,num_chapters,authors{first_name,last_name}';
 
   @override
   String get provider => 'myanimelist';
@@ -843,7 +851,7 @@ final class MyAnimeListApiProvider implements MetadataProvider {
             Uri.https(_endpoint, '/v2/$kind', {
               'q': q,
               'limit': '${limit.clamp(1, 100)}',
-              'fields': _fields,
+              'fields': _fieldsFor(kind),
               if (includeAdult) 'nsfw': 'true',
             }),
             headers: {

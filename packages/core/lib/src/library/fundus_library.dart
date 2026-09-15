@@ -2174,6 +2174,9 @@ final class FundusLibrary {
     }
   }
 
+  /// Ob der Katalog dieser Bibliothek noch antwortet.
+  bool get isUsable => _database.isUsable;
+
   void close() => _database.close();
 
   void _ensureWritable() {

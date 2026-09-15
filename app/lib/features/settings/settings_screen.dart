@@ -13,6 +13,7 @@ import 'package:fundus_design/fundus_design.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/app_navigation.dart';
+import '../../app/app_settings.dart';
 import '../../app/fundus_log.dart';
 import '../../app/fundus_scope.dart';
 import '../../app/pairing_scanner.dart';
@@ -20,6 +21,7 @@ import '../../data/library_controller.dart';
 import '../../data/media_type.dart';
 import '../../data/peer_connection.dart';
 import '../../media/comic_layout.dart';
+import '../../metadata/metadata_providers.dart';
 import '../../data/protection.dart';
 import '../../data/work_filter.dart';
 import '../../data/server_host.dart';
@@ -51,6 +53,7 @@ class SettingsScreen extends StatelessWidget {
       'suche' => const _Search(),
       'wartung' => const MaintenancePage(),
       'bibliotheken' => const _Libraries(),
+      'metadaten' => const _Metadata(),
       'synchronisation' => const _Sync(),
       'schutz' => const _Protection(),
       'diagnose' => const _Diagnostics(),
@@ -1418,6 +1421,181 @@ class _Playback extends StatelessWidget {
 /// and whether this session is unlocked. The first is a setting; the second
 /// happens once and lapses when the app closes, because a lock that stays
 /// open is a decoration.
+/// Wo die Zugangsdaten der Metadatendienste stehen.
+///
+/// Bisher gab es sie nur im Abgleich-Dialog eines einzelnen Werks, und auch
+/// dort erst, nachdem man den richtigen Dienst ausgewählt hatte. Wer einen
+/// Schlüssel hinterlegen wollte, suchte ihn in den Einstellungen — und fand
+/// nichts. Ein Zugangsdatum gehört dorthin, wo man es sucht.
+class _Metadata extends StatefulWidget {
+  const _Metadata();
+
+  @override
+  State<_Metadata> createState() => _MetadataState();
+}
+
+class _MetadataState extends State<_Metadata> {
+  /// Ein Feld je Zugangsdatum, nicht je Dienst: die beiden
+  /// MyAnimeList-Einträge teilen sich eine Client-ID.
+  static const _keys = ['tmdb', 'mal', 'hardcover'];
+
+  final Map<String, TextEditingController> _controllers = {};
+  final Set<String> _revealed = {};
+  String? _saved;
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  TextEditingController _controllerFor(String key, AppSettings settings) =>
+      _controllers.putIfAbsent(
+        key,
+        () => TextEditingController(text: settings.credentialFor(key)),
+      );
+
+  /// Der Dienst, dessen Beschriftung und Bezugsquelle für dieses Zugangsdatum
+  /// gelten — die Angaben stehen am Provider, damit sie nicht doppelt gepflegt
+  /// werden müssen.
+  MetadataProviderKind _kindFor(String key) => MetadataProviderKind.values
+      .firstWhere((kind) => kind.credentialKey == key);
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final settings = scope.settings;
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    return SettingsPage(
+      title: 'Metadaten & Quellen',
+      subtitle:
+          'Zugangsdaten gelten für dieses Gerät. Sie liegen im geschützten '
+          'Speicher des Systems und niemals in einer Bibliothek — ein '
+          'Bibliotheksordner wird geteilt, ein Schlüssel nicht.',
+      children: [
+        for (final key in _keys)
+          SettingsCard(
+            child: Builder(
+              builder: (context) {
+                final kind = _kindFor(key);
+                final controller = _controllerFor(key, settings);
+                final stored = settings.credentialFor(key);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            kind.credentialLabel!,
+                            style: theme.textTheme.titleMedium,
+                          ),
+                        ),
+                        if (stored.isNotEmpty)
+                          const FundusTag('hinterlegt')
+                        else
+                          const FundusTag('fehlt'),
+                      ],
+                    ),
+                    const SizedBox(height: FundusSpace.x1),
+                    Text(
+                      'Kostenlos zu bekommen bei ${kind.credentialSource}.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: tokens.textFaint,
+                      ),
+                    ),
+                    const SizedBox(height: FundusSpace.x3),
+                    TextField(
+                      controller: controller,
+                      obscureText: !_revealed.contains(key),
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      decoration: InputDecoration(
+                        labelText: kind.credentialLabel,
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          tooltip: _revealed.contains(key)
+                              ? 'Verbergen'
+                              : 'Anzeigen',
+                          icon: Icon(
+                            _revealed.contains(key)
+                                ? FundusIcons.protected
+                                : FundusIcons.search,
+                            size: FundusIcons.sizeMd,
+                          ),
+                          onPressed: () => setState(() {
+                            if (!_revealed.add(key)) _revealed.remove(key);
+                          }),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: FundusSpace.x3),
+                    Row(
+                      children: [
+                        FilledButton(
+                          onPressed: () async {
+                            await settings.setCredential(
+                              key,
+                              controller.text.trim(),
+                            );
+                            if (!context.mounted) return;
+                            setState(() => _saved = key);
+                          },
+                          child: const Text('Speichern'),
+                        ),
+                        const SizedBox(width: FundusSpace.x3),
+                        if (stored.isNotEmpty)
+                          TextButton(
+                            onPressed: () async {
+                              controller.clear();
+                              await settings.setCredential(key, '');
+                              if (!context.mounted) return;
+                              setState(() => _saved = null);
+                            },
+                            child: const Text('Entfernen'),
+                          ),
+                        const Spacer(),
+                        if (_saved == key)
+                          Text(
+                            'Gespeichert',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: tokens.textFaint,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        SettingsCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Ohne Zugangsdaten', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'AniList, MangaDex, Open Library, Audible und Apple Podcasts '
+                'brauchen nichts davon. MangaDex führt zu vielen Werken die '
+                'AniList- und MyAnimeList-Kennung gleich mit, womit ein '
+                'Abgleich auch ohne Schlüssel bei der richtigen Stelle landet.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _Protection extends StatefulWidget {
   const _Protection();
 

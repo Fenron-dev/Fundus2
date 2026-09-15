@@ -51,6 +51,12 @@ abstract final class SettingsAreas {
       description: 'Ordner, Medienarten und was noch nicht zugeordnet ist.',
     ),
     SettingsArea(
+      key: 'metadaten',
+      label: 'Metadaten & Quellen',
+      icon: FundusIcons.search,
+      description: 'Zugangsdaten für TMDB, MyAnimeList und Hardcover.',
+    ),
+    SettingsArea(
       key: 'suche',
       label: 'Suche & Filter',
       icon: FundusIcons.search,

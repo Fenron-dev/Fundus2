@@ -92,6 +92,7 @@ class ServerHostController extends ChangeNotifier {
   Uri? _address;
   List<ServerLibraryStatus> _libraries = const [];
   bool _followingActiveLibrary = false;
+  final Set<String> _reopening = <String>{};
 
   ServerHostState get state => _state;
   bool get isRunning => _state == ServerHostState.running;
@@ -213,6 +214,7 @@ class ServerHostController extends ChangeNotifier {
         // Was das andere Gerät gefragt hat und was es bekam — ohne diese
         // Zeilen ist „bei mir ist nichts erreichbar" nicht nachvollziehbar.
         requestObserver: _logRequest,
+        onLibraryUnusable: _reopenLibrary,
       );
       _socket = await _listen(handler, identity);
       _addresses = await _networkAddresses(_socket!.port);
@@ -624,9 +626,77 @@ class ServerHostController extends ChangeNotifier {
         'method': event.method,
         'was': event.resource,
         'antwort': event.statusCode,
+        if (event.libraryId != null) 'bibliothek': event.libraryId,
+        // Ohne diese Zeile war ein 500 nur zu bemerken, nicht zu untersuchen.
+        if (event.failure != null) 'ursache': event.failure,
       },
     );
     if (!failed) _followWrite(event);
+  }
+
+  /// Öffnet eine Bibliothek wieder, deren Katalog nicht mehr antwortet.
+  ///
+  /// Das passiert, ohne dass jemand etwas falsch gemacht hat: die Oberfläche
+  /// schließt die aktive Bibliothek beim Wechsel, eine Netzfreigabe darunter
+  /// bricht über Nacht weg, ein Rechner schläft. Bis hierher endete das in
+  /// einem Server, der zwar antwortet, aber auf jede Anfrage einen Fehler
+  /// gibt — und nur ein Neustart half.
+  ///
+  /// Geöffnet wird nur, was dieser Host selbst geöffnet hat. Die aktive
+  /// Bibliothek gehört der Oberfläche; sie wieder aufzumachen ist deren Sache,
+  /// und ein zweites Handle darauf wäre eine zweite Wahrheit.
+  void _reopenLibrary(String libraryId) {
+    if (_reopening.contains(libraryId)) return;
+    _reopening.add(libraryId);
+    unawaited(() async {
+      try {
+        final registry = _registry;
+        if (registry == null) return;
+        final entry = registry.lookup(libraryId);
+        if (entry == null || entry.isUsable) return;
+
+        final path = _ownedLibraries.entries
+            .where((owned) => owned.value.manifest.libraryId == libraryId)
+            .map((owned) => owned.key)
+            .firstOrNull;
+        if (path == null) {
+          // Die aktive Bibliothek der Oberfläche. Aus dem Register nehmen ist
+          // trotzdem richtig: „gibt es hier nicht" ist eine ehrlichere
+          // Auskunft als ein Fehler bei jeder Anfrage.
+          registry.unregister(libraryId);
+          _shared = null;
+          FundusLog.instance.warn('server.library', {
+            'id': libraryId,
+            'action': 'unregistered_unusable',
+          });
+          notifyListeners();
+          return;
+        }
+
+        final name = entry.name;
+        registry.unregister(libraryId);
+        _ownedLibraries.remove(path)?.close();
+        if (unlockPath != null) await unlockPath!(path);
+        final reopened = await FundusLibrary.open(
+          Directory(path),
+        ).timeout(LibraryController.reachTimeout);
+        _ownedLibraries[path] = reopened;
+        registry.register(reopened, name: name);
+        FundusLog.instance.info('server.library', {
+          'id': libraryId,
+          'action': 'reopened',
+        });
+        notifyListeners();
+      } on Object catch (error) {
+        FundusLog.instance.warn('server.library', {
+          'id': libraryId,
+          'action': 'reopen_failed',
+          'error': _libraryError(error),
+        });
+      } finally {
+        _reopening.remove(libraryId);
+      }
+    }());
   }
 
   /// Was ein gekoppeltes Gerät hierher geschrieben hat, steht danach auch auf

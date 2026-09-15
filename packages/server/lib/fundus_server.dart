@@ -45,6 +45,9 @@ final class SharedFundusLibrary {
 
   String get id => library.manifest.libraryId;
 
+  /// Ob die Bibliothek dahinter noch antwortet.
+  bool get isUsable => library.isUsable;
+
   List<LibraryWorkSummary> get works {
     _ensureFresh();
     return _works;
@@ -130,11 +133,24 @@ final class FundusServerRequestEvent {
     required this.resource,
     required this.statusCode,
     this.workId,
+    this.libraryId,
+    this.failure,
   });
 
   final String method;
   final String resource;
   final int statusCode;
+
+  /// Welche Bibliothek gemeint war, wo die Adresse eine nennt.
+  final String? libraryId;
+
+  /// Woran es lag, wenn der Handler geflogen ist.
+  ///
+  /// Vorher wurde die Ausnahme vollständig verschluckt und durch ein blankes
+  /// `internal_error` ersetzt. Im Protokoll stand der Status, aber nichts über
+  /// die Ursache — ein 500 war damit nicht untersuchbar, sondern nur zu
+  /// bemerken.
+  final String? failure;
 
   /// Um welches Werk es ging, wo die Adresse eines nennt.
   ///
@@ -156,6 +172,7 @@ final class FundusServerHandler {
     FundusLibraryRegistry? registry,
     this.pairingAuthority,
     this.requestObserver,
+    this.onLibraryUnusable,
   }) : registry = registry ?? FundusLibraryRegistry();
 
   final String token;
@@ -164,6 +181,12 @@ final class FundusServerHandler {
   final FundusLibraryRegistry registry;
   final FundusPairingAuthority? pairingAuthority;
   final FundusServerRequestObserver? requestObserver;
+
+  /// Wird gerufen, wenn eine registrierte Bibliothek nicht mehr antwortet.
+  ///
+  /// Der Server kann sie nicht selbst wieder öffnen — er kennt nur das
+  /// geöffnete Handle, nicht den Ordner dahinter. Wer ihn hält, schon.
+  final void Function(String libraryId)? onLibraryUnusable;
   final ComicArchiveService _comicArchives = const ComicArchiveService();
   final Map<String, ({int size, int modified, ComicArchiveManifest manifest})>
   _comicManifestCache = {};
@@ -322,6 +345,8 @@ final class FundusServerHandler {
             resource: _resourceType(request.url.pathSegments),
             statusCode: response.statusCode,
             workId: _workIdIn(request.url.pathSegments),
+            libraryId: _libraryIdIn(request.url.pathSegments),
+            failure: response.context['fundus_failure'] as String?,
           ),
         );
         return response;
@@ -361,8 +386,25 @@ final class FundusServerHandler {
     return 'other';
   }
 
-  Response _health(Request request) =>
-      _json({'status': 'ok', 'server_id': serverId, 'api_version': 1});
+  /// Ob dieser Server gerade etwas ausliefern kann.
+  ///
+  /// „ok" hieß hier bisher nur, dass der Steckplatz besetzt ist — die
+  /// Bibliotheken wurden nicht angefasst. Ein Server, dessen Katalog
+  /// weggebrochen war, meldete sich damit weiter grün, während jede echte
+  /// Anfrage scheiterte. Das ist die unangenehmste Sorte Fehler: das Gerät
+  /// sagt, es sei verbunden, und nichts davon stimmt.
+  Response _health(Request request) {
+    final libraries = registry.libraries;
+    final usable = libraries.where((entry) => entry.isUsable).length;
+    final healthy = libraries.isEmpty || usable > 0;
+    return _json({
+      'status': healthy ? 'ok' : 'unavailable',
+      'server_id': serverId,
+      'api_version': 1,
+      'libraries': libraries.length,
+      'libraries_usable': usable,
+    }, statusCode: healthy ? 200 : HttpStatus.serviceUnavailable);
+  }
 
   Future<Response> _claimPairing(Request request) async {
     final authority = pairingAuthority;
@@ -1703,8 +1745,23 @@ final class FundusServerHandler {
       return (request) async {
         try {
           return await inner(request);
-        } catch (_) {
-          return _json({'error': 'internal_error'}, statusCode: 500);
+        } on Object catch (error) {
+          final libraryId = _libraryIdIn(request.url.pathSegments);
+          // Eine Bibliothek, deren Datenbank nicht mehr antwortet, ist kein
+          // Programmfehler, sondern ein Zustand — sie wurde geschlossen, oder
+          // die Freigabe darunter ist weggebrochen. Wer sie meldet, kann sie
+          // auch wieder öffnen; bis dahin ist 503 die ehrlichere Antwort als
+          // 500, weil sie „später nochmal" heißt statt „kaputt".
+          final unusable =
+              libraryId != null &&
+              registry.lookup(libraryId)?.isUsable == false;
+          if (unusable) {
+            onLibraryUnusable?.call(libraryId);
+          }
+          return _json(
+            {'error': unusable ? 'library_unavailable' : 'internal_error'},
+            statusCode: unusable ? HttpStatus.serviceUnavailable : 500,
+          ).change(context: {'fundus_failure': '${error.runtimeType}: $error'});
         }
       };
     };

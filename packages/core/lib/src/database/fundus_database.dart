@@ -3353,6 +3353,21 @@ final class FundusDatabase {
     );
   }
 
+  /// Ob diese Datenbank noch antwortet.
+  ///
+  /// Eine geschlossene oder weggebrochene Datenbank meldet sich erst bei der
+  /// nächsten Abfrage — und dann als Ausnahme mitten in einer Anfrage. Eine
+  /// billige Frage vorweg macht aus dem Programmfehler einen Zustand, den man
+  /// benennen und beheben kann.
+  bool get isUsable {
+    try {
+      _database.select('SELECT 1');
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
   void close() => _database.close();
 
   void _initialize({bool readOnly = false}) {

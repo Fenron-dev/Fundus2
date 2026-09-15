@@ -207,4 +207,114 @@ void main() {
       },
     );
   });
+
+  group('MyAnimeList über die offizielle Schnittstelle', () {
+    test('sendet die Client-Kennung als Header', () async {
+      final client = RecordingHttp((request, attempt) => _json({'data': []}));
+      await MyAnimeListApiProvider(
+        clientId: 'meine-kennung',
+        client: client,
+      ).search('Frieren');
+
+      expect(client.requests, hasLength(2), reason: 'Anime und Manga getrennt');
+      for (final request in client.requests) {
+        expect(request.headers['X-MAL-CLIENT-ID'], 'meine-kennung');
+      }
+    });
+
+    test('fragt je Bestand nur dessen eigene Felder ab', () async {
+      // Die Schnittstelle weist eine Anfrage zurück, die Felder des jeweils
+      // anderen Bestands nennt — eine gemeinsame Liste hätte beide Abfragen
+      // scheitern lassen.
+      final client = RecordingHttp((request, attempt) => _json({'data': []}));
+      await MyAnimeListApiProvider(
+        clientId: 'k',
+        client: client,
+      ).search('Frieren');
+
+      final byPath = {
+        for (final request in client.requests)
+          request.url.path: request.url.queryParameters['fields']!,
+      };
+      expect(byPath['/v2/anime'], contains('num_episodes'));
+      expect(byPath['/v2/anime'], isNot(contains('num_volumes')));
+      expect(byPath['/v2/anime'], isNot(contains('authors')));
+      expect(byPath['/v2/manga'], contains('num_volumes'));
+      expect(byPath['/v2/manga'], contains('authors'));
+      expect(byPath['/v2/manga'], isNot(contains('num_episodes')));
+      expect(byPath['/v2/manga'], isNot(contains('studios')));
+    });
+
+    test('ohne Kennung sagt die Meldung, wo man sie bekommt', () async {
+      final client = RecordingHttp((request, attempt) => _json({'data': []}));
+      await expectLater(
+        MyAnimeListApiProvider(clientId: '  ', client: client).search('x'),
+        throwsA(
+          isA<MetadataProviderException>().having(
+            (error) => error.message,
+            'Meldung',
+            allOf(contains('Client-ID'), contains('myanimelist.net/apiconfig')),
+          ),
+        ),
+      );
+      expect(client.requests, isEmpty, reason: 'gar nicht erst gefragt');
+    });
+
+    test('nennt die Begründung des Dienstes, nicht nur den Status', () async {
+      // MyAnimeList antwortet auf eine ungültige Kennung mit HTTP 400 und
+      // `{"message":"Invalid client id","error":"bad_request"}`. Wer nur den
+      // Status zeigt, lässt den Nutzer raten.
+      final client = RecordingHttp(
+        (request, attempt) => http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'message': 'Invalid client id',
+              'error': 'bad_request',
+            }),
+          ),
+          400,
+          headers: const {'content-type': 'application/json'},
+        ),
+      );
+      await expectLater(
+        MyAnimeListApiProvider(clientId: 'falsch', client: client).search('x'),
+        throwsA(
+          isA<MetadataProviderException>().having(
+            (error) => error.message,
+            'Meldung',
+            allOf(contains('400'), contains('Invalid client id')),
+          ),
+        ),
+      );
+    });
+
+    test('ein Ausfall auf einer Seite verwirft die andere nicht', () async {
+      final client = RecordingHttp((request, attempt) {
+        if (request.url.path == '/v2/anime') {
+          return http.Response.bytes(utf8.encode('{}'), 500);
+        }
+        return _json({
+          'data': [
+            {
+              'node': {
+                'id': 44347,
+                'title': 'Sousou no Frieren',
+                'start_date': '2020-04-28',
+                'nsfw': 'white',
+              },
+            },
+          ],
+        });
+      });
+      final found = await MyAnimeListApiProvider(
+        clientId: 'k',
+        client: client,
+      ).search('Frieren');
+
+      expect(found, hasLength(1));
+      expect(found.single.externalIds['mal'], '44347');
+      expect(found.single.workKind, 'manga');
+      expect(found.single.releaseYear, 2020);
+    });
+  });
 }
