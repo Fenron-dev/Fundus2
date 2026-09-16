@@ -120,4 +120,37 @@ void main() {
     expect(migrated.userVersion, FundusDatabase.schemaVersion);
     expect(migrated.columnExists('files', 'video_episode_json'), isTrue);
   });
+  test('schema v16 bekommt die Schutzkennzeichen', () async {
+    // Eine Bibliothek, die bis gestern lief, darf beim Öffnen nicht
+    // stehenbleiben — und ihre Schlagwörter gelten zunächst als ungeschützt,
+    // weil sie es vorher waren.
+    final directory = await Directory.systemTemp.createTemp('fundus-db-v16-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/index.db');
+    final legacy = sqlite3.open(file.path);
+    legacy.execute(
+      'CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, '
+      'color TEXT)',
+    );
+    legacy.execute(
+      'CREATE TABLE property_definitions (id TEXT PRIMARY KEY, '
+      'media_kind TEXT NOT NULL, name TEXT NOT NULL, value_type TEXT NOT NULL, '
+      'options_json TEXT, UNIQUE (media_kind, name))',
+    );
+    legacy.execute("INSERT INTO tags (id, name) VALUES ('t1', 'Von vorher')");
+    legacy.userVersion = 16;
+    legacy.close();
+
+    final migrated = FundusDatabase.openFile(file);
+    addTearDown(migrated.close);
+    expect(migrated.userVersion, FundusDatabase.schemaVersion);
+    expect(migrated.columnExists('tags', 'protected'), isTrue);
+    expect(migrated.columnExists('property_definitions', 'protected'), isTrue);
+    expect(migrated.columnExists('property_definitions', 'position'), isTrue);
+    expect(
+      migrated.listTags(includeProtected: true),
+      contains('Von vorher'),
+      reason: 'das Wort selbst bleibt erhalten',
+    );
+  });
 }

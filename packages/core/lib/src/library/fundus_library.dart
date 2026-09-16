@@ -19,6 +19,7 @@ import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
+import '../model/work_property.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import 'remote_catalogue.dart';
@@ -1556,7 +1557,71 @@ final class FundusLibrary {
   WorkAnnotations loadAnnotations(String workId) =>
       _database.loadAnnotations(workId);
 
-  List<String> listTags() => _database.listTags();
+  /// Die Schlagwörter dieser Bibliothek.
+  ///
+  /// Geschützte sind standardmäßig nicht dabei — wer sie braucht, muss danach
+  /// fragen, und wer nicht daran denkt, verrät nichts.
+  List<String> listTags({bool includeProtected = false}) =>
+      _database.listTags(includeProtected: includeProtected);
+
+  bool isTagProtected(String name) => _database.isTagProtected(name);
+
+  Future<void> setTagProtected(String name, {required bool protected}) async {
+    _ensureWritable();
+    _database.setTagProtected(name, protected: protected);
+  }
+
+  List<WorkPropertyDefinition> listPropertyDefinitions({
+    String? mediaKind,
+    bool includeProtected = true,
+  }) => _database.listPropertyDefinitions(
+    mediaKind: mediaKind,
+    includeProtected: includeProtected,
+  );
+
+  Future<WorkPropertyDefinition> savePropertyDefinition({
+    required String mediaKind,
+    required String name,
+    required PropertyValueType valueType,
+    List<String> options = const [],
+    bool protected = false,
+    int position = 0,
+    String? id,
+  }) async {
+    _ensureWritable();
+    return _database.savePropertyDefinition(
+      mediaKind: mediaKind,
+      name: name,
+      valueType: valueType,
+      options: options,
+      protected: protected,
+      position: position,
+      id: id,
+    );
+  }
+
+  Future<void> deletePropertyDefinition(String id) async {
+    _ensureWritable();
+    _database.deletePropertyDefinition(id);
+  }
+
+  Map<String, WorkPropertyValue> loadWorkProperties(String workId) =>
+      _database.loadWorkProperties(workId);
+
+  Future<void> setWorkProperty({
+    required String workId,
+    required String definitionId,
+    required Object? value,
+    String source = 'user',
+  }) async {
+    _ensureWritable();
+    _database.setWorkProperty(
+      workId: workId,
+      definitionId: definitionId,
+      value: value,
+      source: source,
+    );
+  }
 
   Future<LibraryWorkSummary> updateWorkMetadata({
     required String workId,

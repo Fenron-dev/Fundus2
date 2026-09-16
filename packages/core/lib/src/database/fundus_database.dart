@@ -12,6 +12,7 @@ import '../model/library_playlist.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
+import '../model/work_property.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 import '../scan/audio_technical_metadata.dart';
@@ -215,7 +216,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 16;
+  static const schemaVersion = 17;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -2168,10 +2169,244 @@ final class FundusDatabase {
     ]);
   }
 
-  List<String> listTags() => _database
-      .select('SELECT name FROM tags ORDER BY name COLLATE NOCASE')
-      .map((row) => row['name'] as String)
-      .toList(growable: false);
+  /// Die Schlagwörter dieser Bibliothek.
+  ///
+  /// [includeProtected] entscheidet, ob die geschützten dabei sind. Der
+  /// Standard ist „nein", und das ist Absicht: bis hierher gab es diese Frage
+  /// gar nicht, und wer die Liste irgendwo hinschreibt, ohne sie zu stellen,
+  /// verrät bei geschlossenem Schloss genau das, was verborgen sein soll. Die
+  /// Filterleiste kam bislang nur deshalb ohne aus, weil sie ihre Wörter aus
+  /// den sichtbaren Werken ableitet — ein Zufall, keine Zusicherung.
+  ///
+  /// Geschützt ist ein Wort auf zwei Weisen: ausdrücklich gekennzeichnet, oder
+  /// weil es ausschließlich an geschützten Werken vorkommt. Das zweite ist das
+  /// Netz unter dem ersten — kennzeichnen muss man daran denken, und bei einer
+  /// gewachsenen Sammlung denkt niemand an alles.
+  List<String> listTags({bool includeProtected = false}) {
+    final rows = _database.select(
+      includeProtected
+          ? 'SELECT name FROM tags ORDER BY name COLLATE NOCASE'
+          : '''
+            SELECT t.name FROM tags t
+            WHERE t.protected = 0
+              AND EXISTS (
+                SELECT 1 FROM work_tags wt
+                JOIN works w ON w.id = wt.work_id
+                WHERE wt.tag_id = t.id
+                  AND COALESCE(
+                    json_extract(w.metadata_json, '\$.content_sensitivity'),
+                    ''
+                  ) != 'adult_explicit'
+              )
+            ORDER BY t.name COLLATE NOCASE
+            ''',
+    );
+    return rows.map((row) => row['name'] as String).toList(growable: false);
+  }
+
+  /// Kennzeichnet ein Schlagwort als geschützt, oder nimmt das zurück.
+  void setTagProtected(String name, {required bool protected}) {
+    _database.execute('UPDATE tags SET protected = ? WHERE name = ?', [
+      protected ? 1 : 0,
+      name.trim(),
+    ]);
+  }
+
+  /// Ob dieses Schlagwort geschützt ist — ausdrücklich oder abgeleitet.
+  bool isTagProtected(String name) {
+    final rows = _database.select('SELECT protected FROM tags WHERE name = ?', [
+      name.trim(),
+    ]);
+    if (rows.isEmpty) return false;
+    if ((rows.first['protected'] as int? ?? 0) != 0) return true;
+    return !listTags().contains(name.trim());
+  }
+
+  /// Die Eigenschaften, die es für eine Medienart gibt.
+  ///
+  /// Ohne [mediaKind] alle. Definitionen ohne Medienart gelten überall — sie
+  /// stehen deshalb auch in der Antwort für eine bestimmte Art.
+  List<WorkPropertyDefinition> listPropertyDefinitions({
+    String? mediaKind,
+    bool includeProtected = true,
+  }) {
+    final rows = _database.select(
+      '''
+      SELECT id, media_kind, name, value_type, options_json, protected, position
+      FROM property_definitions
+      WHERE (? IS NULL OR media_kind = ? OR media_kind = '')
+        AND (? = 1 OR protected = 0)
+      ORDER BY position, name COLLATE NOCASE
+      ''',
+      [mediaKind, mediaKind, includeProtected ? 1 : 0],
+    );
+    return [for (final row in rows) _propertyDefinition(row)];
+  }
+
+  WorkPropertyDefinition _propertyDefinition(Map<String, Object?> row) {
+    final options = row['options_json'];
+    return WorkPropertyDefinition(
+      id: row['id'] as String,
+      mediaKind: row['media_kind'] as String,
+      name: row['name'] as String,
+      // Eine unbekannte Art kommt aus einer neueren Fassung. Sie als Text zu
+      // lesen zeigt wenigstens, was dasteht, statt die Zeile zu verschlucken.
+      valueType:
+          PropertyValueType.byName(row['value_type'] as String? ?? '') ??
+          PropertyValueType.text,
+      options: options is String
+          ? [
+              for (final entry in (jsonDecode(options) as List? ?? const []))
+                '$entry',
+            ]
+          : const [],
+      protected: (row['protected'] as int? ?? 0) != 0,
+      position: row['position'] as int? ?? 0,
+    );
+  }
+
+  /// Legt eine Eigenschaft an oder ändert sie.
+  ///
+  /// Der Name ist je Medienart eindeutig; wer denselben zweimal anlegt, ändert
+  /// den ersten, statt einen Zwilling zu bekommen.
+  WorkPropertyDefinition savePropertyDefinition({
+    required String mediaKind,
+    required String name,
+    required PropertyValueType valueType,
+    List<String> options = const [],
+    bool protected = false,
+    int position = 0,
+    String? id,
+  }) {
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError('Eine Eigenschaft braucht einen Namen.');
+    }
+    final existing = id != null
+        ? _database.select('SELECT id FROM property_definitions WHERE id = ?', [
+            id,
+          ])
+        : _database.select(
+            'SELECT id FROM property_definitions '
+            'WHERE media_kind = ? AND name = ?',
+            [mediaKind, normalized],
+          );
+    final targetId = existing.isNotEmpty
+        ? existing.first['id'] as String
+        : id ?? FundusId.generate();
+    _database.execute(
+      '''
+      INSERT INTO property_definitions
+        (id, media_kind, name, value_type, options_json, protected, position)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        media_kind = excluded.media_kind,
+        name = excluded.name,
+        value_type = excluded.value_type,
+        options_json = excluded.options_json,
+        protected = excluded.protected,
+        position = excluded.position
+      ''',
+      [
+        targetId,
+        mediaKind,
+        normalized,
+        valueType.name,
+        jsonEncode(options),
+        protected ? 1 : 0,
+        position,
+      ],
+    );
+    return WorkPropertyDefinition(
+      id: targetId,
+      mediaKind: mediaKind,
+      name: normalized,
+      valueType: valueType,
+      options: options,
+      protected: protected,
+      position: position,
+    );
+  }
+
+  /// Nimmt eine Eigenschaft samt aller ihrer Werte zurück.
+  void deletePropertyDefinition(String id) {
+    // Die Werte gehen über die Fremdschlüsselregel mit: eine Eigenschaft ohne
+    // Definition wäre eine Zeile, die niemand mehr lesen kann.
+    _database.execute('DELETE FROM property_definitions WHERE id = ?', [id]);
+  }
+
+  /// Was dieses Werk zu seinen Eigenschaften sagt.
+  Map<String, WorkPropertyValue> loadWorkProperties(String workId) {
+    final rows = _database.select(
+      'SELECT definition_id, value_json, source, updated_at '
+      'FROM work_properties WHERE work_id = ?',
+      [workId],
+    );
+    return {
+      for (final row in rows)
+        if (WorkPropertyValue.decode(row['value_json'] as String)
+            case final value?)
+          row['definition_id'] as String: WorkPropertyValue(
+            definitionId: row['definition_id'] as String,
+            value: value,
+            source: row['source'] as String? ?? 'user',
+            updatedAt: DateTime.fromMillisecondsSinceEpoch(
+              row['updated_at'] as int? ?? 0,
+            ),
+          ),
+    };
+  }
+
+  /// Schreibt einen Wert, oder nimmt ihn weg, wenn er `null` ist.
+  ///
+  /// Geprüft wird gegen den Typ der Definition. Eine Datenbank, in der eine
+  /// Bewertung als Zeichenkette steht, macht jede spätere Sortierung zu einem
+  /// Sonderfall — und gemerkt wird es erst dort.
+  void setWorkProperty({
+    required String workId,
+    required String definitionId,
+    required Object? value,
+    String source = 'user',
+  }) {
+    if (value == null) {
+      _database.execute(
+        'DELETE FROM work_properties WHERE work_id = ? AND definition_id = ?',
+        [workId, definitionId],
+      );
+      return;
+    }
+    final rows = _database.select(
+      'SELECT value_type FROM property_definitions WHERE id = ?',
+      [definitionId],
+    );
+    if (rows.isEmpty) {
+      throw ArgumentError('Diese Eigenschaft gibt es nicht: $definitionId');
+    }
+    final type =
+        PropertyValueType.byName(rows.first['value_type'] as String? ?? '') ??
+        PropertyValueType.text;
+    if (!WorkPropertyValue.fits(type, value)) {
+      throw ArgumentError('Der Wert passt nicht zu „${type.label}": $value');
+    }
+    _database.execute(
+      '''
+      INSERT INTO work_properties
+        (work_id, definition_id, value_json, source, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(work_id, definition_id) DO UPDATE SET
+        value_json = excluded.value_json,
+        source = excluded.source,
+        updated_at = excluded.updated_at
+      ''',
+      [
+        workId,
+        definitionId,
+        jsonEncode(value),
+        source,
+        DateTime.now().millisecondsSinceEpoch,
+      ],
+    );
+  }
 
   WorkAnnotations loadAnnotations(String workId) {
     final tagRows = _database.select(
@@ -3427,6 +3662,7 @@ final class FundusDatabase {
     if (_database.userVersion == 13 && !readOnly) _migrateToVersion14();
     if (_database.userVersion == 14 && !readOnly) _migrateToVersion15();
     if (_database.userVersion == 15 && !readOnly) _migrateToVersion16();
+    if (_database.userVersion == 16 && !readOnly) _migrateToVersion17();
   }
 
   void _migrateToVersion1() {
@@ -3767,6 +4003,58 @@ final class FundusDatabase {
     }
   }
 
+  /// Schema 17: Eigenschaften und Schlagwörter können geschützt sein.
+  ///
+  /// Ein Schlagwort kann selbst verraten, was es kennzeichnet. Bisher war der
+  /// Schutz eine Eigenschaft des Werks; er muss auch eine des Wortes sein
+  /// können, sonst steht es bei geschlossenem Schloss in Filtern und
+  /// Vorschlägen.
+  void _migrateToVersion17() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      // Wie bei Schema 16: ältere Bibliotheken haben die Tabellen teils gar
+      // nicht. Dann werden sie angelegt, statt eine Spalte an etwas zu hängen,
+      // das es nicht gibt.
+      if (!tableExists('tags')) {
+        _database.execute(
+          'CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, '
+          'color TEXT, protected INTEGER NOT NULL DEFAULT 0)',
+        );
+      } else if (!columnExists('tags', 'protected')) {
+        _database.execute(
+          'ALTER TABLE tags ADD COLUMN protected INTEGER NOT NULL DEFAULT 0',
+        );
+      }
+      if (!tableExists('property_definitions')) {
+        _database.execute(
+          'CREATE TABLE property_definitions ('
+          'id TEXT PRIMARY KEY, media_kind TEXT NOT NULL, name TEXT NOT NULL, '
+          'value_type TEXT NOT NULL, options_json TEXT, '
+          'protected INTEGER NOT NULL DEFAULT 0, '
+          'position INTEGER NOT NULL DEFAULT 0, UNIQUE (media_kind, name))',
+        );
+      } else {
+        if (!columnExists('property_definitions', 'protected')) {
+          _database.execute(
+            'ALTER TABLE property_definitions '
+            'ADD COLUMN protected INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+        if (!columnExists('property_definitions', 'position')) {
+          _database.execute(
+            'ALTER TABLE property_definitions '
+            'ADD COLUMN position INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+      }
+      _database.userVersion = 17;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Copies a table into its version 8 shape.
   ///
   /// Legacy databases in the wild — and the migration fixtures — do not
@@ -4012,7 +4300,8 @@ const _version1Statements = <String>[
     created_at INTEGER NOT NULL
   )
   ''',
-  'CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, color TEXT)',
+  'CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, '
+      'color TEXT, protected INTEGER NOT NULL DEFAULT 0)',
   '''
   CREATE TABLE work_tags (
     work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
@@ -4091,6 +4380,8 @@ const _version1Statements = <String>[
     name TEXT NOT NULL,
     value_type TEXT NOT NULL,
     options_json TEXT,
+    protected INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
     UNIQUE (media_kind, name)
   )
   ''',
