@@ -1013,7 +1013,9 @@ void main() {
     // Einmal lesen, dann prüfen: der Körper einer shelf-Antwort ist ein Strom.
     final gelesen = await _json(krank);
     expect(gelesen['status'], 'unavailable');
-    expect(gelesen['libraries_usable'], 0);
+    // Ohne Anmeldung erreichbar: die Auskunft sagt ob, nicht wie viel.
+    expect(gelesen.containsKey('libraries'), isFalse);
+    expect(gelesen.containsKey('libraries_usable'), isFalse);
   });
 
   test('eine lebende Bibliothek wird nicht als tot gemeldet', () async {

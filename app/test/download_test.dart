@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -203,5 +204,44 @@ void main() {
 
     // Die halbe große Datei sind fast 50 %, nicht 25 % (Datei 1 von 2).
     expect(job.progress, closeTo(500 / 1010, .0001));
+  });
+
+  test('ein laufender Auftrag lässt sich zurücknehmen', () async {
+    // Vorher nicht: `cancel` gab bei einem laufenden Auftrag auf. Ein großer
+    // Film blockierte damit unkündbar die einzige Spur, über die alles andere
+    // geholt wird.
+    unawaited(downloads.download(theWork()));
+    for (var attempt = 0; attempt < 200; attempt++) {
+      if (downloads.jobFor(theWork().id) != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(downloads.jobFor(theWork().id), isNotNull);
+
+    downloads.cancel(theWork().id);
+    expect(downloads.jobFor(theWork().id), isNull);
+
+    // Und danach ist wieder Ruhe: kein Auftrag taucht von selbst auf.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(downloads.jobFor(theWork().id), isNull);
+  });
+
+  test('wegräumen während des Holens stürzt nicht ab', () async {
+    // Die Fortschrittsmeldungen laufen weiter, während der Auftrag von außen
+    // verschwindet. Sie griffen mit `!` auf den Eintrag zu — und der
+    // Fehlerbehandler daneben genauso, er wäre an derselben Stelle ein
+    // zweites Mal geflogen, diesmal unbehandelt.
+    unawaited(downloads.download(theWork()));
+    for (var attempt = 0; attempt < 200; attempt++) {
+      if (downloads.jobFor(theWork().id) != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    await downloads.remove(theWork().id);
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+
+    // Kein Auftrag mehr, und vor allem: keine Ausnahme unterwegs.
+    expect(downloads.jobFor(theWork().id), isNull);
+    // Und nichts gilt als mitgenommen, was gerade gelöscht wurde.
+    expect(downloads.isSecured(theWork().id), isFalse);
   });
 }

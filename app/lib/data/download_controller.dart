@@ -306,10 +306,14 @@ class DownloadController extends ChangeNotifier {
 
   /// Takes a work out of the queue. What is already fetched stays — half a
   /// download thrown away is a second download later.
+  ///
+  /// Auch ein laufender Auftrag lässt sich zurücknehmen. Vorher nicht: ein
+  /// großer Film blockierte damit unkündbar die einzige Spur, über die alles
+  /// andere geholt wird. Die begonnene Datei wird noch zu Ende geholt — sie
+  /// abzubrechen hieße, sie später ganz neu zu holen —, danach hört der
+  /// Auftrag auf.
   void cancel(String workId) {
-    final job = _jobs[workId];
-    if (job == null || job.state == DownloadState.running) return;
-    _jobs.remove(workId);
+    if (_jobs.remove(workId) == null) return;
     _wanted.remove(workId);
     notifyListeners();
   }
@@ -334,6 +338,21 @@ class DownloadController extends ChangeNotifier {
       _running = false;
       notifyListeners();
     }
+  }
+
+  /// Schreibt am Auftrag fort, sofern es ihn noch gibt.
+  ///
+  /// Ein laufender Download wird von außen weggeräumt — „Offline-Kopie
+  /// löschen" während er läuft, oder ein erneutes Anfordern desselben Werks.
+  /// Die Fortschrittsmeldungen laufen derweil weiter und griffen mit `!` auf
+  /// einen Eintrag zu, den es dann nicht mehr gab. Das warf mitten in der
+  /// Rückmeldung, und der Fehlerbehandler daneben griff genauso zu — er wäre
+  /// an derselben Stelle ein zweites Mal geflogen, diesmal unbehandelt.
+  bool _update(String workId, DownloadJob Function(DownloadJob) change) {
+    final current = _jobs[workId];
+    if (current == null) return false;
+    _jobs[workId] = change(current);
+    return true;
   }
 
   Future<void> _fetch(DownloadJob job) async {
@@ -374,11 +393,14 @@ class DownloadController extends ChangeNotifier {
         final path = await cache.fileFor(
           _trackFor(vault.playbackTracks(job.workId), file.fileId),
           onProgress: (fraction) {
-            _jobs[job.workId] = _jobs[job.workId]!.copyWith(
-              done: done,
-              bytesDone: bytesDone,
-              currentBytes: file.sizeBytes,
-              fraction: fraction,
+            _update(
+              job.workId,
+              (current) => current.copyWith(
+                done: done,
+                bytesDone: bytesDone,
+                currentBytes: file.sizeBytes,
+                fraction: fraction,
+              ),
             );
           },
           onBytes: (received, expected) {
@@ -390,43 +412,60 @@ class DownloadController extends ChangeNotifier {
             lastReported = elapsed;
             final seconds = elapsed.inMilliseconds / 1000;
             final expectedBytes = expected > 0 ? expected : file.sizeBytes;
-            _jobs[job.workId] = _jobs[job.workId]!.copyWith(
-              bytesDone: bytesDone,
-              currentBytes: file.sizeBytes,
-              fraction: expectedBytes > 0
-                  ? (received / expectedBytes).clamp(0, 1)
-                  : null,
-              bytesPerSecond: seconds <= 0 ? null : received / seconds,
-              bytesLeft: expectedBytes > 0 ? expectedBytes - received : null,
+            _update(
+              job.workId,
+              (current) => current.copyWith(
+                bytesDone: bytesDone,
+                currentBytes: file.sizeBytes,
+                fraction: expectedBytes > 0
+                    ? (received / expectedBytes).clamp(0, 1)
+                    : null,
+                bytesPerSecond: seconds <= 0 ? null : received / seconds,
+                bytesLeft: expectedBytes > 0 ? expectedBytes - received : null,
+              ),
             );
             notifyListeners();
           },
         );
+        // Erst prüfen, dann eintragen: wurde der Auftrag während des Holens
+        // weggeräumt, darf die fertige Datei nicht doch noch als
+        // Offline-Kopie gelten — sonst steht ein Werk als „mitgenommen" da,
+        // dessen Löschung der Nutzer gerade angestoßen hat.
+        if (!_jobs.containsKey(job.workId)) return;
         vault.setOfflineCopy(fileId: file.fileId, path: path);
         done++;
         bytesDone += file.sizeBytes;
-        _jobs[job.workId] = _jobs[job.workId]!.copyWith(
-          done: done,
-          bytesDone: bytesDone,
-          fraction: 0,
-          currentBytes: 0,
+        _update(
+          job.workId,
+          (current) => current.copyWith(
+            done: done,
+            bytesDone: bytesDone,
+            fraction: 0,
+            currentBytes: 0,
+          ),
         );
       } on Object catch (error) {
-        _jobs[job.workId] = _jobs[job.workId]!.copyWith(
-          state: DownloadState.failed,
-          done: done,
-          failure: 'Abgebrochen bei „${file.filename}": $error',
+        _update(
+          job.workId,
+          (current) => current.copyWith(
+            state: DownloadState.failed,
+            done: done,
+            failure: 'Abgebrochen bei „${file.filename}": $error',
+          ),
         );
         notifyListeners();
         return;
       }
     }
 
-    _jobs[job.workId] = _jobs[job.workId]!.copyWith(
-      state: DownloadState.done,
-      done: done,
-      bytesDone: bytesDone,
-      currentBytes: 0,
+    _update(
+      job.workId,
+      (current) => current.copyWith(
+        state: DownloadState.done,
+        done: done,
+        bytesDone: bytesDone,
+        currentBytes: 0,
+      ),
     );
     library.refreshWork(job.workId);
     notifyListeners();

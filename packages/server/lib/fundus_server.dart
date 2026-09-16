@@ -393,16 +393,18 @@ final class FundusServerHandler {
   /// weggebrochen war, meldete sich damit weiter grün, während jede echte
   /// Anfrage scheiterte. Das ist die unangenehmste Sorte Fehler: das Gerät
   /// sagt, es sei verbunden, und nichts davon stimmt.
+  /// Diese Auskunft geht ohne Anmeldung heraus — sie sagt deshalb nur, ob
+  /// überhaupt etwas ausgeliefert werden kann, und nicht wie viel. Wie viele
+  /// Bibliotheken ein Server hält, ist nichts, was ein ungekoppeltes Gerät im
+  /// Netz erfahren muss; wer gekoppelt ist, bekommt sie ohnehin aufgezählt.
   Response _health(Request request) {
     final libraries = registry.libraries;
-    final usable = libraries.where((entry) => entry.isUsable).length;
-    final healthy = libraries.isEmpty || usable > 0;
+    final healthy =
+        libraries.isEmpty || libraries.any((entry) => entry.isUsable);
     return _json({
       'status': healthy ? 'ok' : 'unavailable',
       'server_id': serverId,
       'api_version': 1,
-      'libraries': libraries.length,
-      'libraries_usable': usable,
     }, statusCode: healthy ? 200 : HttpStatus.serviceUnavailable);
   }
 
