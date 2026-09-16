@@ -13,6 +13,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import '../app/app_settings.dart';
 import '../app/fundus_log.dart';
 import 'library_controller.dart';
+import 'peer_announcement.dart';
 import 'server_identity.dart';
 
 enum ServerHostState { stopped, starting, running, failed }
@@ -93,6 +94,7 @@ class ServerHostController extends ChangeNotifier {
   List<ServerLibraryStatus> _libraries = const [];
   bool _followingActiveLibrary = false;
   final Set<String> _reopening = <String>{};
+  final PeerAnnouncement _announcement = PeerAnnouncement();
 
   ServerHostState get state => _state;
   bool get isRunning => _state == ServerHostState.running;
@@ -220,6 +222,15 @@ class ServerHostController extends ChangeNotifier {
       _addresses = await _networkAddresses(_socket!.port);
       _address = _addresses.firstOrNull;
       _state = ServerHostState.running;
+      // Sagen, dass es uns gibt — sonst muss die Gegenseite raten, und Raten
+      // heißt hier: jede Adresse im Netz einzeln anklopfen.
+      unawaited(
+        _announcement.announce(
+          serverId: identity.serverId,
+          serverName: settings.deviceName,
+          port: _socket!.port,
+        ),
+      );
       FundusLog.instance.info('server.start', {
         'port': _socket!.port,
         'libraries': registry.libraries.length,
@@ -543,6 +554,9 @@ class ServerHostController extends ChangeNotifier {
     _presenceTick?.cancel();
     final socket = _socket;
     _socket = null;
+    // Auch hier zurücknehmen: sonst bleibt im Netz ein Eintrag stehen, hinter
+    // dem nichts mehr ist.
+    unawaited(_announcement.withdraw());
     if (socket != null) unawaited(socket.close(force: true));
     _releaseRegistry();
     super.dispose();
@@ -782,6 +796,9 @@ class ServerHostController extends ChangeNotifier {
   Future<void> _closeSocket() async {
     final socket = _socket;
     _socket = null;
+    // Zuerst die Ankündigung zurücknehmen: ein Eintrag im Netz, hinter dem
+    // nichts mehr steht, kostet die Gegenseite einen vergeblichen Versuch.
+    await _announcement.withdraw();
     if (socket != null) await socket.close(force: true);
   }
 

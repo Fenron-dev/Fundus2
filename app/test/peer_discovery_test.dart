@@ -75,8 +75,8 @@ void main() {
   );
 
   /// Sucht auf Loopback statt im echten Netz.
-  PeerAddressDiscovery discovery() => PeerAddressDiscovery(
-    candidateHosts: () async => ['127.0.0.1'],
+  PeerAddressDiscovery discoveryAt(int port) => PeerAddressDiscovery(
+    candidates: (_) async => [(host: '127.0.0.1', port: port)],
     probeTimeout: const Duration(seconds: 2),
   );
 
@@ -84,7 +84,7 @@ void main() {
     // Gesucht wird auf dem Port, den die Kopplung kennt — hier zeigt sie auf
     // den laufenden Server, nur unter einem Host, der erst geprüft werden
     // muss.
-    final found = await discovery().locate(peerAt(socket.port));
+    final found = await discoveryAt(socket.port).locate(peerAt(socket.port));
     expect(found, 'https://127.0.0.1:${socket.port}');
   });
 
@@ -102,7 +102,9 @@ void main() {
         certificateFingerprint: identity.certificateFingerprint,
       );
       final found = await PeerAddressDiscovery(
-        candidateHosts: () async => ['127.0.0.1'],
+        candidates: (_) async => [
+          (host: '127.0.0.1', port: fremderSocket.port),
+        ],
         probeTimeout: const Duration(seconds: 2),
       ).locate(peer);
       expect(found, isNull);
@@ -112,9 +114,9 @@ void main() {
   test('ohne gepinntes Zertifikat wird gar nicht gesucht', () async {
     // Eine Adresse allein beweist nichts. Einen ungepinnten Server im Netz zu
     // suchen hieße, jedem zu glauben, der schnell genug „ich bin es" ruft.
-    final found = await discovery().locate(
-      peerAt(socket.port, fingerprint: ''),
-    );
+    final found = await discoveryAt(
+      socket.port,
+    ).locate(peerAt(socket.port, fingerprint: ''));
     expect(found, isNull);
   });
 
@@ -124,7 +126,7 @@ void main() {
     // dasteht und nur gerade nichts auszuliefern hat.
     await socket.close(force: true);
     socket = await serve(identity, status: 503);
-    final found = await discovery().locate(peerAt(socket.port));
+    final found = await discoveryAt(socket.port).locate(peerAt(socket.port));
     expect(found, 'https://127.0.0.1:${socket.port}');
   });
 
@@ -136,6 +138,34 @@ void main() {
       token: 'geheim',
       certificateFingerprint: identity.certificateFingerprint,
     );
-    expect(await discovery().locate(peer), isNull);
+    expect(await discoveryAt(socket.port).locate(peer), isNull);
   });
+  test('ohne ausdrücklichen Wunsch wird das Netz nicht abgeklappert', () async {
+    // Zweihundertvierundfünfzig Verbindungsversuche sind im Netz nicht zu
+    // übersehen und von einem Portscan nicht zu unterscheiden. Das gehört
+    // nicht in einen Abgleich, der alle zwanzig Sekunden läuft.
+    //
+    // Geprüft wird über die Zeit: findet die Ankündigung nichts, ist sofort
+    // Schluss. Ein Durchlauf durch das Teilnetz bräuchte ein Vielfaches
+    // davon, selbst wenn jede Adresse sofort abweist.
+    final peer = peerAt(socket.port);
+    final gestartet = DateTime.now();
+    final found = await PeerAddressDiscovery(
+      candidates: (_) async => const [],
+      probeTimeout: const Duration(seconds: 2),
+    ).locate(peer);
+    final gedauert = DateTime.now().difference(gestartet);
+
+    expect(found, isNull);
+    expect(
+      gedauert,
+      lessThan(const Duration(seconds: 2)),
+      reason: 'es wurde nichts weiter versucht',
+    );
+  });
+
+  // Der ausdrücklich angestoßene Durchlauf durch das Teilnetz wird hier
+  // bewusst *nicht* geprüft: ein solcher Test klappert das Netz des
+  // CI-Rechners ab. Genau das Verhalten, das im Betrieb nur auf Wunsch
+  // stattfinden soll, gehört nicht in einen Lauf, der bei jedem Push startet.
 }

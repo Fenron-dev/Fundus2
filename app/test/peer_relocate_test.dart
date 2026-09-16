@@ -109,10 +109,9 @@ void main() {
 
       buildPeers(
         discovery: PeerAddressDiscovery(
-          candidateHosts: () async => ['127.0.0.1'],
-          // Im Test steht der Server auf einem zufälligen Port; im Betrieb ist
-          // das der bevorzugte, der ohnehin mitgefragt würde.
-          ports: [socket.port],
+          // Im Betrieb kommen die Kandidaten aus der Ankündigung des Servers;
+          // hier werden sie gesetzt, damit der Test kein Multicast braucht.
+          candidates: (_) async => [(host: '127.0.0.1', port: socket.port)],
           probeTimeout: const Duration(seconds: 2),
         ),
       );
