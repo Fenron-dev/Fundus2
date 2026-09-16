@@ -12,6 +12,7 @@ import '../app/app_settings.dart';
 import '../app/fundus_log.dart';
 import 'library_controller.dart';
 import 'peer_connection.dart';
+import 'peer_discovery.dart';
 
 /// One paired Fundus, while this device is talking to it.
 final class ConnectedPeer {
@@ -83,13 +84,23 @@ class PeerLibraries extends ChangeNotifier {
     required this.library,
     FundusRemoteClient Function(PeerConnection peer)? connect,
     Future<Directory> Function()? storageRoot,
+    PeerAddressDiscovery? discovery,
   }) : _connect = connect ?? _defaultConnect,
-       _storageRoot = storageRoot ?? getApplicationSupportDirectory;
+       _storageRoot = storageRoot ?? getApplicationSupportDirectory,
+       _discovery = discovery ?? const PeerAddressDiscovery();
 
   final AppSettings settings;
   final LibraryController library;
   final FundusRemoteClient Function(PeerConnection peer) _connect;
   final Future<Directory> Function() _storageRoot;
+  final PeerAddressDiscovery _discovery;
+
+  /// Server, für die in diesem Lauf schon gesucht wurde.
+  ///
+  /// Ein Netz abzuklappern kostet Sekunden. Wer gerade ausgeschaltet ist,
+  /// bleibt es meistens auch beim nächsten Herzschlag zwanzig Sekunden
+  /// später — die Suche gehört an den Versuch, nicht an die Wiederholung.
+  final Set<String> _searched = <String>{};
 
   static FundusRemoteClient _defaultConnect(PeerConnection peer) =>
       FundusRemoteClient(
@@ -207,6 +218,35 @@ class PeerLibraries extends ChangeNotifier {
     if (!await ensureShellVault()) return false;
     final vault = library.library;
     if (vault == null) return false;
+    return _attempt(peer, mirror: mirror, mayRelocate: true);
+  }
+
+  /// Sucht den Server im Netz, wenn er unter seiner Adresse nicht mehr da ist.
+  ///
+  /// Gesucht wird nur einmal je Lauf und nur mit gepinntem Zertifikat; was
+  /// dabei zu beachten ist, steht bei [PeerAddressDiscovery].
+  Future<bool> _relocate(PeerConnection peer, {required bool mirror}) async {
+    if (!_searched.add(peer.serverId)) return false;
+    final found = await _discovery.locate(peer);
+    if (found == null || found == peer.baseUrl) return false;
+    final moved = peer.copyWith(baseUrl: found);
+    await settings.savePeer(moved);
+    FundusLog.instance.info('peer.relocated', {
+      'server': peer.serverId,
+      // Die Adresse selbst steht bewusst nicht im Protokoll: sie sagt, wo
+      // dieses Gerät zu Hause ist.
+      'action': 'address_updated',
+    });
+    return _attempt(moved, mirror: mirror, mayRelocate: false);
+  }
+
+  Future<bool> _attempt(
+    PeerConnection peer, {
+    required bool mirror,
+    required bool mayRelocate,
+  }) async {
+    final vault = library.library;
+    if (vault == null) return false;
 
     final discovery = _connect(peer);
     try {
@@ -309,14 +349,26 @@ class PeerLibraries extends ChangeNotifier {
         }
       }
       library.refresh();
+      // Erreichbar: eine spätere Suche darf wieder stattfinden, falls dieser
+      // Server noch einmal umzieht.
+      _searched.remove(peer.serverId);
       return true;
     } on FundusRemoteException catch (error) {
       discovery.close();
+      // `isTransient` ist genau die richtige Frage: wer mit 401 antwortet, ist
+      // erreichbar und will uns nicht — dann hilft keine andere Adresse. Wer
+      // gar nicht antwortet, ist entweder aus oder woanders.
+      if (mayRelocate &&
+          error.isTransient &&
+          await _relocate(peer, mirror: mirror)) {
+        return true;
+      }
       _failure = error.message;
       _markUnreachable(peer, refused: error.statusCode == 401);
       return false;
     } on Object catch (error) {
       discovery.close();
+      if (mayRelocate && await _relocate(peer, mirror: mirror)) return true;
       _failure = 'Die Verbindung zu „${peer.name}" kam nicht zustande: $error';
       _markUnreachable(peer, refused: false);
       return false;
@@ -327,6 +379,9 @@ class PeerLibraries extends ChangeNotifier {
   Future<void> refresh() async {
     _busy = true;
     _failure = null;
+    // Wer von Hand auffrischt, will es wissen — und hat vielleicht gerade den
+    // Server eingeschaltet, den die letzte Suche nicht gefunden hat.
+    _searched.clear();
     notifyListeners();
     // Asking /libraries again is important: the server's selection and the
     // per-device allow-list can change while the first proxy remains green.

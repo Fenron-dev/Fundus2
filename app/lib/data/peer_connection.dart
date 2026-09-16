@@ -50,13 +50,14 @@ final class PeerConnection {
 
   PeerConnection copyWith({
     String? name,
+    String? baseUrl,
     String? libraryId,
     DateTime? lastSyncAt,
     String? lastResult,
   }) => PeerConnection(
     serverId: serverId,
     name: name ?? this.name,
-    baseUrl: baseUrl,
+    baseUrl: baseUrl ?? this.baseUrl,
     token: token,
     certificateFingerprint: certificateFingerprint,
     libraryId: libraryId ?? this.libraryId,
