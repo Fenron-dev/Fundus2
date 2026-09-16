@@ -1902,9 +1902,22 @@ final class FundusLibrary {
             (file) => file.extension.isEmpty ? '(ohne Endung)' : file.extension,
           );
     final documentCandidates = <DocumentImportCandidate>[];
+    final documentWorkIds = <String, String>{};
+    final documentWritable = <String, bool>{};
+    // Zwei Ordner können denselben Sidecar tragen, wenn jemand einen Werkordner
+    // kopiert hat. Die Kennung gehört dann dem ersten; der zweite bekommt eine
+    // eigene, statt dem ersten seine wegzunehmen.
+    final claimedWorkIds = <String>{};
     for (final candidate in groupedDocumentCandidates) {
       if (!touched(candidate.directory, candidate.files)) continue;
       documentCandidates.add(await _withEpubMetadata(candidate));
+      final portable = await _portableWorkId(candidate.directory);
+      documentWritable[candidate.directory] = portable.writable;
+      if (portable.workId case final workId?) {
+        if (claimedWorkIds.add(workId)) {
+          documentWorkIds[candidate.directory] = workId;
+        }
+      }
     }
     final candidates = <AudiobookImportCandidate>[];
     final portableIdentities = <String, _PortableWorkIdentity>{};
@@ -1963,7 +1976,11 @@ final class FundusLibrary {
       for (final candidate in documentCandidates) {
         indexedDocuments.add((
           candidate: candidate,
-          workId: _database.upsertDocumentCandidate(candidate, ids),
+          workId: _database.upsertDocumentCandidate(
+            candidate,
+            ids,
+            preferredWorkId: documentWorkIds[candidate.directory],
+          ),
         ));
       }
       _database.markWorksWithoutAvailableContentMissing();
@@ -1975,6 +1992,14 @@ final class FundusLibrary {
         indexed.candidate.directory,
         indexed.workId,
       );
+      // Auch Dokumente und Comics legen ihre Kennung neben die Medien. Vorher
+      // tat das nur der Hörbuchpfad, und ohne diese Datei gibt es beim
+      // nächsten Aufbau nichts zurückzulesen: die Kennung wäre eine neue, und
+      // der Abgleich mit anderen Geräten träfe ein Werk, das es dort nicht
+      // gibt.
+      if (documentWritable[indexed.candidate.directory] ?? false) {
+        await _writeMetadataSidecar(indexed.workId);
+      }
     }
     for (final indexed in indexedCandidates) {
       try {
@@ -2309,6 +2334,51 @@ final class FundusLibrary {
       }),
       flush: true,
     );
+  }
+
+  /// Die Kennung, die dieses Werk beim letzten Mal hatte.
+  ///
+  /// Sie steht im portablen Sidecar neben den Medien und ist der einzige
+  /// Grund, warum ein neu aufgebauter Katalog dieselben Werke meint wie der
+  /// alte — und damit den Lesestand, die Lesezeichen und die Notizen behält,
+  /// die alle über `work_id` hängen.
+  ///
+  /// [_readPortableIdentity] tut dasselbe für Hörbücher, prüft dabei aber
+  /// zusätzlich `base_kind` und baut eine Autor/Titel-Identität. Für ein
+  /// Dokument ist beides nicht zu holen: es gibt keine Ordnerkonvention, aus
+  /// der sich Autor und Reihe ergäben. Gesucht wird deshalb nur die Kennung.
+  ///
+  /// Gelesen wird über [_workSidecarDirectory], damit beide Ablageformen
+  /// gefunden werden: ein Ordnerwerk legt seinen Sidecar unter
+  /// `<Werk>/_fundus/`, ein Einzeldateiwerk unter
+  /// `<Eltern>/_fundus/files/<Dateiname>/`.
+  Future<({String? workId, bool writable})> _portableWorkId(
+    String sourcePath,
+  ) async {
+    final file = File(
+      p.join(_workSidecarDirectory(sourcePath).path, 'meta.yaml'),
+    );
+    try {
+      if (!await file.exists()) return (workId: null, writable: true);
+      final value = loadYaml(await file.readAsString());
+      // Etwas liegt da, aber es ist nicht zu lesen. Darüberzuschreiben hieße,
+      // fremde Angaben wegzuwerfen, die vielleicht nur eine Fassung neuer sind.
+      if (value is! Map) return (workId: null, writable: false);
+      final workId = value['work_id'];
+      // Nur eine wohlgeformte Kennung: was im Sidecar steht, hat jemand
+      // geschrieben, und eine Datei neben den Medien ist keine Quelle, der man
+      // beliebige Zeichenketten als Primärschlüssel abnimmt.
+      return (
+        workId: workId is String && _uuidPattern.hasMatch(workId)
+            ? workId
+            : null,
+        writable: true,
+      );
+    } on FileSystemException {
+      return (workId: null, writable: false);
+    } on YamlException {
+      return (workId: null, writable: false);
+    }
   }
 
   Future<_PortableWorkIdentity> _readPortableIdentity(

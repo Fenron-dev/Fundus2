@@ -1404,11 +1404,95 @@ void main() {
 
     expect(recovered.externalIds['anilist'], '179445');
     expect(recovered.externalIds['mal'], '172429');
-    // Die Werk-ID wird hier bewusst nicht geprüft: `_readPortableIdentity`
-    // läuft nur für Hörbuch-Kandidaten, nicht für Dokumente und Comics.
-    // Deren ID wird beim Neuaufbau neu vergeben, womit der Lesestand
-    // verlorengeht. Ein eigener Befund, nicht Gegenstand dieser Änderung —
-    // die Kennungen kommen über den Sidecar trotzdem an.
+    expect(
+      recovered.id,
+      indexed.id,
+      reason: 'ohne dieselbe Kennung hängen Lesestand und Notizen im Leeren',
+    );
+  });
+
+  test(
+    'ein Comic behält seine Kennung und seine Marken über einen Neuaufbau',
+    () async {
+      // Warum die Kennung mitreisen muss: `progress`, `notes` und `bookmarks`
+      // hängen alle an `work_id`. Bekommt ein Werk beim Neuaufbau eine neue,
+      // trifft der Abgleich mit anderen Geräten ein Werk, das es dort nicht
+      // gibt — und bei Comics und Novels war das bis hierher der Normalfall,
+      // weil für sie gar kein Sidecar geschrieben wurde.
+      final root = await Directory.systemTemp.createTemp('fundus-comic-id-');
+      addTearDown(() => root.delete(recursive: true));
+      final work = Directory('${root.path}/Manga/Klingenwind');
+      await work.create(recursive: true);
+      await File('${work.path}/01.cbz').writeAsBytes(List.filled(64, 1));
+
+      final library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+      final vorher = library.listWorks().single;
+      await library.replaceWorkTags(vorher.id, ['Bleibt erhalten']);
+      await library.addBookmark(
+        workId: vorher.id,
+        fileId: library.playbackTracks(vorher.id).first.fileId,
+        position: const Duration(seconds: 0),
+        label: 'Seite 17',
+      );
+      await library.flushSidecarWrites();
+      library.close();
+
+      // Der Katalog wird weggeworfen, die Medien bleiben liegen.
+      await Directory('${root.path}/.library').delete(recursive: true);
+
+      final neu = await FundusLibrary.create(root);
+      addTearDown(neu.close);
+      await neu.index().drain<void>();
+      final nachher = neu.listWorks().single;
+
+      expect(nachher.id, vorher.id);
+      final marken = neu.loadAnnotations(nachher.id);
+      expect(marken.tags, contains('Bleibt erhalten'));
+      expect(marken.bookmarks.map((mark) => mark.label), contains('Seite 17'));
+
+      // Der Lesestand kommt bewusst *nicht* zurück: er steht in keinem Sidecar,
+      // sondern nur in `index.db`. Die Kennung allein holt ihn nicht wieder —
+      // sie sorgt dafür, dass er anderswo noch passt. Dass es für den Stand
+      // keine portable Fassung gibt, ist ein eigener Befund.
+      expect(neu.loadProgress(nachher.id), isNull);
+    },
+  );
+
+  test('ein kopierter Werkordner bekommt eine eigene Kennung', () async {
+    // Zwei Ordner mit demselben Sidecar: die Kennung gehört dem ersten. Dem
+    // zweiten die des ersten zu geben hieße, zwei Werke zu einem zu erklären
+    // — und den Lesestand des einen auf das andere zu übertragen.
+    final root = await Directory.systemTemp.createTemp('fundus-kopie-');
+    addTearDown(() => root.delete(recursive: true));
+    final erste = Directory('${root.path}/Manga/Klingenwind');
+    await erste.create(recursive: true);
+    await File('${erste.path}/01.cbz').writeAsBytes(List.filled(64, 1));
+
+    final library = await FundusLibrary.create(root);
+    await library.index().drain<void>();
+    await library.flushSidecarWrites();
+    library.close();
+
+    // Den fertigen Ordner samt Sidecar daneben kopieren.
+    final zweite = Directory('${root.path}/Manga/Klingenwind (Kopie)');
+    await Directory('${zweite.path}/_fundus').create(recursive: true);
+    await File('${erste.path}/01.cbz').copy('${zweite.path}/01.cbz');
+    await File(
+      '${erste.path}/_fundus/meta.yaml',
+    ).copy('${zweite.path}/_fundus/meta.yaml');
+
+    final neu = await FundusLibrary.create(root);
+    addTearDown(neu.close);
+    await neu.index().drain<void>();
+    final werke = neu.listWorks();
+
+    expect(werke, hasLength(2));
+    expect(
+      werke.map((work) => work.id).toSet(),
+      hasLength(2),
+      reason: 'zwei Werke, zwei Kennungen',
+    );
   });
 }
 

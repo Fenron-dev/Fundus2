@@ -464,10 +464,29 @@ final class FundusDatabase {
     return workId;
   }
 
+  /// Die vorgeschlagene Kennung, sofern sie nicht schon woanders in Gebrauch
+  /// ist.
+  ///
+  /// Wer einen fertigen Werkordner kopiert, kopiert den Sidecar mit — und
+  /// damit die Kennung. Sie beiden zu geben hieße, zwei Werke zu einem zu
+  /// erklären: der zweite Aufruf fände den ersten Datensatz, zöge ihn auf
+  /// seinen Pfad um, und aus zwei Ordnern würde ein Werk. Gehört die Kennung
+  /// bereits einem anderen Pfad, bekommt dieses Werk deshalb eine eigene.
+  String? _unclaimedWorkId(String? preferredId, String sourcePath) {
+    if (preferredId == null) return null;
+    final rows = _database.select(
+      'SELECT source_path FROM works WHERE id = ? AND source_id = ?',
+      [preferredId, localSourceId],
+    );
+    if (rows.isEmpty) return preferredId;
+    return rows.first['source_path'] == sourcePath ? preferredId : null;
+  }
+
   String upsertDocumentCandidate(
     DocumentImportCandidate candidate,
-    Map<String, String> fileIds,
-  ) {
+    Map<String, String> fileIds, {
+    String? preferredWorkId,
+  }) {
     final workId = _upsertWork(
       kind: candidate.kind,
       sourcePath: candidate.directory,
@@ -476,6 +495,12 @@ final class FundusDatabase {
       source: candidate.metadata.isEmpty
           ? WorkMetadataSource.filename
           : WorkMetadataSource.embedded,
+      // Hörbücher bekamen ihre Kennung seit jeher aus dem portablen Sidecar
+      // zurück, Dokumente und Comics nicht — der Parameter fehlte hier
+      // schlicht. Ein neu aufgebauter Katalog vergab ihnen deshalb neue
+      // Kennungen, und der Abgleich mit anderen Geräten traf danach ein Werk,
+      // das es dort nicht gibt.
+      preferredId: _unclaimedWorkId(preferredWorkId, candidate.directory),
     );
     _database.execute('UPDATE works SET cover_file_id = NULL WHERE id = ?', [
       workId,
