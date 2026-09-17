@@ -77,11 +77,16 @@ List<({WorkView work, Set<String> roles})> worksOfPerson(
   FundusLibrary? library,
 }) {
   final wanted = _normalise(name);
+  // Dieselben Überschriften wie auf der Werkseite: „Actor" und „Darsteller"
+  // sind derselbe Mensch in derselben Rolle, und zwei Abschnitte dafür
+  // aufzumachen ist eine Trennung, die es nicht gibt.
+  final known = library?.listPersonRoles() ?? const <PersonRole>[];
   final found = <({WorkView work, Set<String> roles})>[];
   for (final work in works) {
     final roles = <String>{
       for (final credit in creditsOf(work, library: library))
-        if (_normalise(credit.name) == wanted) credit.roleLabel,
+        if (_normalise(credit.name) == wanted)
+          personRoleLabel(credit.roleLabel, known),
     };
     if (roles.isNotEmpty) found.add((work: work, roles: roles));
   }

@@ -217,7 +217,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 18;
+  static const schemaVersion = 19;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -3510,18 +3510,136 @@ final class FundusDatabase {
             personId,
           ]);
         }
+        final hasSource = columnExists('work_people', 'source');
         _database.execute(
-          '''
-          INSERT INTO work_people (work_id, person_id, role, position)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(work_id, person_id, role) DO UPDATE SET
-            position = excluded.position
-          ''',
-          [workId, personId, person.role, position],
+          hasSource
+              ? 'INSERT INTO work_people (work_id, person_id, role, position, '
+                    'source) VALUES (?, ?, ?, ?, ?) '
+                    'ON CONFLICT(work_id, person_id, role) DO UPDATE SET '
+                    'position = excluded.position, source = excluded.source'
+              : 'INSERT INTO work_people (work_id, person_id, role, position) '
+                    'VALUES (?, ?, ?, ?) '
+                    'ON CONFLICT(work_id, person_id, role) DO UPDATE SET '
+                    'position = excluded.position',
+          [workId, personId, person.role, position, if (hasSource) 'provider'],
         );
         position++;
       }
     });
+  }
+
+  /// Macht aus den Namen in den Metadaten echte Personen.
+  ///
+  /// Urheber und Sprecher standen nur als Zeichenketten in `metadata_json`.
+  /// Die Werkseite half sich damit, sie ersatzweise anzuzeigen — eine Person
+  /// war das aber nicht: kein Bild, keine Rolle, keine eigene Seite.
+  ///
+  /// Eine Besetzung vom Abgleich bleibt unangetastet. Sie ist genauer, und was
+  /// aus einem Dateinamen abgeleitet ist, soll sie nicht überschreiben.
+  /// Umgekehrt schon: kommt später eine echte Besetzung, ersetzt sie das hier
+  /// Abgeleitete.
+  ///
+  /// Gibt zurück, für wie viele Werke etwas angelegt wurde.
+  int derivePeopleFromMetadata({String? workId}) {
+    if (!tableExists('people') || !tableExists('work_people')) return 0;
+    if (!columnExists('work_people', 'source')) return 0;
+    final works = _database.select(
+      workId == null
+          ? 'SELECT id, metadata_json FROM works'
+          : 'SELECT id, metadata_json FROM works WHERE id = ?',
+      workId == null ? const [] : [workId],
+    );
+    var touched = 0;
+    transaction(() {
+      for (final row in works) {
+        final id = row['id'] as String;
+        // Wer eine Besetzung vom Abgleich hat, behält sie.
+        final fromProvider = _database.select(
+          "SELECT 1 FROM work_people WHERE work_id = ? AND source = 'provider' "
+          'LIMIT 1',
+          [id],
+        );
+        if (fromProvider.isNotEmpty) continue;
+
+        final metadata = _decodeMetadata(row['metadata_json']);
+        final derived = <({String name, String role})>[
+          for (final name in _namesFrom(
+            metadata['authors'],
+            metadata['author'],
+          ))
+            (name: name, role: 'Autor'),
+          for (final name in _namesFrom(metadata['narrators'], null))
+            (name: name, role: 'Sprecher'),
+        ];
+        if (derived.isEmpty) continue;
+
+        _database.execute(
+          "DELETE FROM work_people WHERE work_id = ? AND source = 'metadata'",
+          [id],
+        );
+        var position = 0;
+        for (final person in derived) {
+          final personId = _personIdFor(person.name);
+          _database.execute(
+            'INSERT INTO work_people (work_id, person_id, role, position, '
+            'source) VALUES (?, ?, ?, ?, ?) '
+            'ON CONFLICT(work_id, person_id, role) DO UPDATE SET '
+            'position = excluded.position, source = excluded.source',
+            [id, personId, person.role, position, 'metadata'],
+          );
+          position++;
+        }
+        touched++;
+      }
+    });
+    return touched;
+  }
+
+  Map<String, Object?> _decodeMetadata(Object? value) {
+    if (value is! String || value.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(value);
+      return decoded is Map ? Map<String, Object?>.from(decoded) : const {};
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  /// Die Namen aus einer Liste, hilfsweise aus einem einzelnen Feld.
+  ///
+  /// „Unbekannt" ist kein Mensch — der Import setzt es, wo nichts dasteht, und
+  /// eine Personenseite dafür wäre eine Seite über nichts.
+  static List<String> _namesFrom(Object? list, Object? single) {
+    final found = <String>[];
+    void add(Object? value) {
+      if (value is! String) return;
+      final name = value.trim();
+      if (name.isEmpty || name.toLowerCase() == 'unbekannt') return;
+      if (!found.contains(name)) found.add(name);
+    }
+
+    if (list is List) {
+      for (final entry in list) {
+        add(entry);
+      }
+    }
+    if (found.isEmpty) add(single);
+    return found;
+  }
+
+  /// Die Person zu diesem Namen, angelegt falls es sie noch nicht gibt.
+  String _personIdFor(String name) {
+    final existing = _database.select(
+      'SELECT id FROM people WHERE display_name = ? COLLATE NOCASE',
+      [name],
+    );
+    if (existing.isNotEmpty) return existing.first['id'] as String;
+    final id = FundusId.generate();
+    _database.execute(
+      'INSERT INTO people (id, display_name, sort_name) VALUES (?, ?, ?)',
+      [id, name, name.toLowerCase()],
+    );
+    return id;
   }
 
   /// Das Bild einer Person, wo eines da ist.
@@ -3742,6 +3860,7 @@ final class FundusDatabase {
     if (_database.userVersion == 15 && !readOnly) _migrateToVersion16();
     if (_database.userVersion == 16 && !readOnly) _migrateToVersion17();
     if (_database.userVersion == 17 && !readOnly) _migrateToVersion18();
+    if (_database.userVersion == 18 && !readOnly) _migrateToVersion19();
   }
 
   void _migrateToVersion1() {
@@ -4163,6 +4282,37 @@ final class FundusDatabase {
     }
   }
 
+  /// Schema 19: woher eine Beteiligung kommt.
+  ///
+  /// Urheber und Sprecher standen bisher nur in `metadata_json` und wurden nie
+  /// zu Personen. Die Werkseite half sich damit, dass sie ersatzweise die
+  /// Namen aus den Dateien zeigte, wenn keine Besetzung da war — eine Person
+  /// war das aber nicht: kein Bild, keine Rolle, keine eigene Seite, keine
+  /// externen Kennungen.
+  ///
+  /// Beides in eine Tabelle zu legen braucht die Unterscheidung, woher eine
+  /// Zeile kommt. Eine Besetzung vom Abgleich ist genauer und darf die aus den
+  /// Dateien abgeleitete ersetzen; umgekehrt nicht.
+  void _migrateToVersion19() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (!tableExists('work_people')) {
+        _database.execute(_workPeopleTable);
+      } else if (!columnExists('work_people', 'source')) {
+        // Was schon dasteht, kam vom Abgleich — das war der einzige Weg.
+        _database.execute(
+          "ALTER TABLE work_people ADD COLUMN source TEXT NOT NULL "
+          "DEFAULT 'provider'",
+        );
+      }
+      _database.userVersion = 19;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Copies a table into its version 8 shape.
   ///
   /// Legacy databases in the wild — and the migration fixtures — do not
@@ -4284,7 +4434,10 @@ const _builtInRoles = <({String name, List<String> aliases})>[
   (name: 'Produktion', aliases: ['producer', 'production', 'produktion']),
   (name: 'Kamera & Bild', aliases: ['camera', 'cinematograph', 'kamera']),
   (name: 'Musik', aliases: ['music', 'composer', 'musik', 'soundtrack']),
-  (name: 'Autor', aliases: ['author', 'autor', 'story', 'original creator']),
+  (
+    name: 'Autor',
+    aliases: ['author', 'autor', 'urheber', 'story', 'original creator'],
+  ),
   (name: 'Zeichnung', aliases: ['art', 'artist', 'zeichnung', 'illustrator']),
   (name: 'Übersetzung', aliases: ['translator', 'übersetzung', 'translation']),
   (name: 'Sprecher', aliases: ['narrator', 'sprecher', 'voice', 'seiyuu']),
@@ -4723,6 +4876,7 @@ CREATE TABLE work_people (
   person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
   position INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'provider',
   PRIMARY KEY (work_id, person_id, role)
 )
 ''';

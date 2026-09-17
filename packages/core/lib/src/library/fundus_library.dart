@@ -1261,6 +1261,14 @@ final class FundusLibrary {
     String workId,
   ) => _database.peopleOf(workId);
 
+  /// Macht aus den Namen in den Metadaten echte Personen.
+  ///
+  /// Läuft am Ende eines Scans für den ganzen Bestand und nach einem
+  /// Metadaten-Abgleich für das eine Werk. Eine Besetzung vom Abgleich bleibt
+  /// dabei unangetastet.
+  int derivePeopleFromMetadata({String? workId}) =>
+      _database.derivePeopleFromMetadata(workId: workId);
+
   /// Schreibt die Beteiligten eines Werks neu.
   void replaceWorkPeople(
     String workId,
@@ -1684,6 +1692,8 @@ final class FundusLibrary {
       externalIds: externalIds,
       source: source,
     );
+    // Neue Namen, neue Personen — sofern nicht eine echte Besetzung dasteht.
+    _database.derivePeopleFromMetadata(workId: workId);
     await _writeMetadataSidecar(workId);
     return listWorks(
       includeMissing: true,
@@ -2117,6 +2127,10 @@ final class FundusLibrary {
       }
     }
     if (scope == null) await _rememberFolderAssignment();
+    // Erst jetzt, wenn alle Metadaten stehen: aus „Karl May" im Dateinamen
+    // wird eine Person mit eigener Seite, statt einer Zeichenkette, die nur
+    // aussieht wie eine.
+    _database.derivePeopleFromMetadata();
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
