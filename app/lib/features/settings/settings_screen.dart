@@ -1455,6 +1455,14 @@ class _PropertiesState extends State<_Properties> {
     if (saved == true && mounted) setState(() {});
   }
 
+  Future<void> _editRole(FundusLibrary library, PersonRole? existing) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => _RoleDialog(library: library, existing: existing),
+    );
+    if (saved == true && mounted) setState(() {});
+  }
+
   Future<void> _delete(
     FundusLibrary library,
     WorkPropertyDefinition definition,
@@ -1616,6 +1624,69 @@ class _PropertiesState extends State<_Properties> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Rollen', style: theme.textTheme.titleMedium),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () => unawaited(_editRole(library, null)),
+                    icon: Icon(FundusIcons.add, size: FundusIcons.sizeMd),
+                    label: const Text('Hinzufügen'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Wer an einem Werk beteiligt ist, kommt mit der Bezeichnung '
+                'des Anbieters — „Actor", „Cast", „Directing · Director". '
+                'Welche davon unter welcher Überschrift steht, wird hier '
+                'entschieden. Eine Bezeichnung, die zu keiner Rolle passt, '
+                'bleibt stehen wie sie kam; sie zeigt, welche Schreibweise '
+                'noch fehlt.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              for (final role in library.listPersonRoles())
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(role.name),
+                  subtitle: Text(
+                    role.aliases.isEmpty
+                        ? 'Nur unter diesem Namen'
+                        : role.aliases.join(', '),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Bearbeiten',
+                        icon: Icon(FundusIcons.edit, size: FundusIcons.sizeMd),
+                        onPressed: () => unawaited(_editRole(library, role)),
+                      ),
+                      IconButton(
+                        tooltip: 'Entfernen',
+                        icon: Icon(
+                          FundusIcons.delete,
+                          size: FundusIcons.sizeMd,
+                        ),
+                        onPressed: () async {
+                          await library.deletePersonRole(role.id);
+                          if (context.mounted) setState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        SettingsCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text('Schlagwörter', style: theme.textTheme.titleMedium),
               const SizedBox(height: FundusSpace.x2),
               Text(
@@ -1664,6 +1735,97 @@ class _PropertiesState extends State<_Properties> {
       ],
     );
   }
+}
+
+/// Eine Rolle anlegen oder ändern.
+class _RoleDialog extends StatefulWidget {
+  const _RoleDialog({required this.library, this.existing});
+
+  final FundusLibrary library;
+  final PersonRole? existing;
+
+  @override
+  State<_RoleDialog> createState() => _RoleDialogState();
+}
+
+class _RoleDialogState extends State<_RoleDialog> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.existing?.name ?? '',
+  );
+  late final TextEditingController _aliases = TextEditingController(
+    text: widget.existing?.aliases.join(', ') ?? '',
+  );
+  String? _complaint;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _aliases.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _complaint = 'Eine Rolle braucht einen Namen.');
+      return;
+    }
+    await widget.library.savePersonRole(
+      id: widget.existing?.id,
+      name: name,
+      aliases: [
+        for (final alias in _aliases.text.split(','))
+          if (alias.trim().isNotEmpty) alias.trim(),
+      ],
+      position: widget.existing?.position ?? 0,
+    );
+    if (mounted) Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.existing == null ? 'Rolle anlegen' : 'Rolle ändern'),
+    content: SizedBox(
+      width: 480,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _name,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'Name',
+              helperText: 'Die Überschrift auf der Werkseite.',
+              errorText: _complaint,
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x4),
+          TextField(
+            controller: _aliases,
+            decoration: const InputDecoration(
+              labelText: 'Schreibweisen, mit Komma getrennt',
+              helperText:
+                  'Wie die Anbieter sie nennen — etwa „actor, actress, cast". '
+                  'Groß- und Kleinschreibung ist gleich.',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(false),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton(
+        onPressed: () => unawaited(_save()),
+        child: const Text('Speichern'),
+      ),
+    ],
+  );
 }
 
 /// Eine Eigenschaft anlegen oder ändern.

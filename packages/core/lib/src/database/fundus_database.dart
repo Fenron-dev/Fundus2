@@ -11,6 +11,7 @@ import '../model/fundus_id.dart';
 import '../model/library_playlist.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
+import '../model/person_role.dart';
 import '../model/playback_session.dart';
 import '../model/work_property.dart';
 import '../playback/library_playback.dart';
@@ -216,7 +217,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 17;
+  static const schemaVersion = 18;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -3367,6 +3368,83 @@ final class FundusDatabase {
     }
   }
 
+  /// Die Rollen, die diese Bibliothek kennt.
+  List<PersonRole> listPersonRoles() {
+    if (!tableExists('person_roles')) return const [];
+    final rows = _database.select(
+      'SELECT id, name, aliases_json, position FROM person_roles '
+      'ORDER BY position, name COLLATE NOCASE',
+    );
+    return [
+      for (final row in rows)
+        PersonRole(
+          id: row['id'] as String,
+          name: row['name'] as String,
+          aliases: [
+            for (final alias
+                in (jsonDecode(row['aliases_json'] as String) as List? ??
+                    const []))
+              '$alias'.toLowerCase(),
+          ],
+          position: row['position'] as int? ?? 0,
+        ),
+    ];
+  }
+
+  /// Legt eine Rolle an oder ändert sie.
+  ///
+  /// Der Name ist eindeutig. Wer eine vorhandene Rolle unter dem Namen einer
+  /// anderen speichert, führt sie zusammen — das ist gewollt: zwei Rollen, die
+  /// dasselbe meinen, sind der Normalfall, wenn zwei Anbieter sie verschieden
+  /// nennen.
+  PersonRole savePersonRole({
+    required String name,
+    List<String> aliases = const [],
+    int position = 0,
+    String? id,
+  }) {
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError('Eine Rolle braucht einen Namen.');
+    }
+    final cleaned = [
+      for (final alias in aliases)
+        if (alias.trim().isNotEmpty) alias.trim().toLowerCase(),
+    ];
+    final byName = _database.select(
+      'SELECT id FROM person_roles WHERE name = ? COLLATE NOCASE',
+      [normalized],
+    );
+    final targetId = byName.isNotEmpty
+        ? byName.first['id'] as String
+        : id ?? FundusId.generate();
+    // Ein Umbenennen auf einen vorhandenen Namen ließe zwei Zeilen zurück —
+    // die alte muss weg, sonst stünde die Rolle doppelt da.
+    if (id != null && id != targetId) {
+      _database.execute('DELETE FROM person_roles WHERE id = ?', [id]);
+    }
+    _database.execute(
+      'INSERT INTO person_roles (id, name, aliases_json, position) '
+      'VALUES (?, ?, ?, ?) '
+      'ON CONFLICT(id) DO UPDATE SET name = excluded.name, '
+      'aliases_json = excluded.aliases_json, position = excluded.position',
+      [targetId, normalized, jsonEncode(cleaned), position],
+    );
+    return PersonRole(
+      id: targetId,
+      name: normalized,
+      aliases: cleaned,
+      position: position,
+    );
+  }
+
+  void deletePersonRole(String id) {
+    // Die Besetzung bleibt: was an den Werken steht, ist die Angabe des
+    // Anbieters. Ohne passende Rolle erscheint sie wieder unter ihrer eigenen
+    // Bezeichnung, statt zu verschwinden.
+    _database.execute('DELETE FROM person_roles WHERE id = ?', [id]);
+  }
+
   /// Wer an einem Werk beteiligt ist, in der Reihenfolge, in der es die
   /// Quelle gesagt hat.
   List<({String name, String role, String? imagePath})> peopleOf(
@@ -3663,6 +3741,7 @@ final class FundusDatabase {
     if (_database.userVersion == 14 && !readOnly) _migrateToVersion15();
     if (_database.userVersion == 15 && !readOnly) _migrateToVersion16();
     if (_database.userVersion == 16 && !readOnly) _migrateToVersion17();
+    if (_database.userVersion == 17 && !readOnly) _migrateToVersion18();
   }
 
   void _migrateToVersion1() {
@@ -4055,6 +4134,35 @@ final class FundusDatabase {
     }
   }
 
+  /// Schema 18: Rollen sind Daten, keine Fallunterscheidung.
+  ///
+  /// Wer an einem Werk beteiligt ist, kam bisher mit der Rollenbezeichnung des
+  /// Anbieters — `Actor`, `Darsteller`, `Directing · Director` — und wurde in
+  /// der Oberfläche über eine Kette von Vergleichen auf eine deutsche
+  /// Überschrift gebracht. Das ließ sich weder ergänzen noch umbenennen, und
+  /// eine Rolle, die kein Anbieter kennt, gab es nicht.
+  void _migrateToVersion18() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (!tableExists('person_roles')) {
+        _database.execute(_personRolesTable);
+        for (var index = 0; index < _builtInRoles.length; index++) {
+          final role = _builtInRoles[index];
+          _database.execute(
+            'INSERT INTO person_roles (id, name, aliases_json, position) '
+            'VALUES (?, ?, ?, ?)',
+            [FundusId.generate(), role.name, jsonEncode(role.aliases), index],
+          );
+        }
+      }
+      _database.userVersion = 18;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Copies a table into its version 8 shape.
   ///
   /// Legacy databases in the wild — and the migration fixtures — do not
@@ -4153,6 +4261,35 @@ final class FundusDatabase {
     }
   }
 }
+
+const _personRolesTable = '''
+CREATE TABLE person_roles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  aliases_json TEXT NOT NULL DEFAULT '[]',
+  position INTEGER NOT NULL DEFAULT 0
+)
+''';
+
+/// Womit eine frische Bibliothek anfängt.
+///
+/// Die Aliase sind das, was die Anbieter schicken; kleingeschrieben verglichen
+/// und als Teilzeichenkette, weil TMDB `Directing · Director` sagt, wo AniList
+/// `Director` sagt. Ergänzen kann man sie in den Einstellungen — das ist der
+/// Unterschied zu einer Kette von Vergleichen im Code.
+const _builtInRoles = <({String name, List<String> aliases})>[
+  (name: 'Darsteller', aliases: ['darsteller', 'actor', 'actress', 'cast']),
+  (name: 'Regie', aliases: ['director', 'regie', 'directing']),
+  (name: 'Drehbuch', aliases: ['writer', 'writing', 'drehbuch', 'screenplay']),
+  (name: 'Produktion', aliases: ['producer', 'production', 'produktion']),
+  (name: 'Kamera & Bild', aliases: ['camera', 'cinematograph', 'kamera']),
+  (name: 'Musik', aliases: ['music', 'composer', 'musik', 'soundtrack']),
+  (name: 'Autor', aliases: ['author', 'autor', 'story', 'original creator']),
+  (name: 'Zeichnung', aliases: ['art', 'artist', 'zeichnung', 'illustrator']),
+  (name: 'Übersetzung', aliases: ['translator', 'übersetzung', 'translation']),
+  (name: 'Sprecher', aliases: ['narrator', 'sprecher', 'voice', 'seiyuu']),
+  (name: 'Verlag', aliases: ['publisher', 'verlag', 'studio', 'label']),
+];
 
 const _version1Statements = <String>[
   '''

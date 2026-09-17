@@ -19,6 +19,7 @@ import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
+import '../model/person_role.dart';
 import '../model/work_property.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
@@ -1565,6 +1566,29 @@ final class FundusLibrary {
       _database.listTags(includeProtected: includeProtected);
 
   bool isTagProtected(String name) => _database.isTagProtected(name);
+
+  /// Die Rollen, in denen jemand an einem Werk beteiligt sein kann.
+  List<PersonRole> listPersonRoles() => _database.listPersonRoles();
+
+  Future<PersonRole> savePersonRole({
+    required String name,
+    List<String> aliases = const [],
+    int position = 0,
+    String? id,
+  }) async {
+    _ensureWritable();
+    return _database.savePersonRole(
+      name: name,
+      aliases: aliases,
+      position: position,
+      id: id,
+    );
+  }
+
+  Future<void> deletePersonRole(String id) async {
+    _ensureWritable();
+    _database.deletePersonRole(id);
+  }
 
   Future<void> setTagProtected(String name, {required bool protected}) async {
     _ensureWritable();

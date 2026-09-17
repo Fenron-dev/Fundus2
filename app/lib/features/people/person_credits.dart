@@ -30,35 +30,17 @@ final class PersonCredit {
   final String? imagePath;
 }
 
-/// Turns provider-specific role strings into the thematic rows shown on a
-/// film page. Character names remain on the person, but never create one row
-/// per character.
-String creditGroupLabel(String role) {
-  final base = role.split(' · ').first.trim().toLowerCase();
-  if (base == 'darsteller' ||
-      base == 'actor' ||
-      base == 'actress' ||
-      base == 'cast') {
-    return 'Darsteller';
-  }
-  if (base.contains('director') || base.contains('regie')) return 'Regie';
-  if (base.contains('writer') ||
-      base.contains('writing') ||
-      base.contains('drehbuch')) {
-    return 'Drehbuch';
-  }
-  if (base.contains('producer') ||
-      base.contains('production') ||
-      base.contains('produktion')) {
-    return 'Produktion';
-  }
-  if (base.contains('camera') ||
-      base.contains('cinematograph') ||
-      base.contains('kamera')) {
-    return 'Kamera & Bild';
-  }
-  return role.split(' · ').first.trim();
-}
+/// Die Überschrift, unter der eine Rollenbezeichnung steht.
+///
+/// Das war eine Kette von Vergleichen hier im Code: `actor`, `actress`,
+/// `cast` → „Darsteller", und so weiter. Was kein Anbieter schickte, gab es
+/// nicht, und umbenennen ließ sich nichts. Die Zuordnung steht jetzt als
+/// Rollen in der Bibliothek und ist in den Einstellungen zu ändern.
+///
+/// Ohne geöffnete Bibliothek bleibt die Bezeichnung stehen, wie sie kam —
+/// besser als ein Sammeltopf, und ehrlicher.
+String creditGroupLabel(String role, {Iterable<PersonRole> roles = const []}) =>
+    personRoleLabel(role, roles);
 
 /// Wer an einem Werk beteiligt ist.
 ///

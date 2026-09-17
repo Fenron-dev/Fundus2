@@ -2034,12 +2034,13 @@ class _People extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     // Nach Rolle gruppiert, wie im Entwurf: erst wer es gemacht hat, dann wer
-    // es gelesen hat.
-    // Nach Rolle gruppiert, wie im Entwurf.
+    // es gelesen hat. Welche Bezeichnung zu welcher Überschrift gehört, steht
+    // in der Bibliothek und nicht mehr im Code.
+    final roles = FundusScope.of(context).library.library?.listPersonRoles();
     final byRole = <String, List<PersonCredit>>{};
     for (final credit in credits) {
       final group = byRole.putIfAbsent(
-        creditGroupLabel(credit.roleLabel),
+        creditGroupLabel(credit.roleLabel, roles: roles ?? const []),
         () => [],
       );
       if (!group.any((person) => person.name == credit.name)) {
