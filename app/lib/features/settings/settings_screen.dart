@@ -54,6 +54,7 @@ class SettingsScreen extends StatelessWidget {
       'wartung' => const MaintenancePage(),
       'bibliotheken' => const _Libraries(),
       'metadaten' => const _Metadata(),
+      'eigenschaften' => const _Properties(),
       'synchronisation' => const _Sync(),
       'schutz' => const _Protection(),
       'diagnose' => const _Diagnostics(),
@@ -1427,6 +1428,386 @@ class _Playback extends StatelessWidget {
 /// dort erst, nachdem man den richtigen Dienst ausgewählt hatte. Wer einen
 /// Schlüssel hinterlegen wollte, suchte ihn in den Einstellungen — und fand
 /// nichts. Ein Zugangsdatum gehört dorthin, wo man es sucht.
+/// Eigene Eigenschaften und die Schlagwörter der Bibliothek.
+///
+/// Die Definition steht getrennt vom Wert: „Erscheinungsland" heißt einmal,
+/// wie es heißt, und nicht an jedem Werk neu — und lässt sich umbenennen, ohne
+/// tausend Werke anzufassen. Eingetragen wird der Wert dann am Werk selbst.
+class _Properties extends StatefulWidget {
+  const _Properties();
+
+  @override
+  State<_Properties> createState() => _PropertiesState();
+}
+
+class _PropertiesState extends State<_Properties> {
+  String? _mediaKind;
+
+  Future<void> _edit(
+    FundusLibrary library,
+    WorkPropertyDefinition? existing,
+  ) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) =>
+          _PropertyDialog(library: library, existing: existing),
+    );
+    if (saved == true && mounted) setState(() {});
+  }
+
+  Future<void> _delete(
+    FundusLibrary library,
+    WorkPropertyDefinition definition,
+  ) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('„${definition.name}" entfernen?'),
+        content: const Text(
+          'Die Eigenschaft verschwindet samt allem, was an den Werken dazu '
+          'eingetragen ist. Das lässt sich nicht zurückholen.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Entfernen'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true) return;
+    await library.deletePropertyDefinition(definition.id);
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final library = scope.library.library;
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+
+    if (library == null) {
+      return const SettingsPage(
+        title: 'Eigenschaften & Schlagwörter',
+        subtitle: 'Dafür muss eine Bibliothek geöffnet sein.',
+        children: [],
+      );
+    }
+
+    final definitions = library.listPropertyDefinitions(mediaKind: _mediaKind);
+    // Geschützte sind dabei, weil das hier die Stelle ist, an der man sie
+    // kennzeichnet — aber nur, solange das Schloss offen ist.
+    final unlocked = scope.protection.isUnlocked;
+    final tags = library.listTags(includeProtected: unlocked);
+
+    return SettingsPage(
+      title: 'Eigenschaften & Schlagwörter',
+      subtitle:
+          'Eigene Felder je Medienart, und was davon zum geschützten Bereich '
+          'gehört. Die Werte selbst stehen am Werk.',
+      children: [
+        SettingsCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Eigene Eigenschaften',
+                      style: theme.textTheme.titleMedium,
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () => unawaited(_edit(library, null)),
+                    icon: Icon(FundusIcons.add, size: FundusIcons.sizeMd),
+                    label: const Text('Hinzufügen'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              Wrap(
+                spacing: FundusSpace.x2,
+                runSpacing: FundusSpace.x2,
+                children: [
+                  ChoiceChip(
+                    selected: _mediaKind == null,
+                    onSelected: (_) => setState(() => _mediaKind = null),
+                    label: const Text('Alle'),
+                  ),
+                  for (final type in MediaTypes.all)
+                    if (type.configurationKind != null)
+                      ChoiceChip(
+                        selected: _mediaKind == type.id,
+                        onSelected: (_) => setState(() => _mediaKind = type.id),
+                        label: Text(type.label),
+                      ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              if (definitions.isEmpty)
+                Text(
+                  _mediaKind == null
+                      ? 'Noch keine eigenen Eigenschaften. Was hier steht, '
+                            'erscheint an jedem Werk der gewählten Medienart.'
+                      : 'Für diese Medienart ist noch nichts angelegt.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: tokens.textMuted,
+                  ),
+                )
+              else
+                for (final definition in definitions)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Row(
+                      children: [
+                        Flexible(child: Text(definition.name)),
+                        if (definition.protected) ...[
+                          const SizedBox(width: FundusSpace.x2),
+                          Icon(FundusIcons.protected, size: FundusIcons.sizeSm),
+                        ],
+                      ],
+                    ),
+                    subtitle: Text(
+                      [
+                        definition.valueType.label,
+                        if (definition.mediaKind.isEmpty)
+                          'für alle Medienarten'
+                        else
+                          MediaTypes.byId(definition.mediaKind)?.label ??
+                              definition.mediaKind,
+                        if (definition.options.isNotEmpty)
+                          '${definition.options.length} Werte zur Auswahl',
+                      ].join(' · '),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Bearbeiten',
+                          icon: Icon(
+                            FundusIcons.edit,
+                            size: FundusIcons.sizeMd,
+                          ),
+                          onPressed: () =>
+                              unawaited(_edit(library, definition)),
+                        ),
+                        IconButton(
+                          tooltip: 'Entfernen',
+                          icon: Icon(
+                            FundusIcons.delete,
+                            size: FundusIcons.sizeMd,
+                          ),
+                          onPressed: () =>
+                              unawaited(_delete(library, definition)),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
+        ),
+        SettingsCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Schlagwörter', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Ein Schlagwort kann selbst verraten, was es kennzeichnet. '
+                'Ein gekennzeichnetes erscheint bei geschlossenem Schloss '
+                'nicht in Filtern, Suche und Vorschlägen. Ein Wort, das nur an '
+                'geschützten Werken hängt, gilt ohnehin als geschützt — auch '
+                'ohne Haken.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              const SizedBox(height: FundusSpace.x4),
+              if (!unlocked)
+                Text(
+                  'Solange der Schutzmodus zu ist, stehen hier nur die '
+                  'ungeschützten Wörter — sonst wäre diese Seite das Leck.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                ),
+              if (tags.isEmpty)
+                Text(
+                  'Noch keine Schlagwörter vergeben.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: tokens.textMuted,
+                  ),
+                )
+              else
+                for (final tag in tags)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tag),
+                    subtitle: library.isTagProtected(tag)
+                        ? const Text('Geschützt')
+                        : null,
+                    value: library.isTagProtected(tag),
+                    onChanged: (on) async {
+                      await library.setTagProtected(tag, protected: on);
+                      if (context.mounted) setState(() {});
+                    },
+                  ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Eine Eigenschaft anlegen oder ändern.
+class _PropertyDialog extends StatefulWidget {
+  const _PropertyDialog({required this.library, this.existing});
+
+  final FundusLibrary library;
+  final WorkPropertyDefinition? existing;
+
+  @override
+  State<_PropertyDialog> createState() => _PropertyDialogState();
+}
+
+class _PropertyDialogState extends State<_PropertyDialog> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.existing?.name ?? '',
+  );
+  late final TextEditingController _options = TextEditingController(
+    text: widget.existing?.options.join(', ') ?? '',
+  );
+  late PropertyValueType _type =
+      widget.existing?.valueType ?? PropertyValueType.text;
+  late String _mediaKind = widget.existing?.mediaKind ?? '';
+  late bool _protected = widget.existing?.protected ?? false;
+  String? _complaint;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _options.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _complaint = 'Eine Eigenschaft braucht einen Namen.');
+      return;
+    }
+    await widget.library.savePropertyDefinition(
+      id: widget.existing?.id,
+      mediaKind: _mediaKind,
+      name: name,
+      valueType: _type,
+      options: [
+        for (final option in _options.text.split(','))
+          if (option.trim().isNotEmpty) option.trim(),
+      ],
+      protected: _protected,
+      position: widget.existing?.position ?? 0,
+    );
+    if (mounted) Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(
+      widget.existing == null ? 'Eigenschaft anlegen' : 'Eigenschaft ändern',
+    ),
+    content: SizedBox(
+      width: 480,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _name,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Name',
+                errorText: _complaint,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: FundusSpace.x4),
+            DropdownButtonFormField<PropertyValueType>(
+              initialValue: _type,
+              decoration: const InputDecoration(
+                labelText: 'Art des Werts',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final type in PropertyValueType.values)
+                  DropdownMenuItem(value: type, child: Text(type.label)),
+              ],
+              onChanged: (value) =>
+                  setState(() => _type = value ?? PropertyValueType.text),
+            ),
+            const SizedBox(height: FundusSpace.x4),
+            DropdownButtonFormField<String>(
+              initialValue: _mediaKind,
+              decoration: const InputDecoration(
+                labelText: 'Gilt für',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: '',
+                  child: Text('Alle Medienarten'),
+                ),
+                for (final type in MediaTypes.all)
+                  if (type.configurationKind != null)
+                    DropdownMenuItem(value: type.id, child: Text(type.label)),
+              ],
+              onChanged: (value) => setState(() => _mediaKind = value ?? ''),
+            ),
+            const SizedBox(height: FundusSpace.x4),
+            TextField(
+              controller: _options,
+              decoration: const InputDecoration(
+                labelText: 'Feste Auswahl, mit Komma getrennt',
+                helperText: 'Leer lassen für freie Eingabe.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: FundusSpace.x2),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Gehört zum geschützten Bereich'),
+              subtitle: const Text(
+                'Erscheint bei geschlossenem Schloss nicht in Filtern und '
+                'Vorschlägen.',
+              ),
+              value: _protected,
+              onChanged: (on) => setState(() => _protected = on),
+            ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(false),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton(
+        onPressed: () => unawaited(_save()),
+        child: const Text('Speichern'),
+      ),
+    ],
+  );
+}
+
 class _Metadata extends StatefulWidget {
   const _Metadata();
 

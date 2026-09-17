@@ -960,6 +960,7 @@ class _Properties extends StatelessWidget {
         Text('ANGABEN', style: theme.textTheme.labelSmall),
         const SizedBox(height: FundusSpace.x3),
         for (final entry in entries) _KeyValueRow(entry.$1, entry.$2),
+        _CustomProperties(work: work),
         if (WorkFilter.labelsOf(work).isNotEmpty) ...[
           const SizedBox(height: FundusSpace.x6),
           Text(
@@ -988,6 +989,306 @@ class _Properties extends StatelessWidget {
   static String _formatDate(DateTime value) =>
       '${value.day.toString().padLeft(2, '0')}.'
       '${value.month.toString().padLeft(2, '0')}.${value.year}';
+}
+
+/// Die eigenen Eigenschaften dieses Werks.
+///
+/// Angelegt werden sie in den Einstellungen, eingetragen hier. Was leer ist,
+/// steht trotzdem da: ein Feld, das man erst sieht, wenn es gefüllt ist, füllt
+/// niemand.
+class _CustomProperties extends StatefulWidget {
+  const _CustomProperties({required this.work});
+
+  final WorkView work;
+
+  @override
+  State<_CustomProperties> createState() => _CustomPropertiesState();
+}
+
+class _CustomPropertiesState extends State<_CustomProperties> {
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final library = scope.library.library;
+    if (library == null) return const SizedBox.shrink();
+
+    // Geschützte Felder erscheinen nur bei offenem Schloss — sonst verriete
+    // schon der Name des Feldes, worum es geht.
+    final definitions = library.listPropertyDefinitions(
+      mediaKind: widget.work.mediaType?.id,
+      includeProtected: scope.protection.isUnlocked,
+    );
+    if (definitions.isEmpty) return const SizedBox.shrink();
+
+    final values = library.loadWorkProperties(widget.work.id);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final editable = library.isReadOnly == false;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: FundusSpace.x6),
+        Text(
+          'EIGENE ANGABEN',
+          style: theme.textTheme.labelSmall?.copyWith(color: tokens.textMuted),
+        ),
+        const SizedBox(height: FundusSpace.x3),
+        for (final definition in definitions)
+          _PropertyRow(
+            definition: definition,
+            value: values[definition.id]?.value,
+            onEdit: editable
+                ? () => unawaited(_edit(library, definition, values))
+                : null,
+          ),
+      ],
+    );
+  }
+
+  Future<void> _edit(
+    FundusLibrary library,
+    WorkPropertyDefinition definition,
+    Map<String, WorkPropertyValue> values,
+  ) async {
+    final result = await showDialog<Object?>(
+      context: context,
+      builder: (context) => _PropertyValueDialog(
+        definition: definition,
+        value: values[definition.id]?.value,
+      ),
+    );
+    // Abgebrochen: der Dialog gibt nichts zurück. Geleert: er gibt die leere
+    // Zeichenkette zurück, und das heißt „wegnehmen".
+    if (result == null || !mounted) return;
+    await library.setWorkProperty(
+      workId: widget.work.id,
+      definitionId: definition.id,
+      value: result == '' ? null : result,
+    );
+    if (mounted) setState(() {});
+  }
+}
+
+class _PropertyRow extends StatelessWidget {
+  const _PropertyRow({
+    required this.definition,
+    required this.value,
+    this.onEdit,
+  });
+
+  final WorkPropertyDefinition definition;
+  final Object? value;
+  final VoidCallback? onEdit;
+
+  /// Wie ein Wert dasteht, wenn ihn ein Mensch liest.
+  String get _shown => switch (value) {
+    null => '—',
+    final List list => list.join(', '),
+    final num number when definition.valueType == PropertyValueType.rating =>
+      '${'★' * number.round()}${'☆' * (5 - number.round())}',
+    final Object other => '$other',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    return InkWell(
+      onTap: onEdit,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: FundusSpace.x2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 180,
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      definition.name,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: tokens.textMuted,
+                      ),
+                    ),
+                  ),
+                  if (definition.protected) ...[
+                    const SizedBox(width: FundusSpace.x2),
+                    Icon(
+                      FundusIcons.protected,
+                      size: FundusIcons.sizeSm,
+                      color: tokens.textFaint,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Expanded(
+              child: Text(
+                _shown,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: value == null ? tokens.textFaint : null,
+                ),
+              ),
+            ),
+            if (onEdit != null)
+              Icon(
+                FundusIcons.edit,
+                size: FundusIcons.sizeSm,
+                color: tokens.textFaint,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Einen Wert eintragen — in der Form, die zu seiner Art passt.
+class _PropertyValueDialog extends StatefulWidget {
+  const _PropertyValueDialog({required this.definition, this.value});
+
+  final WorkPropertyDefinition definition;
+  final Object? value;
+
+  @override
+  State<_PropertyValueDialog> createState() => _PropertyValueDialogState();
+}
+
+class _PropertyValueDialogState extends State<_PropertyValueDialog> {
+  late final TextEditingController _text = TextEditingController(
+    text: switch (widget.value) {
+      null => '',
+      final List list => list.join(', '),
+      final Object other => '$other',
+    },
+  );
+  late double _rating = switch (widget.value) {
+    final num number => number.toDouble(),
+    _ => 0,
+  };
+  String? _complaint;
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  /// Der eingetragene Wert in der Form, die die Art verlangt.
+  Object? _parsed() {
+    final raw = _text.text.trim();
+    return switch (widget.definition.valueType) {
+      PropertyValueType.rating => _rating,
+      _ when raw.isEmpty => '',
+      PropertyValueType.number => num.tryParse(raw.replaceAll(',', '.')),
+      PropertyValueType.date => DateTime.tryParse(raw) == null ? null : raw,
+      PropertyValueType.list || PropertyValueType.tags => [
+        for (final entry in raw.split(','))
+          if (entry.trim().isNotEmpty) entry.trim(),
+      ],
+      _ => raw,
+    };
+  }
+
+  void _save() {
+    final parsed = _parsed();
+    if (parsed == null) {
+      setState(
+        () => _complaint = switch (widget.definition.valueType) {
+          PropertyValueType.number => 'Das ist keine Zahl.',
+          PropertyValueType.date => 'Erwartet wird ein Datum wie 2026-09-17.',
+          _ => 'Das passt nicht zu dieser Art.',
+        },
+      );
+      return;
+    }
+    Navigator.of(context).pop(parsed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final definition = widget.definition;
+    return AlertDialog(
+      title: Text(definition.name),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (definition.valueType == PropertyValueType.rating)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (var star = 1; star <= 5; star++)
+                    IconButton(
+                      // Noch einmal auf denselben Stern heißt: doch nicht.
+                      onPressed: () => setState(
+                        () => _rating = _rating == star ? 0 : star.toDouble(),
+                      ),
+                      icon: Icon(
+                        star <= _rating
+                            ? FundusIcons.favourite
+                            : FundusIcons.favourites,
+                        size: FundusIcons.sizeLg,
+                      ),
+                    ),
+                ],
+              )
+            else if (definition.options.isNotEmpty)
+              DropdownButtonFormField<String>(
+                initialValue: definition.options.contains(_text.text)
+                    ? _text.text
+                    : null,
+                decoration: InputDecoration(
+                  labelText: definition.valueType.label,
+                  errorText: _complaint,
+                  border: const OutlineInputBorder(),
+                ),
+                items: [
+                  for (final option in definition.options)
+                    DropdownMenuItem(value: option, child: Text(option)),
+                ],
+                onChanged: (value) => _text.text = value ?? '',
+              )
+            else
+              TextField(
+                controller: _text,
+                autofocus: true,
+                maxLines: definition.valueType == PropertyValueType.note
+                    ? 6
+                    : 1,
+                decoration: InputDecoration(
+                  labelText: definition.valueType.label,
+                  helperText: switch (definition.valueType) {
+                    PropertyValueType.date => 'Etwa 2026-09-17',
+                    PropertyValueType.list ||
+                    PropertyValueType.tags => 'Mit Komma getrennt',
+                    _ => null,
+                  },
+                  errorText: _complaint,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Abbrechen'),
+        ),
+        if (widget.value != null)
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(''),
+            child: const Text('Leeren'),
+          ),
+        FilledButton(onPressed: _save, child: const Text('Übernehmen')),
+      ],
+    );
+  }
 }
 
 class _KeyValueRow extends StatelessWidget {

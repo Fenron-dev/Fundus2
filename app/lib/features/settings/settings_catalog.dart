@@ -57,6 +57,12 @@ abstract final class SettingsAreas {
       description: 'Zugangsdaten für TMDB, MyAnimeList und Hardcover.',
     ),
     SettingsArea(
+      key: 'eigenschaften',
+      label: 'Eigenschaften & Schlagwörter',
+      icon: FundusIcons.note,
+      description: 'Eigene Felder je Medienart und was davon geschützt ist.',
+    ),
+    SettingsArea(
       key: 'suche',
       label: 'Suche & Filter',
       icon: FundusIcons.search,
