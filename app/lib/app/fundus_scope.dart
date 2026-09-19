@@ -254,10 +254,16 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   }
 
   void _startCatchingUp() {
+    if (_catchUp != null || !mounted) return;
     _catchUp ??= Timer.periodic(
       catchUpEvery,
       (_) => unawaited(catchUpWithPeers()),
     );
+  }
+
+  void _stopCatchingUp() {
+    _catchUp?.cancel();
+    _catchUp = null;
   }
 
   /// Coming back to the app is the moment to look for what changed.
@@ -270,6 +276,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state != AppLifecycleState.resumed) {
+      // A backgrounded phone must not wake every 45 seconds just to ask for
+      // remote progress. Audio playback has its own media-session lifecycle;
+      // this timer is only a foreground convenience.
+      _stopCatchingUp();
       // Weglegen ist das Ende einer Sitzung, auch wenn nichts geschlossen
       // wurde. Auf dem Handy bleibt der Leser offen, wenn man zum Rechner
       // wechselt — und ein Stand, der erst beim Schließen loszieht, ist
@@ -280,6 +290,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     // Zurück in der App: erst die Stände der anderen Geräte — das ist
     // billig und beantwortet die Frage, die man beim Hinsehen hat —, und
     // erst danach die Frage nach neuen Dateien.
+    _startCatchingUp();
     unawaited(catchUpWithPeers());
     if (!settings.watchesLibrary) return;
     unawaited(library.checkForChanges());
@@ -390,7 +401,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     protection.removeListener(_applyProtection);
     peerLibraries.removeListener(_wireSources);
     _pushTimer?.cancel();
-    _catchUp?.cancel();
+    _stopCatchingUp();
     player.removeListener(_syncWhenClosed);
     reader.removeListener(_syncWhenClosed);
     textReader.removeListener(_syncWhenClosed);
