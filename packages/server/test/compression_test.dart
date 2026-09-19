@@ -105,6 +105,20 @@ void main() {
     expect(jsonDecode(utf8.decode(bytes)), isA<Map<String, Object?>>());
   });
 
+  test('der Katalog akzeptiert einen Cursor für die nächste Seite', () async {
+    final response = await fetch(
+      '/v1/libraries/$libraryId/catalogue?cursor=20',
+      gzip: false,
+    );
+    final bytes = await response.fold<List<int>>(
+      [],
+      (all, part) => all..addAll(part),
+    );
+    final decoded = jsonDecode(utf8.decode(bytes)) as Map;
+    expect(decoded['works'], hasLength(20));
+    expect(decoded.containsKey('next_cursor'), isFalse);
+  });
+
   test('eine kurze Antwort wird nicht gepackt', () async {
     final response = await fetch('/v1/libraries');
 

@@ -475,14 +475,23 @@ final class FundusRemoteClient {
     String libraryId, {
     Iterable<String>? ids,
   }) async {
-    final query = ids == null ? '' : '?ids=${ids.join(',')}';
-    final decoded = await _get('/v1/libraries/$libraryId/catalogue$query');
-    final entries = decoded['works'];
-    if (entries is! List) return const [];
-    return [
-      for (final entry in entries)
-        if (entry is Map) _recordFrom(Map<String, Object?>.from(entry)),
-    ];
+    final records = <RemoteWorkRecord>[];
+    String? cursor;
+    do {
+      final query = ids != null
+          ? '?ids=${ids.join(',')}'
+          : '?cursor=${cursor ?? '0'}';
+      final decoded = await _get('/v1/libraries/$libraryId/catalogue$query');
+      final entries = decoded['works'];
+      if (entries is! List) return records;
+      records.addAll([
+        for (final entry in entries)
+          if (entry is Map) _recordFrom(Map<String, Object?>.from(entry)),
+      ]);
+      final next = decoded['next_cursor'];
+      cursor = next is String && next.isNotEmpty && next != cursor ? next : null;
+    } while (ids == null && cursor != null);
+    return records;
   }
 
   static RemoteWorkRecord _recordFrom(Map<String, Object?> value) {

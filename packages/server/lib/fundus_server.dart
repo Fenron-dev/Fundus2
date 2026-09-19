@@ -495,14 +495,25 @@ final class FundusServerHandler {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
     final wanted = _idsParameter(request);
+    final visible = [
+      for (final work in entry.works)
+        if (_canViewWork(request, work))
+          if (wanted == null || wanted.contains(work.id)) work,
+    ];
+    // Explicit id batches are already bounded by the mirror. Cursor pages
+    // keep an initial catalogue response small without changing old clients.
+    final pageSize = wanted == null ? 100 : visible.length;
+    final cursor =
+        int.tryParse(request.url.queryParameters['cursor'] ?? '') ?? 0;
+    final start = cursor.clamp(0, visible.length).toInt();
+    final page = visible.skip(start).take(pageSize);
+    final next = start + page.length;
     return _json({
       'library_id': libraryId,
       'works': [
-        for (final work in entry.works)
-          if (_canViewWork(request, work))
-            if (wanted == null || wanted.contains(work.id))
-              _catalogueEntryAndRemember(entry, work),
+        for (final work in page) _catalogueEntryAndRemember(entry, work),
       ],
+      if (next < visible.length) 'next_cursor': '$next',
     });
   }
 
