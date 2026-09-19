@@ -3160,6 +3160,23 @@ final class FundusDatabase {
         'Der lokale Bestand wird gescannt, nicht gespiegelt.',
       );
     }
+    if (sourceId.trim().isEmpty) {
+      throw ArgumentError.value(sourceId, 'sourceId', 'Darf nicht leer sein.');
+    }
+    for (final work in works) {
+      if (work.id.trim().isEmpty) {
+        throw ArgumentError.value(work.id, 'work.id', 'Darf nicht leer sein.');
+      }
+      for (final file in work.files) {
+        if (file.id.trim().isEmpty) {
+          throw ArgumentError.value(
+            file.id,
+            'file.id',
+            'Darf nicht leer sein.',
+          );
+        }
+      }
+    }
     // Do this before BEGIN so a collision cannot leave a partially mirrored
     // catalogue behind. An existing row from the same source is the normal
     // update path; every other source needs the future stable-identity

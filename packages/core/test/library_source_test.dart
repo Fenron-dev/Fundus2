@@ -235,6 +235,22 @@ void main() {
     },
   );
 
+  test('a mirror rejects empty portable ids before writing anything', () {
+    final database = FundusDatabase.inMemory();
+    addTearDown(database.close);
+
+    expect(
+      () => database.mirrorRemoteCatalogue(
+        sourceId: 'peer-1',
+        works: const [
+          RemoteWorkRecord(id: '', kind: 'book', title: 'Ungültig'),
+        ],
+      ),
+      throwsArgumentError,
+    );
+    expect(database.rawQuery('SELECT id FROM works'), isEmpty);
+  });
+
   test('an offline copy survives its source going away', () {
     final database = FundusDatabase.inMemory();
     addTearDown(database.close);
