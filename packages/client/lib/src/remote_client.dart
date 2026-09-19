@@ -489,7 +489,9 @@ final class FundusRemoteClient {
           if (entry is Map) _recordFrom(Map<String, Object?>.from(entry)),
       ]);
       final next = decoded['next_cursor'];
-      cursor = next is String && next.isNotEmpty && next != cursor ? next : null;
+      cursor = next is String && next.isNotEmpty && next != cursor
+          ? next
+          : null;
     } while (ids == null && cursor != null);
     return records;
   }
