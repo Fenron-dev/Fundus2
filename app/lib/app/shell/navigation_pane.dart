@@ -208,8 +208,7 @@ class _NavigationPaneState extends State<NavigationPane> {
   ///
   /// „Dashboard", „Alle Werke", „Favoriten" und „Nicht zugeordnet" gelten
   /// über alle Bibliotheken hinweg und bleiben deshalb oben stehen.
-  static bool _isMediaTypeEntry(NavigationEntry entry) =>
-      entry.mediaTypeEntry;
+  static bool _isMediaTypeEntry(NavigationEntry entry) => entry.mediaTypeEntry;
 
   List<({String path, String label, MediaTypeDefinition type, int count})>
   _configuredRootEntries(FundusScopeState scope) {

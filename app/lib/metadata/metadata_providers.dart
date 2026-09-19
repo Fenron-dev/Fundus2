@@ -1162,7 +1162,10 @@ final class MyAnimeListProvider implements MetadataProvider {
         final decoded = _decodeObject(response, provider);
         final data = decoded['data'];
         if (data is! List) {
-          throw MetadataProviderException(provider, 'Die Antwort ist ungültig.');
+          throw MetadataProviderException(
+            provider,
+            'Die Antwort ist ungültig.',
+          );
         }
         found.addAll([
           for (final item in data)
@@ -1362,7 +1365,10 @@ final class HardcoverProvider implements MetadataProvider {
     required String token,
     http.Client? client,
     this.endpoint = _defaultEndpoint,
-  }) : _token = token.trim().replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), '').trim(),
+  }) : _token = token
+           .trim()
+           .replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), '')
+           .trim(),
        _client = client ?? createMetadataHttpClient();
 
   static const _defaultEndpoint = 'https://api.hardcover.app/v1/graphql';
@@ -1444,8 +1450,7 @@ query Books($where: books_bool_exp!, $limit: Int!) {
     }
     final searchDocuments = _searchDocuments(result['results']);
     final ids = <int>{
-      for (final id
-          in result['ids'] is List ? result['ids'] as List : const [])
+      for (final id in result['ids'] is List ? result['ids'] as List : const [])
         if (_integer(id) case final id?) id,
       if (result['ids'] is! List || (result['ids'] as List).isEmpty)
         for (final document in searchDocuments)
@@ -1453,7 +1458,9 @@ query Books($where: books_bool_exp!, $limit: Int!) {
     };
     if (ids.isEmpty) return const [];
     return _books(
-      {'id': {'_in': ids.take(resultLimit).toList()}},
+      {
+        'id': {'_in': ids.take(resultLimit).toList()},
+      },
       limit: resultLimit,
       language: language,
       searchDocuments: searchDocuments,
@@ -1490,9 +1497,11 @@ query Books($where: books_bool_exp!, $limit: Int!) {
         for (var index = 0; index < orderedIds.length; index++)
           '${orderedIds[index]}': index,
       };
-      candidates.sort((a, b) => (positions[a.providerId] ?? limit).compareTo(
-        positions[b.providerId] ?? limit,
-      ));
+      candidates.sort(
+        (a, b) => (positions[a.providerId] ?? limit).compareTo(
+          positions[b.providerId] ?? limit,
+        ),
+      );
     }
     return candidates.take(limit).toList();
   }
@@ -1504,15 +1513,15 @@ query Books($where: books_bool_exp!, $limit: Int!) {
     try {
       final response = await retryTransport(
         () => _client.post(
-            Uri.parse(endpoint),
-            headers: {
-              'accept': 'application/json',
-              'content-type': 'application/json',
-              'authorization': 'Bearer $_token',
-              'user-agent': metadataUserAgent,
-            },
-            body: jsonEncode({'query': query, 'variables': variables}),
-          ),
+          Uri.parse(endpoint),
+          headers: {
+            'accept': 'application/json',
+            'content-type': 'application/json',
+            'authorization': 'Bearer $_token',
+            'user-agent': metadataUserAgent,
+          },
+          body: jsonEncode({'query': query, 'variables': variables}),
+        ),
         provider: provider,
       );
       if (response.statusCode == 401 || response.statusCode == 403) {
@@ -1539,9 +1548,9 @@ query Books($where: books_bool_exp!, $limit: Int!) {
     final series = value['book_series'] is List
         ? (value['book_series'] as List).whereType<Map>().toList()
         : const <Map>[];
-    final firstSeries = series
-        .where((entry) => entry['featured'] == true)
-        .firstOrNull ?? series.firstOrNull;
+    final firstSeries =
+        series.where((entry) => entry['featured'] == true).firstOrNull ??
+        series.firstOrNull;
     final seriesMap = firstSeries?['series'];
     final seriesName = seriesMap is Map
         ? _firstString([seriesMap['name']])
@@ -1563,7 +1572,9 @@ query Books($where: books_bool_exp!, $limit: Int!) {
         final name = author is Map ? _firstString([author['name']]) : null;
         if (name == null) continue;
         final role = _firstString([contribution['contribution']]) ?? 'Author';
-        if (!credits.any((credit) => credit.name == name && credit.role == role)) {
+        if (!credits.any(
+          (credit) => credit.name == name && credit.role == role,
+        )) {
           credits.add(MetadataPerson(name: name, role: role));
         }
         if (const {'author', 'writer', 'autor'}.contains(role.toLowerCase()) &&
@@ -1580,16 +1591,25 @@ query Books($where: books_bool_exp!, $limit: Int!) {
     ];
     // Prefer a matching edition; do not label a book with the UI language
     // unless Hardcover actually reports that language for the edition.
-    final edition = editions.where((entry) =>
-      _stringFromMap(entry['language'], 'code2') == language?.split('-').first,
-    ).firstOrNull ?? editions.firstOrNull;
-    final year = _integer(value['release_year']) ?? _year(value['release_date']);
+    final edition =
+        editions
+            .where(
+              (entry) =>
+                  _stringFromMap(entry['language'], 'code2') ==
+                  language?.split('-').first,
+            )
+            .firstOrNull ??
+        editions.firstOrNull;
+    final year =
+        _integer(value['release_year']) ?? _year(value['release_date']);
     return MetadataCandidate(
       provider: provider,
       providerId: '$id',
       title: title,
       alternateTitles: [
-        ..._strings(value['alternative_titles']).where((value) => value != title),
+        ..._strings(
+          value['alternative_titles'],
+        ).where((value) => value != title),
         if (value['subtitle'] is String && value['subtitle'] != title)
           value['subtitle'] as String,
       ],
@@ -1635,37 +1655,55 @@ query Books($where: books_bool_exp!, $limit: Int!) {
   );
 
   static Map<String, Object?>? _lookup(String query) {
-    final explicitId = RegExp(r'^hardcover:(\d+)$', caseSensitive: false)
-        .firstMatch(query);
+    final explicitId = RegExp(
+      r'^hardcover:(\d+)$',
+      caseSensitive: false,
+    ).firstMatch(query);
     final uri = Uri.tryParse(query);
     String? identifier = explicitId?.group(1);
     if (uri != null &&
         const {'https', 'http'}.contains(uri.scheme) &&
         const {'hardcover.app', 'www.hardcover.app'}.contains(uri.host) &&
-        uri.pathSegments.length >= 2 && uri.pathSegments.first == 'books') {
+        uri.pathSegments.length >= 2 &&
+        uri.pathSegments.first == 'books') {
       identifier = uri.pathSegments[1];
     }
     if (identifier == null || identifier.isEmpty) return null;
     final id = _integer(identifier);
-    return id == null ? {'slug': {'_eq': identifier}} : {'id': {'_eq': id}};
+    return id == null
+        ? {
+            'slug': {'_eq': identifier},
+          }
+        : {
+            'id': {'_eq': id},
+          };
   }
 
   static int? _integer(Object? value) {
     final number = _number(value);
     return number != null && number > 0 && number == number.roundToDouble()
-        ? number.toInt() : null;
+        ? number.toInt()
+        : null;
   }
 
   static double? _number(Object? value) {
-    final number = value is num ? value.toDouble()
-        : value is String ? double.tryParse(value) : null;
+    final number = value is num
+        ? value.toDouble()
+        : value is String
+        ? double.tryParse(value)
+        : null;
     return number != null && number.isFinite ? number : null;
   }
 
-  static List<String> _strings(Object? value) => value is List ? [
-    ...value.whereType<String>().map((value) => value.trim())
-        .where((value) => value.isNotEmpty).toSet(),
-  ] : const [];
+  static List<String> _strings(Object? value) => value is List
+      ? [
+          ...value
+              .whereType<String>()
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .toSet(),
+        ]
+      : const [];
 
   static Map<String, Object?>? _object(Object? value) =>
       value is Map ? Map<String, Object?>.from(value) : null;

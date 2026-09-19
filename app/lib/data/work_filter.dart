@@ -154,7 +154,10 @@ final class WorkFilter {
     final areas = mediaRoot == null
         ? null
         : MediaAreaMap(
-            configuration?.mediaRoots ?? {'selected': [mediaRoot!]},
+            configuration?.mediaRoots ??
+                {
+                  'selected': [mediaRoot!],
+                },
           );
 
     final matched = works.where((work) {

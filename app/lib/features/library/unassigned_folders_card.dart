@@ -171,60 +171,62 @@ showMediaRootAssignmentDialog(
                   ? 'Medienordner hinzufügen'
                   : '„$folder“ zuordnen',
             ),
-            content: SingleChildScrollView(child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: displayController,
-                  decoration: const InputDecoration(
-                    labelText: 'Anzeigename',
-                    hintText: 'z. B. H-Manga oder Meine Romane',
-                    border: OutlineInputBorder(),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: displayController,
+                    decoration: const InputDecoration(
+                      labelText: 'Anzeigename',
+                      hintText: 'z. B. H-Manga oder Meine Romane',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                const SizedBox(height: FundusSpace.x3),
-                TextField(
-                  controller: folderController,
-                  readOnly: editing,
-                  autofocus: folder.isEmpty,
-                  decoration: const InputDecoration(
-                    labelText: 'Ordnername',
-                    hintText: 'z. B. Hentai oder Comics',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: FundusSpace.x3),
+                  TextField(
+                    controller: folderController,
+                    readOnly: editing,
+                    autofocus: folder.isEmpty,
+                    decoration: const InputDecoration(
+                      labelText: 'Ordnername',
+                      hintText: 'z. B. Hentai oder Comics',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                if (editing) ...[
-                  const SizedBox(height: FundusSpace.x2),
-                  const Text(
-                    'Der Anzeigename ändert die Seitenleiste. Der Ordner auf '
-                    'dem Datenträger bleibt unverändert.',
+                  if (editing) ...[
+                    const SizedBox(height: FundusSpace.x2),
+                    const Text(
+                      'Der Anzeigename ändert die Seitenleiste. Der Ordner auf '
+                      'dem Datenträger bleibt unverändert.',
+                    ),
+                  ],
+                  const SizedBox(height: FundusSpace.x3),
+                  DropdownButtonFormField<MediaTypeDefinition>(
+                    initialValue: selected,
+                    decoration: const InputDecoration(
+                      labelText: 'Interner Medientyp',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final type in assignable)
+                        DropdownMenuItem(value: type, child: Text(type.label)),
+                    ],
+                    onChanged: (value) => setState(() => selected = value!),
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Als HHH kennzeichnen'),
+                    subtitle: const Text(
+                      'Alle Werke unter diesem Ordner werden geschützt.',
+                    ),
+                    value: sensitive,
+                    onChanged: (value) => setState(() => sensitive = value),
                   ),
                 ],
-                const SizedBox(height: FundusSpace.x3),
-                DropdownButtonFormField<MediaTypeDefinition>(
-                  initialValue: selected,
-                  decoration: const InputDecoration(
-                    labelText: 'Interner Medientyp',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    for (final type in assignable)
-                      DropdownMenuItem(value: type, child: Text(type.label)),
-                  ],
-                  onChanged: (value) => setState(() => selected = value!),
-                ),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Als HHH kennzeichnen'),
-                  subtitle: const Text(
-                    'Alle Werke unter diesem Ordner werden geschützt.',
-                  ),
-                  value: sensitive,
-                  onChanged: (value) => setState(() => sensitive = value),
-                ),
-              ],
-            )),
+              ),
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),

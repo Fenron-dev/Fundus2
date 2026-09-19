@@ -59,11 +59,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     final works = section == null
         ? filtered
-        : worksInSection(
-            section,
-            filtered,
-            seed: scope.suggestionSeed,
-          );
+        : worksInSection(section, filtered, seed: scope.suggestionSeed);
 
     final grouping = filter.grouping;
     final groupings =
