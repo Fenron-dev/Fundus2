@@ -551,6 +551,7 @@ class _Libraries extends StatelessWidget {
       sensitive: result.sensitive,
       displayName: result.displayName,
     );
+    await scope.settings.setMediaRootInNavigation(result.folder, true);
   }
 
   Future<void> _editMediaRoot(
@@ -578,6 +579,7 @@ class _Libraries extends StatelessWidget {
       displayName: entry.displayName,
       selectedKind: type.configurationKind,
       initiallySensitive: entry.sensitive,
+      editing: true,
       assignable: assignable,
     );
     if (result == null) return;
@@ -733,11 +735,12 @@ class _ScanCardState extends State<_ScanCard> {
   }
 }
 
-/// Configured roots that actually contain indexed works.
+/// Populated roots and explicitly configured empty roots remain editable.
 ///
 /// Defaults contain several language aliases, so listing every configured
 /// name would turn this into a long list of folders that do not exist. A root
-/// becomes relevant as soon as the index contains at least one work below it.
+/// Default aliases without content stay out of the way; an added root must
+/// stay reachable even before files have been copied into it.
 List<
   ({
     String typeLabel,
@@ -766,14 +769,13 @@ _mediaRoots(FundusScopeState scope) {
     final sensitive = library.configuration.sensitiveRootsFor(kind).toSet();
     final roots = library.configuration.rootsFor(kind);
     for (final root in roots) {
-      final wanted = root.replaceAll('\\', '/').toLowerCase();
-      final count = scope.library.works.where((work) {
-        final path = work.summary.sourcePath
-            .replaceAll('\\', '/')
-            .toLowerCase();
-        return path == wanted || path.startsWith('$wanted/');
-      }).length;
-      if (count == 0) continue;
+      if (sensitive.contains(root) && !scope.protection.isUnlocked) continue;
+      final count = scope.library.worksPerMediaRoot[root] ?? 0;
+      final explicitlyConfigured =
+          !(LibraryConfiguration.defaults[kind]?.contains(root) ?? false) ||
+          library.configuration.mediaRootLabels.containsKey(root) ||
+          scope.settings.navigationMediaRoots.contains(root);
+      if (count == 0 && !explicitlyConfigured) continue;
       entries.add((
         typeLabel: type.label,
         root: root,

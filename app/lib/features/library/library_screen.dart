@@ -53,11 +53,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
     // Eine Reihe von der Bühne, ganz: dieselben Werke, nur in der Ordnung,
     // die ihre Überschrift versprochen hat.
     final section = route.section;
+    final filtered = filter.apply(
+      scope.library.works,
+      configuration: scope.library.library?.configuration,
+    );
     final works = section == null
-        ? filter.apply(scope.library.works)
+        ? filtered
         : worksInSection(
             section,
-            filter.apply(scope.library.works),
+            filtered,
             seed: scope.suggestionSeed,
           );
 

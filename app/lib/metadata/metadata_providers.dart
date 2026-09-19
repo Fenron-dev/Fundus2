@@ -32,8 +32,8 @@ enum MetadataProviderKind {
   anilistManga('AniList (Manga & Manhwa)'),
   anilistAdultAnime('AniList (Hentai Anime)'),
   anilistAdultManga('AniList (Hentai Manga & Novel)'),
-  myAnimeList('MyAnimeList über Jikan (Ausweichweg)'),
-  myAnimeListAdult('MyAnimeList über Jikan (Hentai)'),
+  myAnimeList('MyAnimeList (öffentliche Suche)'),
+  myAnimeListAdult('MyAnimeList (öffentliche Hentai-Suche)'),
   myAnimeListApi('MyAnimeList (Anime & Manga)'),
   myAnimeListApiAdult('MyAnimeList (Hentai)'),
   mangaDex('MangaDex (Manga, Manhwa & Manhua)'),
@@ -308,6 +308,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
   Page(perPage: $perPage) {
     media(search: $search, type: $type, isAdult: $isAdult, sort: SEARCH_MATCH) {
       id
+      idMal
       type
       format
       isAdult
@@ -377,7 +378,9 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
             'search': normalizedQuery,
             'perPage': limit.clamp(1, 50),
             'type': type,
-            'isAdult': includeAdult ? true : null,
+            // AniList treats an explicit null as a filter, not as an omitted
+            // argument: ordinary titles then return HTTP 200 with no matches.
+            'isAdult': includeAdult,
           },
         }),
       ),
@@ -426,7 +429,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
       alternateTitles: alternateTitles.toList(growable: false),
       authors: _staff(value['staff']),
       workKind: type == 'MANGA'
-          ? 'manga'
+          ? (format == 'NOVEL' ? 'novel' : 'manga')
           : format == 'MOVIE'
           ? 'movie'
           : 'tv',
@@ -451,7 +454,10 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
           _stringFromMap(value['coverImage'], 'medium'),
       backdropUrl: value['bannerImage'] as String?,
       credits: _credits(value),
-      externalIds: {'anilist': '${id.round()}'},
+      externalIds: {
+        'anilist': '${id.round()}',
+        if (value['idMal'] case final num malId) 'mal': '${malId.round()}',
+      },
     );
   }
 
@@ -910,7 +916,11 @@ final class MyAnimeListApiProvider implements MetadataProvider {
       providerId: '${id.round()}',
       title: title.trim(),
       alternateTitles: alternates,
-      workKind: kind == 'anime' ? 'anime' : 'manga',
+      workKind: kind == 'anime'
+          ? 'anime'
+          : '${node['media_type']}'.contains('novel')
+          ? 'novel'
+          : 'manga',
       authors: [
         if (node['authors'] case final List authors)
           for (final author in authors)
@@ -1101,13 +1111,10 @@ final class MangaDexProvider implements MetadataProvider {
   }
 }
 
-/// MyAnimeList through the public Jikan API, without account or secret.
-///
-/// Jikan spiegelt MyAnimeList und ist deshalb nur so verfügbar wie die
-/// Verbindung zwischen beiden: fällt sie aus, antwortet Jikan mit HTTP 504,
-/// und zwar sofort statt nach einer Zeitüberschreitung. Daran ändert kein
-/// Wiederholen etwas. `includeAdult` steuert hier nur noch, wie ein Treffer
-/// gekennzeichnet wird — gefiltert wird nicht mehr beim Anbieter.
+/// MyAnimeList without credentials: Jikan, with MAL's public website search
+/// as a fallback. The latter supplies only title, image, year, type and id —
+/// never invented full metadata. It is an undocumented public JSON endpoint;
+/// the official API with a personal Client-ID remains the complete route.
 final class MyAnimeListProvider implements MetadataProvider {
   MyAnimeListProvider({http.Client? client, this.includeAdult = false})
     : _client = client ?? createMetadataHttpClient();
@@ -1130,9 +1137,9 @@ final class MyAnimeListProvider implements MetadataProvider {
   }) async {
     final q = query.trim();
     if (q.isEmpty) return const [];
-    // Jikan rate-limits anime and manga independently. One 429 or transient
-    // failure must not discard valid results from the other catalogue.
-    final responses = <({String kind, http.Response response})>[];
+    // One broken catalogue must not discard the other's results. Jikan's
+    // connection to MAL can fail while MAL itself remains accessible.
+    final found = <MetadataCandidate>[];
     MetadataProviderException? firstFailure;
     for (final kind in const ['anime', 'manga']) {
       try {
@@ -1152,24 +1159,107 @@ final class MyAnimeListProvider implements MetadataProvider {
             },
           ),
         );
-        _decodeObject(response, provider);
-        responses.add((kind: kind, response: response));
+        final decoded = _decodeObject(response, provider);
+        final data = decoded['data'];
+        if (data is! List) {
+          throw MetadataProviderException(provider, 'Die Antwort ist ungültig.');
+        }
+        found.addAll([
+          for (final item in data)
+            if (item is Map) ?_candidate(item, kind: kind, query: q),
+        ]);
       } on MetadataProviderException catch (error) {
-        firstFailure ??= error;
+        try {
+          found.addAll(await _websiteSearch(q, kind: kind, limit: limit));
+        } on MetadataProviderException catch (fallbackError) {
+          firstFailure ??= MetadataProviderException(
+            provider,
+            '${error.message} Auch die öffentliche MyAnimeList-Suche ist '
+            'nicht verfügbar: ${fallbackError.message}',
+          );
+        }
       }
     }
-    if (responses.isEmpty && firstFailure != null) throw firstFailure;
-    return [
-      for (final entry in responses)
-        if (_decodeObject(entry.response, provider)['data']
-            case final List data)
-          for (final item in data)
-            if (item is Map) ?_candidate(item, kind: entry.kind, query: q),
-    ];
+    if (found.isEmpty && firstFailure != null) throw firstFailure;
+    return found;
   }
 
   Future<http.Response> _request(Future<http.Response> Function() request) =>
-      retryTransport(request, provider: provider);
+      retryTransport(() async {
+        final response = await request();
+        // This explicitly reported upstream failure is not a client timeout.
+        // Repeating it cannot fix Jikan's connection; try MAL directly now.
+        if (response.statusCode == 504 &&
+            _decodeBody(response).contains('Jikan failed to connect')) {
+          _decodeObject(response, provider);
+        }
+        return response;
+      }, provider: provider);
+
+  Future<List<MetadataCandidate>> _websiteSearch(
+    String query, {
+    required String kind,
+    required int limit,
+  }) async {
+    final response = await retryTransport(
+      () => _client.get(
+        Uri.https('myanimelist.net', '/search/prefix.json', {
+          'type': kind,
+          'keyword': query,
+        }),
+        headers: const {
+          'accept': 'application/json',
+          'user-agent': metadataUserAgent,
+        },
+      ),
+      provider: provider,
+      attempts: 2,
+    );
+    final decoded = _decodeObject(response, provider);
+    final categories = decoded['categories'];
+    if (categories is! List) {
+      throw MetadataProviderException(provider, 'Die Antwort ist ungültig.');
+    }
+    final found = <MetadataCandidate>[];
+    for (final category in categories) {
+      if (category is! Map || category['type'] != kind) continue;
+      if (category['items'] case final List items) {
+        for (final item in items) {
+          if (item is! Map || item['type'] != kind) continue;
+          final id = item['id'];
+          final title = _firstString([item['name']]);
+          if (id is! num || id <= 0 || title == null) continue;
+          final payload = item['payload'];
+          final mediaType = payload is Map
+              ? '${payload['media_type'] ?? ''}'.toLowerCase()
+              : '';
+          final year = payload is Map ? payload['start_year'] : null;
+          found.add(
+            MetadataCandidate(
+              provider: provider,
+              providerId: '${id.round()}',
+              title: title,
+              workKind: kind == 'anime'
+                  ? 'anime'
+                  : mediaType.contains('novel')
+                  ? 'novel'
+                  : 'manga',
+              releaseYear: year is num && year > 0 ? year.round() : null,
+              posterUrl: _firstString([item['image_url']]),
+              // The website does not report age ratings. Never mark an
+              // unknown entry safe; explicit adult mode remains protected.
+              isAdult: includeAdult ? true : null,
+              contentSensitivity: includeAdult ? 'adult_explicit' : null,
+              externalIds: {'mal': '${id.round()}'},
+            ),
+          );
+        }
+      } else {
+        throw MetadataProviderException(provider, 'Die Antwort ist ungültig.');
+      }
+    }
+    return found.take(limit.clamp(1, 25)).toList(growable: false);
+  }
 
   MetadataCandidate? _candidate(
     Map value, {
@@ -1220,6 +1310,9 @@ final class MyAnimeListProvider implements MetadataProvider {
       for (final raw in [
         ...(value['genres'] is List ? value['genres'] as List : const []),
         ...(value['themes'] is List ? value['themes'] as List : const []),
+        ...(value['explicit_genres'] is List
+            ? value['explicit_genres'] as List
+            : const []),
       ])
         if (raw is Map && raw['name'] is String) raw['name'] as String,
     ];
@@ -1228,6 +1321,12 @@ final class MyAnimeListProvider implements MetadataProvider {
           in value['authors'] is List ? value['authors'] as List : const [])
         if (raw is Map && raw['name'] is String) raw['name'] as String,
     ];
+    final adult =
+        includeAdult ||
+        '${value['rating'] ?? ''}'.startsWith('Rx') ||
+        genres.any(
+          (genre) => const ['hentai', 'erotica'].contains(genre.toLowerCase()),
+        );
     return MetadataCandidate(
       provider: provider,
       providerId: '$id',
@@ -1240,9 +1339,9 @@ final class MyAnimeListProvider implements MetadataProvider {
           ? 'novel'
           : 'manga',
       contentStyle: 'anime',
-      contentSensitivity: includeAdult ? 'adult_explicit' : null,
+      contentSensitivity: adult ? 'adult_explicit' : null,
       releaseYear: year,
-      isAdult: includeAdult,
+      isAdult: adult,
       description: _cleanDescription(value['synopsis']),
       language: 'ja',
       genres: genres,
@@ -1263,32 +1362,37 @@ final class HardcoverProvider implements MetadataProvider {
     required String token,
     http.Client? client,
     this.endpoint = _defaultEndpoint,
-  }) : _token = token.trim(),
+  }) : _token = token.trim().replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), '').trim(),
        _client = client ?? createMetadataHttpClient();
 
   static const _defaultEndpoint = 'https://api.hardcover.app/v1/graphql';
   static const _searchQuery = r'''
 query Search($query: String!, $limit: Int!) {
   search(query: $query, query_type: "book", per_page: $limit) {
+    error
     ids
     results
   }
 }
 ''';
   static const _booksQuery = r'''
-query Books($ids: [Int!]!) {
-  books(where: {id: {_in: $ids}}) {
+query Books($where: books_bool_exp!, $limit: Int!) {
+  books(where: $where, limit: $limit) {
     id
     title
     subtitle
+    alternative_titles
     description
     release_year
     release_date
     pages
     image { url }
     cached_image
+    cached_header_image
     contributions { contribution author { name } }
-    book_series { position series { name } }
+    book_series { featured position series { name } }
+    default_ebook_edition { publisher { name } language { code2 } }
+    default_physical_edition { publisher { name } language { code2 } }
   }
 }
 ''';
@@ -1318,26 +1422,79 @@ query Books($ids: [Int!]!) {
     }
     final normalized = query.trim();
     if (normalized.isEmpty) return const [];
+    final resultLimit = limit.clamp(1, 25);
+    final directLookup = _lookup(normalized);
+    if (directLookup != null) {
+      return _books(directLookup, limit: resultLimit, language: language);
+    }
     final search = await _request(_searchQuery, {
       'query': normalized,
-      'limit': limit.clamp(1, 25),
+      'limit': resultLimit,
     });
     final payload = _object(search['data']);
     final result = _object(payload?['search']);
+    if (result == null) throw _invalidResponse();
+    if (_firstString([result['error']]) != null) {
+      // SearchOutput.error is not a GraphQL-level error. It used to be
+      // mistaken for an empty catalogue, making service outages invisible.
+      throw MetadataProviderException(
+        provider,
+        'Die Hardcover-Suche ist derzeit nicht verfügbar. Bitte später erneut versuchen.',
+      );
+    }
+    final searchDocuments = _searchDocuments(result['results']);
     final ids = <int>{
       for (final id
-          in result?['ids'] is List ? result!['ids'] as List : const [])
-        if (id is num) id.round(),
+          in result['ids'] is List ? result['ids'] as List : const [])
+        if (_integer(id) case final id?) id,
+      if (result['ids'] is! List || (result['ids'] as List).isEmpty)
+        for (final document in searchDocuments)
+          if (_integer(document['id']) case final id?) id,
     };
-    if (ids.isEmpty) return _candidatesFromSearchJson(result?['results']);
-    final books = await _request(_booksQuery, {'ids': ids.toList()});
+    if (ids.isEmpty) return const [];
+    return _books(
+      {'id': {'_in': ids.take(resultLimit).toList()}},
+      limit: resultLimit,
+      language: language,
+      searchDocuments: searchDocuments,
+      orderedIds: ids.toList(),
+    );
+  }
+
+  Future<List<MetadataCandidate>> _books(
+    Map<String, Object?> where, {
+    required int limit,
+    String? language,
+    List<Map> searchDocuments = const [],
+    List<int> orderedIds = const [],
+  }) async {
+    final books = await _request(_booksQuery, {'where': where, 'limit': limit});
     final data = _object(books['data']);
     final values = data?['books'];
-    if (values is! List) return const [];
-    return [
+    if (values is! List) throw _invalidResponse();
+    final documentsById = {
+      for (final document in searchDocuments)
+        if (_integer(document['id']) case final id?) id: document,
+    };
+    final candidates = [
       for (final value in values)
-        if (value is Map) ?_candidate(value, language: language),
+        if (value is Map)
+          ?_candidate({
+            ...?documentsById[_integer(value['id'])],
+            ...value,
+          }, language: language),
     ];
+    // Hasura's _in filter does not preserve the Typesense relevance order.
+    if (orderedIds.isNotEmpty) {
+      final positions = {
+        for (var index = 0; index < orderedIds.length; index++)
+          '${orderedIds[index]}': index,
+      };
+      candidates.sort((a, b) => (positions[a.providerId] ?? limit).compareTo(
+        positions[b.providerId] ?? limit,
+      ));
+    }
+    return candidates.take(limit).toList();
   }
 
   Future<Map<String, Object?>> _request(
@@ -1345,8 +1502,8 @@ query Books($ids: [Int!]!) {
     Map<String, Object?> variables,
   ) async {
     try {
-      final response = await _client
-          .post(
+      final response = await retryTransport(
+        () => _client.post(
             Uri.parse(endpoint),
             headers: {
               'accept': 'application/json',
@@ -1355,8 +1512,16 @@ query Books($ids: [Int!]!) {
               'user-agent': metadataUserAgent,
             },
             body: jsonEncode({'query': query, 'variables': variables}),
-          )
-          .timeout(const Duration(seconds: 15));
+          ),
+        provider: provider,
+      );
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        throw MetadataProviderException(
+          provider,
+          'Hardcover hat den API-Token abgelehnt. Bitte den aktuellen Token '
+          'unter hardcover.app/account/api holen und in den Einstellungen ersetzen.',
+        );
+      }
       return _decodeObject(response, provider);
     } on TimeoutException {
       throw MetadataProviderException(provider, 'Zeitüberschreitung');
@@ -1368,20 +1533,20 @@ query Books($ids: [Int!]!) {
   }
 
   MetadataCandidate? _candidate(Map value, {String? language}) {
-    final id = value['id'];
+    final id = _integer(value['id']);
     final title = _firstString([value['title'], value['subtitle']]);
-    if (id is! num || title == null) return null;
-    final series = value['book_series'];
-    final firstSeries = series is List && series.isNotEmpty
-        ? series.first
-        : null;
-    final seriesMap = firstSeries is Map ? firstSeries['series'] : null;
+    if (id == null || title == null) return null;
+    final series = value['book_series'] is List
+        ? (value['book_series'] as List).whereType<Map>().toList()
+        : const <Map>[];
+    final firstSeries = series
+        .where((entry) => entry['featured'] == true)
+        .firstOrNull ?? series.firstOrNull;
+    final seriesMap = firstSeries?['series'];
     final seriesName = seriesMap is Map
         ? _firstString([seriesMap['name']])
         : null;
-    final position = firstSeries is Map
-        ? (firstSeries['position'] as num?)?.toDouble()
-        : null;
+    final position = _number(firstSeries?['position']);
     final image = value['image'];
     final cachedImage = value['cached_image'];
     final poster = _firstString([
@@ -1390,43 +1555,117 @@ query Books($ids: [Int!]!) {
     ]);
     final contributions = value['contributions'];
     final authors = <String>[];
+    final credits = <MetadataPerson>[];
     if (contributions is List) {
       for (final contribution in contributions) {
         if (contribution is! Map) continue;
         final author = contribution['author'];
         final name = author is Map ? _firstString([author['name']]) : null;
-        if (name != null && !authors.contains(name)) authors.add(name);
+        if (name == null) continue;
+        final role = _firstString([contribution['contribution']]) ?? 'Author';
+        if (!credits.any((credit) => credit.name == name && credit.role == role)) {
+          credits.add(MetadataPerson(name: name, role: role));
+        }
+        if (const {'author', 'writer', 'autor'}.contains(role.toLowerCase()) &&
+            !authors.contains(name)) {
+          authors.add(name);
+        }
       }
     }
-    final year =
-        (value['release_year'] as num?)?.round() ??
-        _year(value['release_date']);
+    final editions = [
+      if (value['default_ebook_edition'] is Map)
+        value['default_ebook_edition'] as Map,
+      if (value['default_physical_edition'] is Map)
+        value['default_physical_edition'] as Map,
+    ];
+    // Prefer a matching edition; do not label a book with the UI language
+    // unless Hardcover actually reports that language for the edition.
+    final edition = editions.where((entry) =>
+      _stringFromMap(entry['language'], 'code2') == language?.split('-').first,
+    ).firstOrNull ?? editions.firstOrNull;
+    final year = _integer(value['release_year']) ?? _year(value['release_date']);
     return MetadataCandidate(
       provider: provider,
-      providerId: '${id.round()}',
+      providerId: '$id',
       title: title,
       alternateTitles: [
+        ..._strings(value['alternative_titles']).where((value) => value != title),
         if (value['subtitle'] is String && value['subtitle'] != title)
           value['subtitle'] as String,
       ],
       authors: authors,
-      workKind: 'novel',
+      // Hardcover also contains non-fiction; an entry is not necessarily a novel.
+      workKind: 'ebook',
       series: seriesName,
       seriesSequence: position,
       releaseYear: year,
       description: _cleanDescription(value['description']),
+      publisher: _stringFromMap(edition?['publisher'], 'name'),
+      language: _stringFromMap(edition?['language'], 'code2'),
+      genres: _strings(value['genres']),
       posterUrl: poster,
-      externalIds: {'hardcover': '${id.round()}'},
+      backdropUrl: _stringFromMap(value['cached_header_image'], 'url'),
+      credits: credits,
+      externalIds: {'hardcover': '$id'},
     );
   }
 
-  List<MetadataCandidate> _candidatesFromSearchJson(Object? raw) {
+  static List<Map> _searchDocuments(Object? raw) {
+    // `results` is opaque jsonb: deployments return either the Typesense
+    // object, a hits list, or its JSON string representation.
+    if (raw is String) {
+      try {
+        raw = jsonDecode(raw);
+      } on FormatException {
+        return const [];
+      }
+    }
+    if (raw is Map) raw = raw['hits'];
     if (raw is! List) return const [];
     return [
       for (final value in raw)
-        if (value is Map) ?_candidate(value),
+        if (value is Map)
+          value['document'] is Map ? value['document'] as Map : value,
     ];
   }
+
+  MetadataProviderException _invalidResponse() => MetadataProviderException(
+    provider,
+    'Hardcover hat eine unvollständige Antwort geliefert. Bitte erneut versuchen.',
+  );
+
+  static Map<String, Object?>? _lookup(String query) {
+    final explicitId = RegExp(r'^hardcover:(\d+)$', caseSensitive: false)
+        .firstMatch(query);
+    final uri = Uri.tryParse(query);
+    String? identifier = explicitId?.group(1);
+    if (uri != null &&
+        const {'https', 'http'}.contains(uri.scheme) &&
+        const {'hardcover.app', 'www.hardcover.app'}.contains(uri.host) &&
+        uri.pathSegments.length >= 2 && uri.pathSegments.first == 'books') {
+      identifier = uri.pathSegments[1];
+    }
+    if (identifier == null || identifier.isEmpty) return null;
+    final id = _integer(identifier);
+    return id == null ? {'slug': {'_eq': identifier}} : {'id': {'_eq': id}};
+  }
+
+  static int? _integer(Object? value) {
+    final number = _number(value);
+    return number != null && number > 0 && number == number.roundToDouble()
+        ? number.toInt() : null;
+  }
+
+  static double? _number(Object? value) {
+    final number = value is num ? value.toDouble()
+        : value is String ? double.tryParse(value) : null;
+    return number != null && number.isFinite ? number : null;
+  }
+
+  static List<String> _strings(Object? value) => value is List ? [
+    ...value.whereType<String>().map((value) => value.trim())
+        .where((value) => value.isNotEmpty).toSet(),
+  ] : const [];
 
   static Map<String, Object?>? _object(Object? value) =>
       value is Map ? Map<String, Object?>.from(value) : null;

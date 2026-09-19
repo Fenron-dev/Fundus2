@@ -145,9 +145,17 @@ final class WorkFilter {
     return 'Es filtern gerade: ${reasons.join(' und ')}.';
   }
 
-  List<WorkView> apply(List<WorkView> works) {
+  List<WorkView> apply(
+    List<WorkView> works, {
+    LibraryConfiguration? configuration,
+  }) {
     final type = mediaTypeId == null ? null : MediaTypes.byId(mediaTypeId!);
     final needle = text.trim().toLowerCase();
+    final areas = mediaRoot == null
+        ? null
+        : MediaAreaMap(
+            configuration?.mediaRoots ?? {'selected': [mediaRoot!]},
+          );
 
     final matched = works.where((work) {
       if (unassignedOnly && work.mediaType != null) return false;
@@ -158,7 +166,12 @@ final class WorkFilter {
       if (type != null && work.mediaType?.id != type.id) return false;
       if (origins.isNotEmpty && !origins.contains(work.origin)) return false;
       if (sourceId != null && work.summary.sourceId != sourceId) return false;
-      if (mediaRoot != null && !_isBelowRoot(work, mediaRoot!)) return false;
+      if (mediaRoot != null &&
+          (work.summary.sourceId != FundusDatabase.localSourceId ||
+              areas?.locateFile(work.summary.sourcePath)?.configuredRoot !=
+                  mediaRoot)) {
+        return false;
+      }
       if (needle.isEmpty) return true;
       return work.title.toLowerCase().contains(needle) ||
           work.subtitle.toLowerCase().contains(needle);
@@ -166,15 +179,6 @@ final class WorkFilter {
 
     matched.sort(_comparator);
     return matched;
-  }
-
-  static bool _isBelowRoot(WorkView work, String root) {
-    final normalized = work.summary.sourcePath.replaceAll('\\', '/');
-    final wanted = root
-        .replaceAll('\\', '/')
-        .replaceAll(RegExp(r'^/+|/+$'), '');
-    return normalized.toLowerCase() == wanted.toLowerCase() ||
-        normalized.toLowerCase().startsWith('${wanted.toLowerCase()}/');
   }
 
   int Function(WorkView, WorkView) get _comparator => switch (sort) {

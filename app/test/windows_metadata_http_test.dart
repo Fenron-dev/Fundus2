@@ -31,7 +31,11 @@ void main() {
             );
           case '/auth':
             request.response.write(
-              request.headers.value('authorization') ?? 'none',
+              jsonEncode({
+                'authorization': request.headers.value('authorization'),
+                'mal': request.headers.value('x-mal-client-id'),
+                'userAgents': request.headers['user-agent'],
+              }),
             );
           case '/binary':
             request.response.add([0, 1, 127, 128, 255]);
@@ -90,9 +94,25 @@ void main() {
         ]);
         final response = await client.get(
           base.resolve('cross-origin'),
-          headers: {'Authorization': 'secret'},
+          headers: {
+            'Authorization': 'secret',
+            'X-MAL-CLIENT-ID': 'private-client-id',
+            'User-Agent': metadataUserAgent,
+          },
         );
-        expect(response.body, 'none');
+        final received = jsonDecode(response.body) as Map;
+        expect(received['authorization'], isNull);
+        expect(received['mal'], isNull);
+        expect(received['userAgents'], [metadataUserAgent]);
+        final direct =
+            jsonDecode(
+                  (await client.get(
+                    base.resolve('auth'),
+                    headers: {'X-MAL-CLIENT-ID': 'private-client-id'},
+                  )).body,
+                )
+                as Map;
+        expect(direct['mal'], 'private-client-id');
         final request = http.Request('GET', base.resolve('redirect'))
           ..followRedirects = false;
         expect((await client.send(request)).statusCode, 302);
@@ -212,6 +232,86 @@ void main() {
     },
     skip:
         !Platform.isWindows || Platform.environment['FUNDUS_LIVE_HTTPS'] != '1',
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'Live Windows: production AniList search finds Tales of Demons and Gods',
+    () async {
+      final client = createMetadataHttpClient();
+      try {
+        final matches = await MetadataSearch([
+          providerFor(MetadataProviderKind.anilistManga, client: client),
+        ]).search('Tales of Demons and Gods');
+        expect(
+          matches.any((match) => match.candidate.providerId == '86707'),
+          isTrue,
+          reason: 'Full production query, decoding and ranking through WinHTTP',
+        );
+      } finally {
+        client.close();
+      }
+    },
+    skip:
+        !Platform.isWindows || Platform.environment['FUNDUS_LIVE_HTTPS'] != '1',
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'Live Windows: keyless MyAnimeList search finds Berserk',
+    () async {
+      final client = createMetadataHttpClient();
+      try {
+        final matches = await MetadataSearch([
+          providerFor(MetadataProviderKind.myAnimeList, client: client),
+        ]).search('Berserk');
+        expect(
+          matches.any(
+            (match) =>
+                match.candidate.providerId == '2' &&
+                match.candidate.workKind == 'manga',
+          ),
+          isTrue,
+          reason: 'A real title must survive provider lookup and local ranking',
+        );
+      } finally {
+        client.close();
+      }
+    },
+    skip:
+        !Platform.isWindows || Platform.environment['FUNDUS_LIVE_HTTPS'] != '1',
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'Live Windows: authenticated MyAnimeList title search',
+    () async {
+      final client = createMetadataHttpClient();
+      try {
+        final matches = await MetadataSearch([
+          providerFor(
+            MetadataProviderKind.myAnimeListApi,
+            apiKey: Platform.environment['FUNDUS_MAL_CLIENT_ID']!,
+            client: client,
+          ),
+        ]).search('Berserk');
+        expect(
+          matches.any(
+            (match) =>
+                match.candidate.providerId == '2' &&
+                match.candidate.workKind == 'manga',
+          ),
+          isTrue,
+          reason: 'An unauthorized HTTP response is not a successful search',
+        );
+      } finally {
+        client.close();
+      }
+    },
+    skip:
+        !Platform.isWindows ||
+        Platform.environment['FUNDUS_LIVE_HTTPS'] != '1' ||
+        (Platform.environment['FUNDUS_MAL_CLIENT_ID'] ?? '').trim().isEmpty,
     timeout: const Timeout(Duration(minutes: 3)),
   );
 

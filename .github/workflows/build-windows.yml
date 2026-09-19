@@ -40,6 +40,8 @@ jobs:
         working-directory: app
         env:
           FUNDUS_LIVE_HTTPS: '1'
+          # Optional: absent credentials skip only the authenticated MAL test.
+          FUNDUS_MAL_CLIENT_ID: ${{ secrets.FUNDUS_MAL_CLIENT_ID }}
         run: flutter test test/windows_metadata_http_test.dart --reporter expanded
 
       - name: Build Windows release

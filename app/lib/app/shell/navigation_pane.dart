@@ -17,6 +17,7 @@ final class NavigationEntry {
     this.count,
     this.active = false,
     this.ruleAfter = false,
+    this.mediaTypeEntry = false,
   });
 
   final String label;
@@ -27,6 +28,7 @@ final class NavigationEntry {
 
   /// A hairline below this entry — the design groups by rules, not headings.
   final bool ruleAfter;
+  final bool mediaTypeEntry;
 }
 
 /// The left column: place first, everything else below it.
@@ -155,6 +157,7 @@ class _NavigationPaneState extends State<NavigationPane> {
         if ((counts[type.id] ?? 0) > 0)
           NavigationEntry(
             label: type.label,
+            mediaTypeEntry: true,
             icon: type.icon,
             count: _formatCount(counts[type.id] ?? 0),
             active: activeType == type.id,
@@ -206,7 +209,7 @@ class _NavigationPaneState extends State<NavigationPane> {
   /// „Dashboard", „Alle Werke", „Favoriten" und „Nicht zugeordnet" gelten
   /// über alle Bibliotheken hinweg und bleiben deshalb oben stehen.
   static bool _isMediaTypeEntry(NavigationEntry entry) =>
-      MediaTypes.all.any((type) => type.label == entry.label);
+      entry.mediaTypeEntry;
 
   List<({String path, String label, MediaTypeDefinition type, int count})>
   _configuredRootEntries(FundusScopeState scope) {
@@ -222,13 +225,7 @@ class _NavigationPaneState extends State<NavigationPane> {
       for (final root in library.configuration.rootsFor(kind)) {
         if (!selected.contains(root)) continue;
         if (sensitive.contains(root) && !scope.protection.isUnlocked) continue;
-        final normalized = root.replaceAll('\\', '/').toLowerCase();
-        final count = scope.library.works.where((work) {
-          final path = work.summary.sourcePath
-              .replaceAll('\\', '/')
-              .toLowerCase();
-          return path == normalized || path.startsWith('$normalized/');
-        }).length;
+        final count = scope.library.worksPerMediaRoot[root] ?? 0;
         if (count == 0) continue;
         entries.add((
           path: root,

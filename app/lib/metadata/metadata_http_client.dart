@@ -119,6 +119,7 @@ _Response _perform(_Request input) {
           'proxy-authorization',
           'cookie',
           'host',
+          'x-mal-client-id',
         ].contains(key.toLowerCase()),
       );
     }

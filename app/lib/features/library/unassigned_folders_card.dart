@@ -132,6 +132,7 @@ class _AssignButton extends StatelessWidget {
       sensitive: result.sensitive,
       displayName: result.displayName,
     );
+    await scope.settings.setMediaRootInNavigation(result.folder, true);
   }
 }
 
@@ -146,6 +147,7 @@ showMediaRootAssignmentDialog(
   String? displayName,
   String? selectedKind,
   bool initiallySensitive = false,
+  bool editing = false,
   required List<MediaTypeDefinition> assignable,
 }) async {
   final folderController = TextEditingController(text: folder);
@@ -163,9 +165,13 @@ showMediaRootAssignmentDialog(
         builder: (context) => StatefulBuilder(
           builder: (context, setState) => AlertDialog(
             title: Text(
-              folder.isEmpty ? 'Medienordner hinzufügen' : '„$folder“ zuordnen',
+              editing
+                  ? 'Medienordner bearbeiten'
+                  : folder.isEmpty
+                  ? 'Medienordner hinzufügen'
+                  : '„$folder“ zuordnen',
             ),
-            content: Column(
+            content: SingleChildScrollView(child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -180,6 +186,7 @@ showMediaRootAssignmentDialog(
                 const SizedBox(height: FundusSpace.x3),
                 TextField(
                   controller: folderController,
+                  readOnly: editing,
                   autofocus: folder.isEmpty,
                   decoration: const InputDecoration(
                     labelText: 'Ordnername',
@@ -187,6 +194,13 @@ showMediaRootAssignmentDialog(
                     border: OutlineInputBorder(),
                   ),
                 ),
+                if (editing) ...[
+                  const SizedBox(height: FundusSpace.x2),
+                  const Text(
+                    'Der Anzeigename ändert die Seitenleiste. Der Ordner auf '
+                    'dem Datenträger bleibt unverändert.',
+                  ),
+                ],
                 const SizedBox(height: FundusSpace.x3),
                 DropdownButtonFormField<MediaTypeDefinition>(
                   initialValue: selected,
@@ -210,7 +224,7 @@ showMediaRootAssignmentDialog(
                   onChanged: (value) => setState(() => sensitive = value),
                 ),
               ],
-            ),
+            )),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),

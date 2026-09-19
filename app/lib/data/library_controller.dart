@@ -35,6 +35,7 @@ class LibraryController extends ChangeNotifier {
   Map<String, int> _worksPerMediaType = const {};
   Map<String, int> _worksPerSource = const {};
   Map<String, Map<String, int>> _worksPerSourceMediaType = const {};
+  Map<String, int> _worksPerMediaRoot = const {};
   int _unassignedWorks = 0;
 
   /// Works this must not hand out at all.
@@ -58,6 +59,9 @@ class LibraryController extends ChangeNotifier {
   Map<String, int> get worksPerMediaType => _worksPerMediaType;
 
   Map<String, int> get worksPerSource => _worksPerSource;
+
+  /// Visible local works, classified by exactly the scanner's root rules.
+  Map<String, int> get worksPerMediaRoot => _worksPerMediaRoot;
 
   /// Counts used by the expandable source shelf in the navigation. The inner
   /// map is deliberately derived from the already filtered work list, so
@@ -427,6 +431,11 @@ class LibraryController extends ChangeNotifier {
     final byType = <String, int>{};
     final bySource = <String, int>{};
     final bySourceType = <String, Map<String, int>>{};
+    final byRoot = <String, int>{};
+    final configuration = _library?.configuration;
+    final areas = configuration == null
+        ? null
+        : MediaAreaMap(configuration.mediaRoots);
     var unassigned = 0;
     for (final work in _works) {
       final type = work.mediaType;
@@ -436,6 +445,10 @@ class LibraryController extends ChangeNotifier {
         byType[type.id] = (byType[type.id] ?? 0) + 1;
       }
       final source = work.summary.sourceId;
+      if (source == FundusDatabase.localSourceId) {
+        final root = areas?.locateFile(work.summary.sourcePath)?.configuredRoot;
+        if (root != null) byRoot[root] = (byRoot[root] ?? 0) + 1;
+      }
       bySource[source] = (bySource[source] ?? 0) + 1;
       final typeCounts = bySourceType.putIfAbsent(
         source,
@@ -444,6 +457,7 @@ class LibraryController extends ChangeNotifier {
       if (type != null) typeCounts[type.id] = (typeCounts[type.id] ?? 0) + 1;
     }
     _worksPerMediaType = Map.unmodifiable(byType);
+    _worksPerMediaRoot = Map.unmodifiable(byRoot);
     _worksPerSource = Map.unmodifiable(bySource);
     _worksPerSourceMediaType = Map<String, Map<String, int>>.unmodifiable({
       for (final entry in bySourceType.entries)

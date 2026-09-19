@@ -58,7 +58,10 @@ class _SearchScreenState extends State<SearchScreen> {
     final query = scope.filter.text.trim();
     final hits = query.isEmpty
         ? const <WorkView>[]
-        : scope.filter.apply(scope.library.works);
+        : scope.filter.apply(
+            scope.library.works,
+            configuration: scope.library.library?.configuration,
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

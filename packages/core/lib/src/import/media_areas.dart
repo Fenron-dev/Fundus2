@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 final class MediaAreaMatch {
   const MediaAreaMatch({
     required this.kind,
+    required this.configuredRoot,
     required this.rootParts,
     required this.remainder,
     this.contentSensitivity,
@@ -11,6 +12,10 @@ final class MediaAreaMatch {
 
   /// The configuration key of the area — `audiobook`, `music`, `manga` …
   final String kind;
+
+  /// The configured name, without an optional parent directory on disk.
+  /// Navigation must use the same match as the scanner, including nested roots.
+  final String configuredRoot;
 
   /// The segments that named the area, in the spelling the path used.
   final List<String> rootParts;
@@ -51,6 +56,7 @@ final class MediaAreaMap {
                  if (splitPath(root).isNotEmpty)
                    (
                      kind: entry.key,
+                     name: root,
                      parts: splitPath(root),
                      sensitive: (sensitiveRoots[entry.key] ?? const []).any(
                        (candidate) =>
@@ -62,7 +68,8 @@ final class MediaAreaMap {
              (left, right) => right.parts.length.compareTo(left.parts.length),
            );
 
-  final List<({String kind, List<String> parts, bool sensitive})> _roots;
+  final List<({String kind, String name, List<String> parts, bool sensitive})>
+  _roots;
 
   bool get isEmpty => _roots.isEmpty;
 
@@ -86,6 +93,7 @@ final class MediaAreaMap {
         if (!matches) continue;
         return MediaAreaMatch(
           kind: root.kind,
+          configuredRoot: root.name,
           rootParts: parts.sublist(0, start + root.parts.length),
           remainder: parts.sublist(start + root.parts.length),
           contentSensitivity: root.sensitive ? 'adult_explicit' : null,
