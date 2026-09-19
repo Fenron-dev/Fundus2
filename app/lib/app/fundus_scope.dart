@@ -222,6 +222,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
               job.state == DownloadState.queued,
         );
     WidgetsBinding.instance.addObserver(this);
+    peerLibraries.setForeground(true);
     _startCatchingUp();
   }
 
@@ -280,6 +281,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // remote progress. Audio playback has its own media-session lifecycle;
       // this timer is only a foreground convenience.
       _stopCatchingUp();
+      peerLibraries.setForeground(false);
       // Weglegen ist das Ende einer Sitzung, auch wenn nichts geschlossen
       // wurde. Auf dem Handy bleibt der Leser offen, wenn man zum Rechner
       // wechselt — und ein Stand, der erst beim Schließen loszieht, ist
@@ -291,6 +293,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     // billig und beantwortet die Frage, die man beim Hinsehen hat —, und
     // erst danach die Frage nach neuen Dateien.
     _startCatchingUp();
+    peerLibraries.setForeground(true);
     unawaited(catchUpWithPeers());
     if (!settings.watchesLibrary) return;
     unawaited(library.checkForChanges());

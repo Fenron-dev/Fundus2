@@ -132,6 +132,7 @@ class PeerLibraries extends ChangeNotifier {
 
   final Map<String, ConnectedPeer> _connected = {};
   Timer? _pulse;
+  bool _foreground = true;
   bool _busy = false;
   String? _failure;
 
@@ -150,6 +151,18 @@ class PeerLibraries extends ChangeNotifier {
   bool get isBusy => _busy;
   String? get failure => _failure;
   bool get hasConnection => _connected.isNotEmpty;
+
+  /// Heartbeats are a foreground status indicator, not a background service.
+  /// The media session keeps audio alive independently when playback is active.
+  void setForeground(bool value) {
+    if (_foreground == value) return;
+    _foreground = value;
+    if (_foreground) {
+      _startPulse();
+    } else {
+      _stopPulse();
+    }
+  }
 
   /// The best of the marks: green while any paired machine answers.
   FundusConnectionState get connection {
@@ -519,6 +532,7 @@ class PeerLibraries extends ChangeNotifier {
   /// A failure is not worth reporting: a laptop that went to sleep is the
   /// normal case, and the mark going out says it better than a message.
   void _startPulse() {
+    if (!_foreground) return;
     _pulse ??= Timer.periodic(heartbeat, (_) async {
       for (final entry in _connected.values.toList()) {
         if (await entry.client.ping()) {
