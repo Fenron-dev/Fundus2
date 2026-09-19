@@ -3160,6 +3160,27 @@ final class FundusDatabase {
         'Der lokale Bestand wird gescannt, nicht gespiegelt.',
       );
     }
+    // Do this before BEGIN so a collision cannot leave a partially mirrored
+    // catalogue behind. An existing row from the same source is the normal
+    // update path; every other source needs the future stable-identity
+    // migration and must not be overwritten by an upsert today.
+    final seen = <String>{};
+    for (final work in works) {
+      if (!seen.add(work.id)) continue;
+      final rows = _database.select(
+        'SELECT source_id FROM works WHERE id = ?',
+        [work.id],
+      );
+      if (rows.isEmpty) continue;
+      final existingSourceId = rows.first['source_id'] as String;
+      if (existingSourceId != sourceId) {
+        throw RemoteWorkIdCollision(
+          workId: work.id,
+          existingSourceId: existingSourceId,
+          incomingSourceId: sourceId,
+        );
+      }
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
     var written = 0;
     _database.execute('BEGIN');

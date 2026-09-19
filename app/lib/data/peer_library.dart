@@ -379,6 +379,17 @@ class PeerLibraries extends ChangeNotifier {
       _failure = error.message;
       _markUnreachable(peer, refused: error.statusCode == 401);
       return false;
+    } on RemoteWorkIdCollision catch (error) {
+      discovery.close();
+      // The peer answered; this is a local catalogue-integrity conflict, not
+      // a dead server. Keep the existing source reachable so playback of
+      // already mirrored works continues, while making the actionable cause
+      // visible instead of reporting a misleading timeout/unreachable state.
+      _failure =
+          'Katalog-Konflikt bei „${peer.name}": Werk ${error.workId} '
+          'gehört bereits zu „${error.existingSourceId}".';
+      library.refresh();
+      return false;
     } on Object catch (error) {
       discovery.close();
       if (mayRelocate && await _relocate(peer, mirror: mirror)) return true;

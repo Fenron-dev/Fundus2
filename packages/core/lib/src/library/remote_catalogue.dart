@@ -65,3 +65,27 @@ final class RemoteMirrorReport {
   /// only ever grows stops being a mirror.
   final int removed;
 }
+
+/// A peer tried to write a work id that already belongs to another source.
+///
+/// Work ids are intentionally shared between a vault and its mirrors so that
+/// progress can follow a work. They must not, however, be trusted as a
+/// globally unique key across independent sources. Until the source relation
+/// is split from the portable identity, refusing the write is safer than
+/// replacing a local work or another peer's work in place.
+final class RemoteWorkIdCollision implements Exception {
+  const RemoteWorkIdCollision({
+    required this.workId,
+    required this.existingSourceId,
+    required this.incomingSourceId,
+  });
+
+  final String workId;
+  final String existingSourceId;
+  final String incomingSourceId;
+
+  @override
+  String toString() =>
+      'Remote work id collision: $workId belongs to '
+      '$existingSourceId, cannot mirror into $incomingSourceId.';
+}

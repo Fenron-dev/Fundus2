@@ -143,6 +143,38 @@ void main() {
     );
   });
 
+  test('a peer id collision is rejected before changing the local work', () {
+    final database = FundusDatabase.inMemory();
+    addTearDown(database.close);
+    database.rawExecute(
+      "INSERT INTO works (id, source_id, kind, source_path, title, added_at, "
+      "availability) VALUES ('w1', 'local', 'book', 'Buch', 'Lokal', 0, "
+      "'available')",
+    );
+
+    expect(
+      () => database.mirrorRemoteCatalogue(
+        sourceId: 'peer-1',
+        works: const [RemoteWorkRecord(id: 'w1', kind: 'book', title: 'Fremd')],
+      ),
+      throwsA(
+        isA<RemoteWorkIdCollision>()
+            .having((error) => error.workId, 'workId', 'w1')
+            .having(
+              (error) => error.existingSourceId,
+              'existingSourceId',
+              'local',
+            ),
+      ),
+    );
+    expect(
+      database.rawQuery('SELECT title FROM works WHERE id = ?', [
+        'w1',
+      ]).single['title'],
+      'Lokal',
+    );
+  });
+
   test('an offline copy survives its source going away', () {
     final database = FundusDatabase.inMemory();
     addTearDown(database.close);
