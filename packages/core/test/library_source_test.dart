@@ -155,7 +155,14 @@ void main() {
     expect(
       () => database.mirrorRemoteCatalogue(
         sourceId: 'peer-1',
-        works: const [RemoteWorkRecord(id: 'w1', kind: 'book', title: 'Fremd')],
+        works: const [
+          RemoteWorkRecord(
+            id: 'w2',
+            kind: 'book',
+            title: 'Würde nicht bleiben',
+          ),
+          RemoteWorkRecord(id: 'w1', kind: 'book', title: 'Fremd'),
+        ],
       ),
       throwsA(
         isA<RemoteWorkIdCollision>()
@@ -172,6 +179,10 @@ void main() {
         'w1',
       ]).single['title'],
       'Lokal',
+    );
+    expect(
+      database.rawQuery('SELECT id FROM works WHERE id = ?', ['w2']),
+      isEmpty,
     );
   });
 
