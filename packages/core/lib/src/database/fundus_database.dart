@@ -3171,14 +3171,30 @@ final class FundusDatabase {
         'SELECT source_id FROM works WHERE id = ?',
         [work.id],
       );
-      if (rows.isEmpty) continue;
-      final existingSourceId = rows.first['source_id'] as String;
-      if (existingSourceId != sourceId) {
-        throw RemoteWorkIdCollision(
-          workId: work.id,
-          existingSourceId: existingSourceId,
-          incomingSourceId: sourceId,
+      if (rows.isNotEmpty) {
+        final existingSourceId = rows.first['source_id'] as String;
+        if (existingSourceId != sourceId) {
+          throw RemoteWorkIdCollision(
+            workId: work.id,
+            existingSourceId: existingSourceId,
+            incomingSourceId: sourceId,
+          );
+        }
+      }
+      for (final file in work.files) {
+        final fileRows = _database.select(
+          'SELECT source_id FROM files WHERE id = ?',
+          [file.id],
         );
+        if (fileRows.isEmpty) continue;
+        final existingFileSourceId = fileRows.first['source_id'] as String;
+        if (existingFileSourceId != sourceId) {
+          throw RemoteFileIdCollision(
+            fileId: file.id,
+            existingSourceId: existingFileSourceId,
+            incomingSourceId: sourceId,
+          );
+        }
       }
     }
     final now = DateTime.now().millisecondsSinceEpoch;

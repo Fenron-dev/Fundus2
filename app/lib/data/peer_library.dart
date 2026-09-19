@@ -390,6 +390,13 @@ class PeerLibraries extends ChangeNotifier {
           'gehört bereits zu „${error.existingSourceId}".';
       library.refresh();
       return false;
+    } on RemoteFileIdCollision catch (error) {
+      discovery.close();
+      _failure =
+          'Katalog-Konflikt bei „${peer.name}": Datei ${error.fileId} '
+          'gehört bereits zu „${error.existingSourceId}".';
+      library.refresh();
+      return false;
     } on Object catch (error) {
       discovery.close();
       if (mayRelocate && await _relocate(peer, mirror: mirror)) return true;

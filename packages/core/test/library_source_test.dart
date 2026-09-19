@@ -175,6 +175,55 @@ void main() {
     );
   });
 
+  test(
+    'a peer file id collision is rejected before changing the local file',
+    () {
+      final database = FundusDatabase.inMemory();
+      addTearDown(database.close);
+      database.rawExecute(
+        "INSERT INTO files (id, source_id, path, filename, size, "
+        "file_modified_at, indexed_at, availability) VALUES "
+        "('f1', 'local', 'Buch/01.epub', '01.epub', 12, 0, 0, 'available')",
+      );
+
+      expect(
+        () => database.mirrorRemoteCatalogue(
+          sourceId: 'peer-1',
+          works: const [
+            RemoteWorkRecord(
+              id: 'w2',
+              kind: 'book',
+              title: 'Fremd',
+              files: [
+                RemoteFileRecord(
+                  id: 'f1',
+                  filename: '01.epub',
+                  position: 0,
+                  extension: '.epub',
+                ),
+              ],
+            ),
+          ],
+        ),
+        throwsA(
+          isA<RemoteFileIdCollision>()
+              .having((error) => error.fileId, 'fileId', 'f1')
+              .having(
+                (error) => error.existingSourceId,
+                'existingSourceId',
+                'local',
+              ),
+        ),
+      );
+      expect(
+        database.rawQuery('SELECT source_id FROM files WHERE id = ?', [
+          'f1',
+        ]).single['source_id'],
+        'local',
+      );
+    },
+  );
+
   test('an offline copy survives its source going away', () {
     final database = FundusDatabase.inMemory();
     addTearDown(database.close);

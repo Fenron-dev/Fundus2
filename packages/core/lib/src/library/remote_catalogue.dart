@@ -89,3 +89,21 @@ final class RemoteWorkIdCollision implements Exception {
       'Remote work id collision: $workId belongs to '
       '$existingSourceId, cannot mirror into $incomingSourceId.';
 }
+
+/// The file id already belongs to another source and must not be replaced.
+final class RemoteFileIdCollision implements Exception {
+  const RemoteFileIdCollision({
+    required this.fileId,
+    required this.existingSourceId,
+    required this.incomingSourceId,
+  });
+
+  final String fileId;
+  final String existingSourceId;
+  final String incomingSourceId;
+
+  @override
+  String toString() =>
+      'Remote file id collision: $fileId belongs to '
+      '$existingSourceId, cannot mirror into $incomingSourceId.';
+}
