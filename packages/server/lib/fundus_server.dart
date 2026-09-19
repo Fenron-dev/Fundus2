@@ -294,11 +294,17 @@ final class FundusServerHandler {
             response.headers.containsKey('content-encoding')) {
           return response;
         }
-        final body = await response.readAsString();
+        // Keep the response in UTF-8 bytes. Reading as String and encoding it
+        // again created a second full-size buffer and counted UTF-16 code
+        // units instead of the actual wire bytes.
+        final body = await response.read().fold<List<int>>(
+          <int>[],
+          (all, chunk) => all..addAll(chunk),
+        );
         if (body.length < _compressAbove) {
           return response.change(body: body);
         }
-        final packed = gzip.encode(utf8.encode(body));
+        final packed = gzip.encode(body);
         return response.change(
           headers: {
             'content-encoding': 'gzip',
