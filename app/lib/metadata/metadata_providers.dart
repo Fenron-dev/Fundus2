@@ -1082,6 +1082,20 @@ final class MangaDexProvider implements MetadataProvider {
 
     final rating = '${attributes['contentRating'] ?? ''}';
     final adult = rating == 'pornographic' || rating == 'erotica';
+    final genres = <String>{};
+    if (attributes['tags'] case final List tags) {
+      for (final tag in tags) {
+        final tagAttributes = tag is Map ? tag['attributes'] : null;
+        final names = tagAttributes is Map ? tagAttributes['name'] : null;
+        if (names is Map) {
+          for (final value in names.values) {
+            if (value is String && value.trim().isNotEmpty) {
+              genres.add(value.trim());
+            }
+          }
+        }
+      }
+    }
 
     return MetadataCandidate(
       provider: provider,
@@ -1106,13 +1120,11 @@ final class MangaDexProvider implements MetadataProvider {
         ]),
         _ => null,
       },
-      genres: [
-        if (attributes['tags'] case final List tags)
-          for (final tag in tags)
-            if (tag is Map && tag['attributes'] is Map)
-              if ((tag['attributes'] as Map)['name'] case final Map names)
-                ?_firstString([names['en']]),
-      ],
+      // MangaDex calls these entries "tags" and localises their names. Keep
+      // every available translation: the user may search in German, English
+      // or the original language, and the merge UI can then add them without
+      // losing already assigned genres.
+      genres: genres.toList(growable: false),
       // Das eigentliche Ergebnis: die Kennungen der anderen Dienste.
       externalIds: {
         'mangadex': id,

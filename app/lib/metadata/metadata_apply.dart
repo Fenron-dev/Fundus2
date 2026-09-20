@@ -228,7 +228,7 @@ Future<MetadataApplyResult> applyMetadata({
       wants(MetadataField.cover) &&
       (accepts(MetadataField.cover) || useIncomingCover) &&
       poster != null &&
-      !summary.hasFolderCover) {
+      (!summary.hasFolderCover || useIncomingCover)) {
     final download = await _fetchCover(poster, client: client);
     if (download.bytes == null) {
       failed = true;
@@ -239,6 +239,9 @@ Future<MetadataApplyResult> applyMetadata({
         bytes: download.bytes!,
         extension: poster.toLowerCase().endsWith('.png') ? 'png' : 'jpg',
       );
+      if (useIncomingCover) {
+        library.setCoverPreference(work.id, generated: true);
+      }
       fetched = true;
     }
   }

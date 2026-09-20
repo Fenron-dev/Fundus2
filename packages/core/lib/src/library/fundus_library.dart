@@ -1336,6 +1336,11 @@ final class FundusLibrary {
     return target.path;
   }
 
+  void setCoverPreference(String workId, {required bool generated}) {
+    _ensureWritable();
+    _database.setCoverPreference(workId, generated: generated);
+  }
+
   /// Keeps a wide picture for a work.
   ///
   /// The stage and the head of a detail page are landscape; a cover is not.

@@ -96,6 +96,36 @@ void main() {
       expect(found.single.releaseYear, 2018);
     });
 
+    test('übernimmt die lokalisierten MangaDex-Tags als Genres', () async {
+      final client = RecordingHttp(
+        (request, attempt) => _json({
+          'data': [
+            {
+              'id': 'md-tags',
+              'attributes': {
+                'title': {'en': 'Tagged work'},
+                'contentRating': 'safe',
+                'tags': [
+                  {
+                    'attributes': {
+                      'name': {'en': 'Action', 'de': 'Action'},
+                    },
+                  },
+                  {
+                    'attributes': {
+                      'name': {'en': 'Cooking', 'de': 'Kochen'},
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+      final found = await MangaDexProvider(client: client).search('Tagged');
+      expect(found.single.genres, containsAll(<String>['Action', 'Kochen']));
+    });
+
     test('ohne ausdrueckliche Freigabe wird nicht nach HHH gefragt', () async {
       final client = RecordingHttp((request, attempt) => _json({'data': []}));
       await MangaDexProvider(client: client).search('x');

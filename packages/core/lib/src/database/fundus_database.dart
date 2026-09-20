@@ -226,7 +226,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 20;
+  static const schemaVersion = 21;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -577,6 +577,13 @@ final class FundusDatabase {
     _database.execute(
       'UPDATE works SET generated_cover_path = ? WHERE id = ?',
       [path, workId],
+    );
+  }
+
+  void setCoverPreference(String workId, {required bool generated}) {
+    _database.execute(
+      'UPDATE works SET prefer_generated_cover = ? WHERE id = ?',
+      [generated ? 1 : 0, workId],
     );
   }
 
@@ -1142,7 +1149,10 @@ final class FundusDatabase {
              w.source_path,
              w.metadata_json, w.status, w.source_id, w.availability,
              COUNT(content.id) AS file_count,
-             COALESCE(cover.path, w.generated_cover_path) AS cover_path,
+             CASE WHEN w.prefer_generated_cover = 1
+                  THEN w.generated_cover_path
+                  ELSE COALESCE(cover.path, w.generated_cover_path)
+             END AS cover_path,
              cover.path AS folder_cover_path,
              (SELECT 1 FROM favourites f
                WHERE f.work_id = w.id AND f.user_id = 'default')
@@ -4042,6 +4052,7 @@ final class FundusDatabase {
     if (_database.userVersion == 17 && !readOnly) _migrateToVersion18();
     if (_database.userVersion == 18 && !readOnly) _migrateToVersion19();
     if (_database.userVersion == 19 && !readOnly) _migrateToVersion20();
+    if (_database.userVersion == 20 && !readOnly) _migrateToVersion21();
   }
 
   void _migrateToVersion1() {
@@ -4508,6 +4519,25 @@ final class FundusDatabase {
     }
   }
 
+  /// Schema 21: an explicitly chosen online cover may override a folder cover.
+  void _migrateToVersion21() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('works') &&
+          !columnExists('works', 'prefer_generated_cover')) {
+        _database.execute(
+          'ALTER TABLE works ADD COLUMN prefer_generated_cover INTEGER '
+          'NOT NULL DEFAULT 0',
+        );
+      }
+      _database.userVersion = 21;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Copies a table into its version 8 shape.
   ///
   /// Legacy databases in the wild — and the migration fixtures — do not
@@ -4686,6 +4716,7 @@ const _version1Statements = <String>[
     series_sequence REAL,
     year INTEGER,
     cover_file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
+    prefer_generated_cover INTEGER NOT NULL DEFAULT 0,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     added_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'available'
@@ -4958,6 +4989,7 @@ CREATE TABLE works_v8 (
   year INTEGER,
   cover_file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
   generated_cover_path TEXT,
+  prefer_generated_cover INTEGER NOT NULL DEFAULT 0,
   backdrop_path TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   availability TEXT NOT NULL DEFAULT 'available'

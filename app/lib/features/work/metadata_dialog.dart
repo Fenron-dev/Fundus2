@@ -558,13 +558,10 @@ class _FieldChoice extends StatelessWidget {
                       existing: work.summary.coverPath,
                       incoming: candidate.posterUrl!,
                       selected: useIncomingCover,
-                      onSelectIncoming: blocked
-                          ? null
-                          : () => onSelectCover(true),
+                      onSelectIncoming: () => onSelectCover(true),
                     ),
                   if (field == MetadataField.cover &&
-                      candidate.posterUrl != null &&
-                      !blocked)
+                      candidate.posterUrl != null)
                     CheckboxListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -581,9 +578,7 @@ class _FieldChoice extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     controlAffinity: ListTileControlAffinity.leading,
                     value: chosen.contains(field),
-                    onChanged: field == MetadataField.cover && blocked
-                        ? null
-                        : (on) => onToggle(field, on ?? false),
+                    onChanged: (on) => onToggle(field, on ?? false),
                     title: Text(metadataFieldLabel(field, work.kind)),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -602,7 +597,7 @@ class _FieldChoice extends StatelessWidget {
                               // Ein cover.jpg im Ordner ist eine Entscheidung, die
                               // jemand getroffen hat — kein Treffer überschreibt
                               // sie.
-                              ? 'Der Ordner hat ein eigenes Titelbild.'
+                              ? 'Ordnerbild vorhanden — neues Bild kann ausdrücklich gewählt werden.'
                               : 'Neu: ${matchValue(candidate, field)}',
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
@@ -638,19 +633,31 @@ class _ImageComparison extends StatelessWidget {
       Expanded(child: _preview(context, existing, 'Bisher')),
       const SizedBox(width: FundusSpace.x2),
       Expanded(
-        child: InkWell(
-          onTap: onSelectIncoming,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: selected
-                    ? Theme.of(context).colorScheme.primary
-                    : Colors.transparent,
-                width: 2,
+        child: Column(
+          children: [
+            InkWell(
+              onTap: onSelectIncoming,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: selected
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                child: _preview(context, incoming, 'Neu'),
               ),
             ),
-            child: _preview(context, incoming, 'Neu'),
-          ),
+            const SizedBox(height: FundusSpace.x1),
+            OutlinedButton.icon(
+              onPressed: onSelectIncoming,
+              icon: Icon(
+                selected ? Icons.check_circle : Icons.radio_button_unchecked,
+              ),
+              label: Text(selected ? 'Neues Bild ausgewählt' : 'Neu verwenden'),
+            ),
+          ],
         ),
       ),
     ],
