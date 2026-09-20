@@ -1660,6 +1660,7 @@ final class FundusLibrary {
     required String title,
     required List<String> authors,
     String? subtitle,
+    List<String>? alternateTitles,
     String? series,
     double? seriesSequence,
     List<String> narrators = const [],
@@ -1672,6 +1673,7 @@ final class FundusLibrary {
     String? contentStyle,
     Map<String, String>? externalIds,
     WorkMetadataSource source = WorkMetadataSource.user,
+    bool force = false,
   }) async {
     _ensureWritable();
     _database.updateWorkMetadata(
@@ -1679,6 +1681,7 @@ final class FundusLibrary {
       title: title,
       authors: authors,
       subtitle: subtitle,
+      alternateTitles: alternateTitles,
       series: series,
       seriesSequence: seriesSequence,
       narrators: narrators,
@@ -1691,6 +1694,7 @@ final class FundusLibrary {
       contentStyle: contentStyle,
       externalIds: externalIds,
       source: source,
+      force: force,
     );
     // Neue Namen, neue Personen — sofern nicht eine echte Besetzung dasteht.
     _database.derivePeopleFromMetadata(workId: workId);
@@ -1717,6 +1721,21 @@ final class FundusLibrary {
     return listWorks(
       includeMissing: true,
     ).firstWhere((work) => work.id == workId);
+  }
+
+  Future<LibraryWorkSummary> setWorkStatuses({
+    required String workId,
+    String? publicationStatus,
+    String? personalStatus,
+  }) async {
+    _ensureWritable();
+    _database.setWorkStatuses(
+      workId: workId,
+      publicationStatus: publicationStatus,
+      personalStatus: personalStatus,
+    );
+    await _writeMetadataSidecar(workId);
+    return listWorks(includeMissing: true).firstWhere((w) => w.id == workId);
   }
 
   Future<WorkAnnotations> replaceWorkTags(
@@ -1829,6 +1848,37 @@ final class FundusLibrary {
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
+    return loadAnnotations(workId);
+  }
+
+  /// Speichert eine persönliche Daumenbewertung. Sie ist absichtlich von
+  /// Fortschritt und Quellenmetadaten getrennt und kann daher auch für ein
+  /// einzelnes Kapitel/eine Folge geführt werden.
+  Future<WorkAnnotations> setRating({
+    required String workId,
+    String? fileId,
+    required int value,
+    String userId = 'default',
+  }) async {
+    _ensureWritable();
+    _database.setRating(
+      workId: workId,
+      fileId: fileId,
+      value: value,
+      userId: userId,
+    );
+    if (_usesPortableSidecars(workId)) await _writeAnnotationSidecars(workId);
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> deleteRating({
+    required String workId,
+    String? fileId,
+    String userId = 'default',
+  }) async {
+    _ensureWritable();
+    _database.deleteRating(workId: workId, fileId: fileId, userId: userId);
+    if (_usesPortableSidecars(workId)) await _writeAnnotationSidecars(workId);
     return loadAnnotations(workId);
   }
 
@@ -2565,6 +2615,7 @@ final class FundusLibrary {
         'author': work.author,
         'authors': work.authors,
         'subtitle': work.subtitle,
+        'alternate_titles': work.alternateTitles,
         'series': work.series,
         'series_sequence': work.seriesSequence,
         'narrators': work.narrators,
@@ -2574,6 +2625,8 @@ final class FundusLibrary {
         'published_year': work.publishedYear,
         'content_sensitivity': work.contentSensitivity,
         'content_style': work.contentStyle,
+        'publication_status': work.publicationStatus,
+        'personal_status': work.personalStatus,
         'genres': work.genres,
         // Ab Fassung 4 reisen die externen Kennungen mit. Vorher lebten sie
         // nur in `index.db`, und eine neu angelegte Bibliothek über denselben
@@ -2640,6 +2693,11 @@ final class FundusLibrary {
                 ? authors.whereType<String>().toList(growable: false)
                 : [author as String],
             subtitle: value['subtitle'] as String?,
+            alternateTitles: value['alternate_titles'] is List
+                ? (value['alternate_titles'] as List)
+                      .whereType<String>()
+                      .toList(growable: false)
+                : null,
             series: value['series'] as String?,
             seriesSequence: (value['series_sequence'] as num?)?.toDouble(),
             narrators: (value['narrators'] as List? ?? const [])
@@ -2669,6 +2727,17 @@ final class FundusLibrary {
             updatedAt: await metaFile.lastModified(),
             fieldOrigins: fieldOrigins,
           );
+          final publicationStatus = value['publication_status'];
+          final personalStatus = value['personal_status'];
+          if (publicationStatus is String || personalStatus is String) {
+            _database.setWorkStatuses(
+              workId: workId,
+              publicationStatus: publicationStatus is String
+                  ? publicationStatus
+                  : null,
+              personalStatus: personalStatus is String ? personalStatus : null,
+            );
+          }
         }
       }
     }

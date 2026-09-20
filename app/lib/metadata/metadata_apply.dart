@@ -35,6 +35,8 @@ enum MetadataField {
   final String label;
 }
 
+enum MetadataMergeMode { complement, replace }
+
 /// A picked match together with what of it should be written.
 ///
 /// An empty [fields] is „nur verknüpfen": the work remembers where it was
@@ -42,12 +44,17 @@ enum MetadataField {
 /// field changes. That is what makes a later, deliberate match possible
 /// without touching anything today.
 final class MetadataChoice {
-  const MetadataChoice({required this.candidate, this.fields});
+  const MetadataChoice({
+    required this.candidate,
+    this.fields,
+    this.mergeMode = MetadataMergeMode.complement,
+  });
 
   final MetadataCandidate candidate;
 
   /// `null` means everything the match knows.
   final Set<MetadataField>? fields;
+  final MetadataMergeMode mergeMode;
 
   bool get linkOnly => fields != null && fields!.isEmpty;
 }
@@ -106,47 +113,71 @@ Future<MetadataApplyResult> applyMetadata({
   http.Client? client,
   bool fetchCover = true,
   Set<MetadataField>? fields,
+  // Keep the programmatic API backwards compatible: callers that do not
+  // show the merge chooser retain the historical replace behaviour. The
+  // metadata dialog passes the user's explicit choice (complement is its
+  // default).
+  MetadataMergeMode mergeMode = MetadataMergeMode.replace,
+  bool forceReplace = false,
 }) async {
   final summary = work.summary;
   // Was nicht gewählt wurde, bekommt seinen bisherigen Wert zurück — nicht
   // `null`. Ein leeres Feld ist für die Metadatenschicht die Aussage „das
   // Werk hat keinen Verlag", und die will hier niemand treffen.
   bool wants(MetadataField field) => fields == null || fields.contains(field);
+  bool hasValue(MetadataField field) => switch (field) {
+    MetadataField.title => summary.title.trim().isNotEmpty,
+    MetadataField.authors =>
+      summary.authors.isNotEmpty || summary.author.trim().isNotEmpty,
+    MetadataField.series => summary.series?.trim().isNotEmpty ?? false,
+    MetadataField.year => summary.publishedYear != null,
+    MetadataField.publisher => summary.publisher?.trim().isNotEmpty ?? false,
+    MetadataField.language => summary.language?.trim().isNotEmpty ?? false,
+    MetadataField.genres => summary.genres.isNotEmpty,
+    MetadataField.description =>
+      summary.description?.trim().isNotEmpty ?? false,
+    MetadataField.cover => summary.coverPath != null,
+    MetadataField.backdrop => summary.backdropPath != null,
+  };
+  bool accepts(MetadataField field) =>
+      wants(field) &&
+      (mergeMode == MetadataMergeMode.replace || !hasValue(field));
   final existingAuthors = summary.authors.isNotEmpty
       ? summary.authors
       : [if (summary.author.trim().isNotEmpty) summary.author.trim()];
-  final authors = wants(MetadataField.authors) && candidate.authors.isNotEmpty
+  final authors = accepts(MetadataField.authors) && candidate.authors.isNotEmpty
       ? candidate.authors
       : existingAuthors;
   final linkOnly = fields != null && fields.isEmpty;
   await library.updateWorkMetadata(
     workId: work.id,
-    title: wants(MetadataField.title) ? candidate.title : summary.title,
+    title: accepts(MetadataField.title) ? candidate.title : summary.title,
     authors: authors.isEmpty ? const ['Unbekannt'] : authors,
     subtitle: summary.subtitle,
-    series: wants(MetadataField.series)
+    alternateTitles: candidate.alternateTitles,
+    series: accepts(MetadataField.series)
         ? candidate.series ?? summary.series
         : summary.series,
     seriesSequence: wants(MetadataField.series)
         ? candidate.seriesSequence ?? summary.seriesSequence
         : summary.seriesSequence,
-    language: wants(MetadataField.language)
+    language: accepts(MetadataField.language)
         ? candidate.language ?? summary.language
         : summary.language,
-    description: wants(MetadataField.description)
+    description: accepts(MetadataField.description)
         ? candidate.description ?? summary.description
         : summary.description,
-    publisher: wants(MetadataField.publisher)
+    publisher: accepts(MetadataField.publisher)
         ? candidate.publisher ?? summary.publisher
         : summary.publisher,
-    publishedYear: wants(MetadataField.year)
+    publishedYear: accepts(MetadataField.year)
         ? candidate.releaseYear ?? summary.publishedYear
         : summary.publishedYear,
     // Einstufung und Stilrichtung sind keine Anzeigefelder, sondern das,
     // wonach die Bibliothek filtert. Sie reisen mit jedem übernommenen
     // Treffer mit — nur beim reinen Verknüpfen bleibt alles, wie es ist.
     contentSensitivity: linkOnly ? null : candidate.contentSensitivity,
-    genres: wants(MetadataField.genres) && candidate.genres.isNotEmpty
+    genres: accepts(MetadataField.genres) && candidate.genres.isNotEmpty
         ? candidate.genres
         : null,
     contentStyle: linkOnly ? null : candidate.contentStyle,
@@ -158,7 +189,16 @@ Future<MetadataApplyResult> applyMetadata({
     // ranks a value someone typed above one a service gave, which is what
     // makes a correction survive the next match.
     source: WorkMetadataSource.online,
+    force: forceReplace && mergeMode == MetadataMergeMode.replace,
   );
+  if (candidate.publicationStatus != null &&
+      (mergeMode == MetadataMergeMode.replace ||
+          summary.publicationStatus == 'unknown')) {
+    await library.setWorkStatuses(
+      workId: work.id,
+      publicationStatus: candidate.publicationStatus,
+    );
+  }
 
   var fetched = false;
   var failed = false;
@@ -170,7 +210,7 @@ Future<MetadataApplyResult> applyMetadata({
   // all" meant a work that once got a picture could never get a better one,
   // and one whose first attempt failed stayed blank for good.
   if (fetchCover &&
-      wants(MetadataField.cover) &&
+      accepts(MetadataField.cover) &&
       poster != null &&
       !summary.hasFolderCover) {
     final download = await _fetchCover(poster, client: client);
@@ -192,7 +232,7 @@ Future<MetadataApplyResult> applyMetadata({
   var wide = false;
   final backdrop = candidate.backdropUrl;
   if (fetchCover &&
-      wants(MetadataField.backdrop) &&
+      accepts(MetadataField.backdrop) &&
       backdrop != null &&
       summary.backdropPath == null) {
     final bytes = await fetchCoverBytes(backdrop, client: client);

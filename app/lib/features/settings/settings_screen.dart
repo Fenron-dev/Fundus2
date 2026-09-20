@@ -156,6 +156,27 @@ class _TextSizeCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: FundusSpace.x2),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Fortschritt beim Start synchronisieren'),
+            subtitle: const Text(
+              'Nur Stände und Bewertungen abgleichen – kein Bibliotheksscan.',
+            ),
+            value: scope.settings.syncProgressOnStartup,
+            onChanged: (value) =>
+                unawaited(scope.settings.setSyncProgressOnStartup(value)),
+          ),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Bibliothek beim Öffnen prüfen'),
+            subtitle: const Text(
+              'Ein einmaliger Dateiscan beim Öffnen des Vaults; der Zyklus bleibt separat.',
+            ),
+            value: scope.settings.scanOnStartup,
+            onChanged: (value) =>
+                unawaited(scope.settings.setScanOnStartup(value)),
+          ),
+          const SizedBox(height: FundusSpace.x2),
           Slider(
             value: scale,
             min: 0.8,

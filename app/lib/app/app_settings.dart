@@ -184,6 +184,14 @@ class AppSettings extends ChangeNotifier {
     return 0;
   }
 
+  /// Whether the small progress/annotation exchange runs when the app starts.
+  /// This never triggers a filesystem scan.
+  bool get syncProgressOnStartup =>
+      _values['sync_progress_on_startup'] != false;
+
+  /// Whether opening a vault performs one file scan immediately.
+  bool get scanOnStartup => _values['scan_on_startup'] == true;
+
   /// The TMDB key, if this device has one.
   ///
   /// Here rather than in the vault, for the same reason the pairing tokens
@@ -455,6 +463,11 @@ class AppSettings extends ChangeNotifier {
     await _set('library_scan_interval_minutes', safe);
     await _set('watches_library', safe > 0);
   }
+
+  Future<void> setSyncProgressOnStartup(bool value) =>
+      _set('sync_progress_on_startup', value);
+
+  Future<void> setScanOnStartup(bool value) => _set('scan_on_startup', value);
 
   Future<void> setAlwaysFurthestPosition(bool value) =>
       _set('always_furthest', value);

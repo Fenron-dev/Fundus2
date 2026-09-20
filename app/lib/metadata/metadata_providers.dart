@@ -6,6 +6,18 @@ import 'package:http/http.dart' as http;
 
 import 'metadata_http_client.dart';
 
+String? _normalizePublicationStatus(Object? raw) {
+  final value = '${raw ?? ''}'.toLowerCase().trim();
+  return switch (value) {
+    'finished' || 'complete' || 'completed' => 'completed',
+    'releasing' || 'ongoing' || 'publishing' => 'ongoing',
+    'hiatus' => 'hiatus',
+    'cancelled' || 'canceled' => 'cancelled',
+    'paused' => 'paused',
+    _ => null,
+  };
+}
+
 /// A provider error carries no request URL and no credentials.
 final class MetadataProviderException implements Exception {
   const MetadataProviderException(this.provider, this.message);
@@ -435,6 +447,7 @@ query ($search: String!, $perPage: Int!, $type: MediaType!, $isAdult: Boolean) {
           : 'tv',
       contentStyle: 'anime',
       contentSensitivity: isAdult ? 'adult_explicit' : null,
+      publicationStatus: _normalizePublicationStatus(value['status']),
       releaseYear:
           (value['seasonYear'] as num?)?.round() ??
           (startYear is Map ? (startYear['year'] as num?)?.round() : null),
@@ -928,6 +941,7 @@ final class MyAnimeListApiProvider implements MetadataProvider {
               ?_personName(author['node'] as Map),
       ],
       releaseYear: _yearFrom('${node['start_date'] ?? ''}'),
+      publicationStatus: _normalizePublicationStatus(node['status']),
       episodeCount: switch (node['num_episodes']) {
         final num count when count > 0 => count.round(),
         _ => null,

@@ -228,6 +228,14 @@ final class FundusServerHandler {
       ..get('/v1/libraries/<libraryId>/annotations/<workId>', _annotations)
       ..post('/v1/libraries/<libraryId>/annotations/<workId>/notes', _saveNote)
       ..put('/v1/libraries/<libraryId>/annotations/<workId>/tags', _saveTags)
+      ..put(
+        '/v1/libraries/<libraryId>/annotations/<workId>/rating',
+        _saveRating,
+      )
+      ..delete(
+        '/v1/libraries/<libraryId>/annotations/<workId>/rating',
+        _deleteRating,
+      )
       ..post(
         '/v1/libraries/<libraryId>/annotations/<workId>/bookmarks',
         _saveBookmark,
@@ -1237,6 +1245,58 @@ final class FundusServerHandler {
     return _json(_annotationsJson(annotations));
   }
 
+  Future<Response> _saveRating(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (!_canViewWorkId(request, entry, workId)) {
+      return _notFound('work_not_found');
+    }
+    final decoded = await _readJson(request);
+    final value = decoded?['value'];
+    if (value is! num || (value != -1 && value != 1)) {
+      return _badRequest('invalid_rating');
+    }
+    final fileId = decoded?['file_id'];
+    if (fileId is String &&
+        !entry.tracksFor(workId).any((track) => track.fileId == fileId)) {
+      return _badRequest('file_not_in_work');
+    }
+    final annotations = await entry.library.setRating(
+      workId: workId,
+      fileId: fileId is String ? fileId : null,
+      value: value.toInt(),
+    );
+    return _json(_annotationsJson(annotations));
+  }
+
+  Future<Response> _deleteRating(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (!_canViewWorkId(request, entry, workId)) {
+      return _notFound('work_not_found');
+    }
+    final fileId = request.url.queryParameters['file_id'];
+    final annotations = await entry.library.deleteRating(
+      workId: workId,
+      fileId: fileId is String ? fileId : null,
+    );
+    return _json(_annotationsJson(annotations));
+  }
+
   Future<Response> _saveBookmark(
     Request request,
     String libraryId,
@@ -1394,6 +1454,16 @@ final class FundusServerHandler {
           'color': highlight.color,
           'note': highlight.note,
           'created_at': highlight.createdAt.toUtc().toIso8601String(),
+        },
+    ],
+    'ratings': [
+      for (final rating in annotations.ratings)
+        {
+          'id': rating.id,
+          'file_id': rating.fileId,
+          'value': rating.value,
+          'user_id': rating.userId,
+          'updated_at': rating.updatedAt.toUtc().toIso8601String(),
         },
     ],
   };

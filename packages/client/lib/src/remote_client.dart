@@ -364,6 +364,25 @@ final class FundusRemoteClient {
     body: {'tags': tags},
   );
 
+  Future<void> saveRating({
+    required String libraryId,
+    required String workId,
+    String? fileId,
+    required int value,
+  }) => _put(
+    '/v1/libraries/$libraryId/annotations/$workId/rating',
+    body: {'file_id': ?fileId, 'value': value},
+  );
+
+  Future<void> deleteRating({
+    required String libraryId,
+    required String workId,
+    String? fileId,
+  }) => _delete(
+    '/v1/libraries/$libraryId/annotations/$workId/rating'
+    '${fileId == null ? '' : '?file_id=${Uri.encodeQueryComponent(fileId)}'}',
+  );
+
   /// Die Listen der anderen Seite.
   ///
   /// Eine Liste ist keine Ansicht, sondern etwas, das jemand gemacht hat —
@@ -823,6 +842,7 @@ final class RemoteAnnotations {
     this.tags = const [],
     this.bookmarks = const [],
     this.highlights = const [],
+    this.ratings = const [],
   });
 
   factory RemoteAnnotations.fromJson(Map<String, Object?> value) {
@@ -842,12 +862,34 @@ final class RemoteAnnotations {
       highlights: [
         for (final entry in listOf('highlights')) RemoteMark.fromJson(entry),
       ],
+      ratings: [
+        for (final entry in listOf('ratings')) RemoteRating.fromJson(entry),
+      ],
     );
   }
 
   final List<String> tags;
   final List<RemoteMark> bookmarks;
   final List<RemoteMark> highlights;
+  final List<RemoteRating> ratings;
+}
+
+final class RemoteRating {
+  const RemoteRating({
+    required this.fileId,
+    required this.value,
+    this.updatedAt,
+  });
+
+  factory RemoteRating.fromJson(Map<String, Object?> value) => RemoteRating(
+    fileId: value['file_id'] is String ? value['file_id'] as String : null,
+    value: (value['value'] as num?)?.toInt() ?? 0,
+    updatedAt: DateTime.tryParse('${value['updated_at'] ?? ''}')?.toUtc(),
+  );
+
+  final String? fileId;
+  final int value;
+  final DateTime? updatedAt;
 }
 
 /// A bookmark or a highlight — the same shape either way.

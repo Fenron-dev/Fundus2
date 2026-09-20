@@ -463,6 +463,28 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  /// Bewertet den aktuell geöffneten Band/Chapter-Kontext. Die Bewertung
+  /// hängt am aktuellen Volume, nicht an der flüchtigen Bildschirmseite.
+  Future<void> rateCurrent(int value) async {
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null || currentVolume == null) return;
+    await library.setRating(
+      workId: work.id,
+      fileId: currentVolume!.fileId,
+      value: value,
+    );
+    notifyListeners();
+  }
+
+  Future<void> clearCurrentRating() async {
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null || currentVolume == null) return;
+    await library.deleteRating(workId: work.id, fileId: currentVolume!.fileId);
+    notifyListeners();
+  }
+
   Future<void> _previousPage() async {
     final groups = pageGroups;
     if (groups.isEmpty) return goToPage(_pageIndex - 1);

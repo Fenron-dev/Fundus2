@@ -224,7 +224,7 @@ class VaultScreen extends StatelessWidget {
     // Opening a vault is the other moment worth checking: whatever happened
     // to the folder since it was last open happened while Fundus was not
     // watching.
-    if (scope.settings.watchesLibrary) {
+    if (scope.settings.scanOnStartup) {
       unawaited(scope.library.checkForChanges());
     }
   }

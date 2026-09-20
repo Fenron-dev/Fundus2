@@ -62,6 +62,7 @@ final class MetadataCandidate {
     this.seriesSequence,
     this.contentStyle,
     this.contentSensitivity,
+    this.publicationStatus,
     this.releaseYear,
     this.season,
     this.episodeCount,
@@ -94,6 +95,9 @@ final class MetadataCandidate {
 
   final String? contentStyle;
   final String? contentSensitivity;
+
+  /// Normalized source status: ongoing/completed/paused/hiatus/cancelled.
+  final String? publicationStatus;
   final int? releaseYear;
   final int? season;
   final int? episodeCount;
@@ -121,6 +125,7 @@ final class MetadataCandidate {
     double? seriesSequence,
     String? contentStyle,
     String? contentSensitivity,
+    String? publicationStatus,
     int? releaseYear,
     int? season,
     int? episodeCount,
@@ -144,6 +149,7 @@ final class MetadataCandidate {
     seriesSequence: seriesSequence ?? this.seriesSequence,
     contentStyle: contentStyle ?? this.contentStyle,
     contentSensitivity: contentSensitivity ?? this.contentSensitivity,
+    publicationStatus: publicationStatus ?? this.publicationStatus,
     releaseYear: releaseYear ?? this.releaseYear,
     season: season ?? this.season,
     episodeCount: episodeCount ?? this.episodeCount,
@@ -169,6 +175,7 @@ final class MetadataCandidate {
     if (seriesSequence != null) 'series_sequence': seriesSequence,
     if (contentStyle != null) 'content_style': contentStyle,
     if (contentSensitivity != null) 'content_sensitivity': contentSensitivity,
+    if (publicationStatus != null) 'publication_status': publicationStatus,
     if (releaseYear != null) 'release_year': releaseYear,
     if (season != null) 'season': season,
     if (episodeCount != null) 'episode_count': episodeCount,
@@ -206,6 +213,7 @@ final class MetadataCandidate {
       seriesSequence: (value['series_sequence'] as num?)?.toDouble(),
       contentStyle: value['content_style'] as String?,
       contentSensitivity: value['content_sensitivity'] as String?,
+      publicationStatus: value['publication_status'] as String?,
       releaseYear: (value['release_year'] as num?)?.round(),
       season: (value['season'] as num?)?.round(),
       episodeCount: (value['episode_count'] as num?)?.round(),

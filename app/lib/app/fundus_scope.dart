@@ -226,6 +226,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     peerLibraries.setForeground(true);
     _startCatchingUp();
     _startLibraryScanTimer();
+    if (settings.syncProgressOnStartup) {
+      unawaited(catchUpWithPeers());
+    }
   }
 
   void _syncDeviceName() {

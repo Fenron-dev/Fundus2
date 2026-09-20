@@ -120,6 +120,22 @@ class _ReaderBar extends StatelessWidget {
             icon: Icon(FundusIcons.bookmark, size: FundusIcons.sizeLg),
             tooltip: 'Lesezeichen setzen',
           ),
+          PopupMenuButton<int>(
+            tooltip: 'Aktuelles Kapitel bewerten',
+            icon: Icon(FundusIcons.favourite, size: FundusIcons.sizeLg),
+            onSelected: (value) {
+              if (value == 2) {
+                unawaited(reader.clearCurrentRating());
+              } else {
+                unawaited(reader.rateCurrent(value));
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 1, child: Text('Daumen hoch')),
+              PopupMenuItem(value: -1, child: Text('Daumen runter')),
+              PopupMenuItem(value: 2, child: Text('Bewertung entfernen')),
+            ],
+          ),
           if (reader.bookmarks.isNotEmpty)
             IconButton(
               onPressed: () => _showBookmarks(context),
@@ -232,65 +248,73 @@ class _ReaderSurface extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Focus(
-      autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
-        // Right and left mean forward and back on the screen, which under a
-        // right-to-left reading direction are the other way round.
-        switch (event.logicalKey) {
-          case LogicalKeyboardKey.arrowRight:
-            reader.isRightToLeft ? reader.previousPage() : reader.nextPage();
-            return KeyEventResult.handled;
-          case LogicalKeyboardKey.arrowLeft:
-            reader.isRightToLeft ? reader.nextPage() : reader.previousPage();
-            return KeyEventResult.handled;
-          case LogicalKeyboardKey.space:
-          case LogicalKeyboardKey.pageDown:
-          case LogicalKeyboardKey.arrowDown:
-            reader.nextPage();
-            return KeyEventResult.handled;
-          case LogicalKeyboardKey.pageUp:
-          case LogicalKeyboardKey.arrowUp:
-            reader.previousPage();
-            return KeyEventResult.handled;
-          case LogicalKeyboardKey.keyF:
-            scope.toggleFullscreen();
-            return KeyEventResult.handled;
-          case LogicalKeyboardKey.escape:
-            if (scope.fullscreen.isActive) {
-              scope.leaveFullscreen();
-            } else {
-              reader.close();
-            }
-            return KeyEventResult.handled;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onScaleStart: (details) {
+        if (details.pointerCount >= 3) {
+          unawaited(_showRatingMenu(context, reader));
         }
-        return KeyEventResult.ignored;
       },
-      child: ColoredBox(
-        color: tokens.background,
-        child: LayoutBuilder(
-          builder: (context, constraints) => Stack(
-            children: [
-              Positioned.fill(
-                child: reader.isContinuous
-                    ? const _ContinuousPages()
-                    : const _PagedPages(),
-              ),
-              // The tap zones sit over the page. Their width is the reader's
-              // own setting, and a left-hander can swap them.
-              ..._tapZones(reader, constraints.maxWidth),
-              if (reader.isBusy)
-                const Positioned(
-                  top: FundusSpace.x4,
-                  right: FundusSpace.x4,
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          // Right and left mean forward and back on the screen, which under a
+          // right-to-left reading direction are the other way round.
+          switch (event.logicalKey) {
+            case LogicalKeyboardKey.arrowRight:
+              reader.isRightToLeft ? reader.previousPage() : reader.nextPage();
+              return KeyEventResult.handled;
+            case LogicalKeyboardKey.arrowLeft:
+              reader.isRightToLeft ? reader.nextPage() : reader.previousPage();
+              return KeyEventResult.handled;
+            case LogicalKeyboardKey.space:
+            case LogicalKeyboardKey.pageDown:
+            case LogicalKeyboardKey.arrowDown:
+              reader.nextPage();
+              return KeyEventResult.handled;
+            case LogicalKeyboardKey.pageUp:
+            case LogicalKeyboardKey.arrowUp:
+              reader.previousPage();
+              return KeyEventResult.handled;
+            case LogicalKeyboardKey.keyF:
+              scope.toggleFullscreen();
+              return KeyEventResult.handled;
+            case LogicalKeyboardKey.escape:
+              if (scope.fullscreen.isActive) {
+                scope.leaveFullscreen();
+              } else {
+                reader.close();
+              }
+              return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: ColoredBox(
+          color: tokens.background,
+          child: LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              children: [
+                Positioned.fill(
+                  child: reader.isContinuous
+                      ? const _ContinuousPages()
+                      : const _PagedPages(),
                 ),
-            ],
+                // The tap zones sit over the page. Their width is the reader's
+                // own setting, and a left-hander can swap them.
+                ..._tapZones(reader, constraints.maxWidth),
+                if (reader.isBusy)
+                  const Positioned(
+                    top: FundusSpace.x4,
+                    right: FundusSpace.x4,
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -450,6 +474,42 @@ class _PagedPagesState extends State<_PagedPages> {
         },
       ),
     );
+  }
+}
+
+Future<void> _showRatingMenu(
+  BuildContext context,
+  ReaderController reader,
+) async {
+  final value = await showModalBottomSheet<int?>(
+    context: context,
+    builder: (context) => SafeArea(
+      child: Wrap(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.thumb_up_alt_outlined),
+            title: const Text('Daumen hoch'),
+            onTap: () => Navigator.pop(context, 1),
+          ),
+          ListTile(
+            leading: const Icon(Icons.thumb_down_alt_outlined),
+            title: const Text('Daumen runter'),
+            onTap: () => Navigator.pop(context, -1),
+          ),
+          ListTile(
+            leading: const Icon(Icons.clear),
+            title: const Text('Bewertung entfernen'),
+            onTap: () => Navigator.pop(context, 2),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (!context.mounted || value == null) return;
+  if (value == 2) {
+    await reader.clearCurrentRating();
+  } else {
+    await reader.rateCurrent(value);
   }
 }
 

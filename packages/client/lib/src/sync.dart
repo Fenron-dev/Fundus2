@@ -527,6 +527,45 @@ final class FundusSync {
       result = result._add(pushedMarks: 1);
     }
 
+    // Bewertungen sind Zustände pro Werk/Kapitel, keine additiven Marken:
+    // derselbe Schlüssel wird mit dem neueren lokalen Wert gespiegelt.
+    final theirsByFile = {
+      for (final rating in theirs.ratings) rating.fileId ?? '': rating,
+    };
+    final mineByFile = {
+      for (final rating in mine.ratings) rating.fileId ?? '': rating,
+    };
+    for (final rating in theirs.ratings) {
+      final local = mineByFile[rating.fileId ?? ''];
+      if (local == null ||
+          (local.value != rating.value &&
+              (rating.updatedAt == null ||
+                  rating.updatedAt!.isAfter(local.updatedAt)))) {
+        if (library.isReadOnly) continue;
+        await library.setRating(
+          workId: workId,
+          fileId: rating.fileId,
+          value: rating.value,
+        );
+        result = result._add(pulledMarks: 1);
+      }
+    }
+    for (final rating in mine.ratings) {
+      final remote = theirsByFile[rating.fileId ?? ''];
+      if (remote == null ||
+          (remote.value != rating.value &&
+              (remote.updatedAt == null ||
+                  rating.updatedAt.isAfter(remote.updatedAt!)))) {
+        await client.saveRating(
+          libraryId: libraryId,
+          workId: workId,
+          fileId: rating.fileId,
+          value: rating.value,
+        );
+        result = result._add(pushedMarks: 1);
+      }
+    }
+
     return result;
   }
 

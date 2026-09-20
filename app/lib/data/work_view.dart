@@ -98,8 +98,34 @@ final class WorkView {
     if (parts.isEmpty && summary.publishedYear != null) {
       parts.add('${summary.publishedYear}');
     }
+    if (summary.publicationStatus != 'unknown') {
+      parts.add(_publicationLabel(summary.publicationStatus));
+    }
+    if (summary.personalStatus != 'unseen') {
+      parts.add(_personalLabel(summary.personalStatus));
+    }
     return parts.join(' · ');
   }
+
+  static String _publicationLabel(String value) => switch (value) {
+    'ongoing' => 'Laufend',
+    'completed' => 'Abgeschlossen',
+    'paused' => 'Pausiert',
+    'hiatus' => 'Hiatus',
+    'cancelled' => 'Abgebrochen',
+    _ => 'Unbekannt',
+  };
+
+  static String _personalLabel(String value) => switch (value) {
+    'planned' => 'Geplant',
+    'started' => 'Angefangen',
+    'current' => 'Aktuell',
+    'paused' => 'Pausiert',
+    'dropped' => 'Gedroppt',
+    'completed' => 'Abgeschlossen',
+    'reread' => 'Wiederholen',
+    _ => 'Ungesehen',
+  };
 
   static String _formatSequence(double value) =>
       value == value.roundToDouble() ? '${value.round()}' : '$value';

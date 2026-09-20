@@ -37,6 +37,7 @@ final class LibraryWorkSummary {
     this.backdropPath,
     this.language,
     this.subtitle,
+    this.alternateTitles = const [],
     this.description,
     this.narrators = const [],
     this.genres = const [],
@@ -47,6 +48,8 @@ final class LibraryWorkSummary {
     this.explicit,
     this.contentSensitivity,
     this.contentStyle,
+    this.publicationStatus = 'unknown',
+    this.personalStatus = 'unseen',
     this.externalIds = const {},
     this.abridged,
     this.progressPosition,
@@ -97,6 +100,7 @@ final class LibraryWorkSummary {
   final String? backdropPath;
   final String? language;
   final String? subtitle;
+  final List<String> alternateTitles;
   final String? description;
   final List<String> narrators;
   final List<String> genres;
@@ -111,6 +115,8 @@ final class LibraryWorkSummary {
 
   /// Provider-neutral style such as `anime`, persisted in metadata JSON.
   final String? contentStyle;
+  final String publicationStatus;
+  final String personalStatus;
 
   /// Where a match came from: `itunes`, `tmdb`, `feed`. Kept so a later run
   /// can go back to the same place rather than searching again.
@@ -167,6 +173,7 @@ final class LibraryWorkSummary {
         backdropPath: backdropPath,
         language: language,
         subtitle: subtitle,
+        alternateTitles: alternateTitles,
         description: description,
         narrators: narrators,
         genres: genres,
@@ -177,6 +184,8 @@ final class LibraryWorkSummary {
         explicit: explicit,
         contentSensitivity: contentSensitivity,
         contentStyle: contentStyle,
+        publicationStatus: publicationStatus,
+        personalStatus: personalStatus,
         externalIds: externalIds,
         abridged: abridged,
         progressPosition: progressPosition,
@@ -217,7 +226,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 19;
+  static const schemaVersion = 20;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -854,6 +863,7 @@ final class FundusDatabase {
     required String title,
     required List<String> authors,
     String? subtitle,
+    List<String>? alternateTitles,
     String? series,
     double? seriesSequence,
     List<String> narrators = const [],
@@ -868,6 +878,7 @@ final class FundusDatabase {
     WorkMetadataSource source = WorkMetadataSource.user,
     DateTime? updatedAt,
     Map<String, WorkMetadataOrigin> fieldOrigins = const {},
+    bool force = false,
   }) {
     final normalizedTitle = title.trim();
     final normalizedAuthors = authors
@@ -902,7 +913,8 @@ final class FundusDatabase {
     bool accepts(String key) {
       final incoming = fieldOrigins[key]?.source ?? source;
       final current = origins[key]?.source;
-      return current == null ||
+      return force ||
+          current == null ||
           _metadataPriority(incoming) >= _metadataPriority(current);
     }
 
@@ -926,6 +938,18 @@ final class FundusDatabase {
     write('author', normalizedAuthors.first);
     write('authors', normalizedAuthors);
     write('subtitle', subtitle);
+    if (alternateTitles != null) {
+      write(
+        'alternate_titles',
+        alternateTitles
+            .map((value) => value.trim())
+            .where(
+              (value) => value.isNotEmpty && value.trim() != normalizedTitle,
+            )
+            .toSet()
+            .toList(growable: false),
+      );
+    }
     write(
       'narrators',
       narrators
@@ -990,6 +1014,7 @@ final class FundusDatabase {
     );
     final searchBody = [
       ..._metadataStrings(metadata['authors']),
+      ..._metadataStrings(metadata['alternate_titles']),
       ?storedSeries,
       ..._metadataStrings(metadata['narrators']),
       ?metadata['subtitle'] as String?,
@@ -1012,6 +1037,30 @@ final class FundusDatabase {
         [storedTitle, searchBody, 'work', workId],
       );
     }
+  }
+
+  void setWorkStatuses({
+    required String workId,
+    String? publicationStatus,
+    String? personalStatus,
+  }) {
+    final rows = _database.select(
+      'SELECT metadata_json FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) throw StateError('Werk wurde nicht gefunden.');
+    final decoded = jsonDecode(rows.first['metadata_json'] as String);
+    final metadata = decoded is Map
+        ? Map<String, Object?>.from(decoded)
+        : <String, Object?>{};
+    if (publicationStatus != null) {
+      metadata['publication_status'] = publicationStatus;
+    }
+    if (personalStatus != null) metadata['personal_status'] = personalStatus;
+    _database.execute('UPDATE works SET metadata_json = ? WHERE id = ?', [
+      jsonEncode(metadata),
+      workId,
+    ]);
   }
 
   /// Changes the user-facing media classification without rescanning files.
@@ -1162,6 +1211,7 @@ final class FundusDatabase {
             backdropPath: row['backdrop_path'] as String?,
             language: metadata['language'] as String?,
             subtitle: metadata['subtitle'] as String?,
+            alternateTitles: _metadataStrings(metadata['alternate_titles']),
             description: metadata['description'] as String?,
             narrators: _metadataStrings(metadata['narrators']),
             genres: _metadataStrings(metadata['genres']),
@@ -1176,6 +1226,12 @@ final class FundusDatabase {
             contentStyle: metadata['content_style'] is String
                 ? metadata['content_style'] as String
                 : null,
+            publicationStatus: metadata['publication_status'] is String
+                ? metadata['publication_status'] as String
+                : 'unknown',
+            personalStatus: metadata['personal_status'] is String
+                ? metadata['personal_status'] as String
+                : 'unseen',
             externalIds: metadata['external_ids'] is Map
                 ? {
                     for (final entry
@@ -2439,6 +2495,13 @@ final class FundusDatabase {
       ''',
       [workId],
     );
+    final ratingRows = tableExists('ratings')
+        ? _database.select(
+            'SELECT id, file_id, user_id, value, updated_at FROM ratings '
+            'WHERE work_id = ? ORDER BY updated_at DESC',
+            [workId],
+          )
+        : const <Row>[];
     return WorkAnnotations(
       tags: tagRows.map((row) => row['name'] as String).toList(growable: false),
       note: noteRows.isEmpty ? '' : noteRows.first['markdown'] as String,
@@ -2525,6 +2588,69 @@ final class FundusDatabase {
             );
           })
           .toList(growable: false),
+      ratings: ratingRows
+          .map(
+            (row) => LibraryRating(
+              id: row['id'] as String,
+              workId: workId,
+              fileId: row['file_id'] as String?,
+              userId: row['user_id'] as String? ?? 'default',
+              value: row['value'] as int,
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(
+                row['updated_at'] as int,
+              ),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  LibraryRating? setRating({
+    required String workId,
+    String? fileId,
+    required int value,
+    String userId = 'default',
+    DateTime? updatedAt,
+  }) {
+    if (value != -1 && value != 1) {
+      throw ArgumentError.value(value, 'value', 'Erwartet -1 oder 1.');
+    }
+    final now = (updatedAt ?? DateTime.now()).millisecondsSinceEpoch;
+    final id = FundusId.generate();
+    _database.execute(
+      '''
+      INSERT INTO ratings (id, work_id, file_id, user_id, value, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(work_id, file_id, user_id) DO UPDATE SET
+        value = excluded.value, updated_at = excluded.updated_at
+      ''',
+      [id, workId, fileId, userId, value, now],
+    );
+    final rows = _database.select(
+      'SELECT id, file_id, user_id, value, updated_at FROM ratings '
+      'WHERE work_id = ? AND file_id IS ? AND user_id = ?',
+      [workId, fileId, userId],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return LibraryRating(
+      id: row['id'] as String,
+      workId: workId,
+      fileId: row['file_id'] as String?,
+      userId: row['user_id'] as String? ?? userId,
+      value: row['value'] as int,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+    );
+  }
+
+  void deleteRating({
+    required String workId,
+    String? fileId,
+    String userId = 'default',
+  }) {
+    _database.execute(
+      'DELETE FROM ratings WHERE work_id = ? AND file_id IS ? AND user_id = ?',
+      [workId, fileId, userId],
     );
   }
 
@@ -3915,6 +4041,7 @@ final class FundusDatabase {
     if (_database.userVersion == 16 && !readOnly) _migrateToVersion17();
     if (_database.userVersion == 17 && !readOnly) _migrateToVersion18();
     if (_database.userVersion == 18 && !readOnly) _migrateToVersion19();
+    if (_database.userVersion == 19 && !readOnly) _migrateToVersion20();
   }
 
   void _migrateToVersion1() {
@@ -4367,6 +4494,20 @@ final class FundusDatabase {
     }
   }
 
+  /// Schema 20: persönliche Daumenbewertungen gehören weder in
+  /// Quellenmetadaten noch in den Fortschrittsdatensatz.
+  void _migrateToVersion20() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (!tableExists('ratings')) _database.execute(_ratingsTable);
+      _database.userVersion = 20;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Copies a table into its version 8 shape.
   ///
   /// Legacy databases in the wild — and the migration fixtures — do not
@@ -4465,6 +4606,18 @@ final class FundusDatabase {
     }
   }
 }
+
+const _ratingsTable = '''
+CREATE TABLE ratings (
+  id TEXT PRIMARY KEY,
+  work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+  file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
+  user_id TEXT NOT NULL DEFAULT 'default',
+  value INTEGER NOT NULL CHECK (value IN (-1, 1)),
+  updated_at INTEGER NOT NULL,
+  UNIQUE (work_id, file_id, user_id)
+)
+''';
 
 const _personRolesTable = '''
 CREATE TABLE person_roles (

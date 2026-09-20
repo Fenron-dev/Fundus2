@@ -2,6 +2,28 @@ import 'dart:convert';
 
 import '../model/media_position.dart';
 
+final class LibraryRating {
+  const LibraryRating({
+    required this.id,
+    required this.workId,
+    required this.value,
+    required this.updatedAt,
+    this.fileId,
+    this.userId = 'default',
+  });
+
+  final String id;
+  final String workId;
+  final String? fileId;
+
+  /// -1 = Daumen runter, 1 = Daumen hoch.
+  final int value;
+  final String userId;
+  final DateTime updatedAt;
+
+  String get fingerprint => '${workId}|${fileId ?? ''}|$userId';
+}
+
 final class LibraryBookmark {
   const LibraryBookmark({
     required this.id,
@@ -70,6 +92,7 @@ final class WorkAnnotations {
     this.notes = const [],
     this.bookmarks = const [],
     this.highlights = const [],
+    this.ratings = const [],
   });
 
   final List<String> tags;
@@ -79,6 +102,11 @@ final class WorkAnnotations {
   final List<LibraryNote> notes;
   final List<LibraryBookmark> bookmarks;
   final List<LibraryHighlight> highlights;
+  final List<LibraryRating> ratings;
+
+  int get thumbsUpCount => ratings.where((rating) => rating.value > 0).length;
+  int get thumbsDownCount => ratings.where((rating) => rating.value < 0).length;
+  int get unratedCount => 0;
 }
 
 String exportAnnotationsAsMarkdown({

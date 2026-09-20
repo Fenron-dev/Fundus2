@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -68,6 +69,8 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   /// another.
   MetadataCandidate? _chosen;
   final Set<MetadataField> _fields = {};
+  String? _titleChoice;
+  MetadataMergeMode _mergeMode = MetadataMergeMode.complement;
 
   @override
   void dispose() {
@@ -157,11 +160,27 @@ class _MetadataDialogState extends State<_MetadataDialog> {
     final full = await _withCredits(chosen);
     if (!mounted) return;
     setState(() => _loading = false);
-    Navigator.of(context).pop(MetadataChoice(candidate: full, fields: fields));
+    final selected = _titleChoice == null || _titleChoice == full.title
+        ? full
+        : full.copyWith(
+            title: _titleChoice,
+            alternateTitles: {
+              full.title,
+              ...full.alternateTitles,
+            }.where((title) => title != _titleChoice).toList(growable: false),
+          );
+    Navigator.of(context).pop(
+      MetadataChoice(
+        candidate: selected,
+        fields: fields,
+        mergeMode: _mergeMode,
+      ),
+    );
   }
 
   void _choose(MetadataCandidate candidate) => setState(() {
     _chosen = candidate;
+    _titleChoice = candidate.title;
     _fields
       ..clear()
       ..addAll(offeredFields(candidate));
@@ -192,6 +211,10 @@ class _MetadataDialogState extends State<_MetadataDialog> {
                 _fields.remove(field);
               }
             }),
+            titleChoice: _titleChoice,
+            onTitleChoice: (value) => setState(() => _titleChoice = value),
+            mergeMode: _mergeMode,
+            onMergeMode: (value) => setState(() => _mergeMode = value),
           ),
         ),
         actions: [
@@ -439,12 +462,20 @@ class _FieldChoice extends StatelessWidget {
     required this.candidate,
     required this.chosen,
     required this.onToggle,
+    required this.titleChoice,
+    required this.onTitleChoice,
+    required this.mergeMode,
+    required this.onMergeMode,
   });
 
   final WorkView work;
   final MetadataCandidate candidate;
   final Set<MetadataField> chosen;
   final void Function(MetadataField field, bool on) onToggle;
+  final String? titleChoice;
+  final ValueChanged<String> onTitleChoice;
+  final MetadataMergeMode mergeMode;
+  final ValueChanged<MetadataMergeMode> onMergeMode;
 
   @override
   Widget build(BuildContext context) {
@@ -463,50 +494,135 @@ class _FieldChoice extends StatelessWidget {
             style: theme.textTheme.titleSmall,
           ),
           const SizedBox(height: FundusSpace.x2),
+          SegmentedButton<MetadataMergeMode>(
+            segments: const [
+              ButtonSegment(
+                value: MetadataMergeMode.complement,
+                label: Text('Ergänzen'),
+              ),
+              ButtonSegment(
+                value: MetadataMergeMode.replace,
+                label: Text('Überschreiben'),
+              ),
+            ],
+            selected: {mergeMode},
+            onSelectionChanged: (values) {
+              if (values.isNotEmpty) onMergeMode(values.first);
+            },
+          ),
+          const SizedBox(height: FundusSpace.x2),
           Text(
             'Nur was hier angehakt ist, wird geschrieben. Alles andere '
             'bleibt, wie es ist.',
             style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
           ),
           const SizedBox(height: FundusSpace.x2),
+          if (candidate.alternateTitles.isNotEmpty) ...[
+            const Text('HAUPTTITEL'),
+            const SizedBox(height: FundusSpace.x1),
+            Wrap(
+              spacing: FundusSpace.x1,
+              children: [
+                for (final title in {
+                  candidate.title,
+                  ...candidate.alternateTitles,
+                })
+                  ChoiceChip(
+                    label: Text(title),
+                    selected: title == titleChoice,
+                    onSelected: (_) => onTitleChoice(title),
+                  ),
+              ],
+            ),
+            const SizedBox(height: FundusSpace.x2),
+          ],
           for (final field in MetadataField.values)
             if (offered.contains(field))
-              CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: chosen.contains(field),
-                onChanged: field == MetadataField.cover && blocked
-                    ? null
-                    : (on) => onToggle(field, on ?? false),
-                title: Text(metadataFieldLabel(field, work.kind)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (currentValue(work, field).trim().isNotEmpty)
-                      Text(
-                        'Jetzt: ${currentValue(work, field)}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: tokens.textFaint,
-                        ),
-                      ),
-                    Text(
-                      field == MetadataField.cover && blocked
-                          // Ein cover.jpg im Ordner ist eine Entscheidung, die
-                          // jemand getroffen hat — kein Treffer überschreibt
-                          // sie.
-                          ? 'Der Ordner hat ein eigenes Titelbild.'
-                          : 'Neu: ${matchValue(candidate, field)}',
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
+              Column(
+                children: [
+                  if (field == MetadataField.cover &&
+                      candidate.posterUrl != null)
+                    _ImageComparison(
+                      existing: work.summary.coverPath,
+                      incoming: candidate.posterUrl!,
                     ),
-                  ],
-                ),
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: chosen.contains(field),
+                    onChanged: field == MetadataField.cover && blocked
+                        ? null
+                        : (on) => onToggle(field, on ?? false),
+                    title: Text(metadataFieldLabel(field, work.kind)),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (currentValue(work, field).trim().isNotEmpty)
+                          Text(
+                            'Jetzt: ${currentValue(work, field)}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: tokens.textFaint,
+                            ),
+                          ),
+                        Text(
+                          field == MetadataField.cover && blocked
+                              // Ein cover.jpg im Ordner ist eine Entscheidung, die
+                              // jemand getroffen hat — kein Treffer überschreibt
+                              // sie.
+                              ? 'Der Ordner hat ein eigenes Titelbild.'
+                              : 'Neu: ${matchValue(candidate, field)}',
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
         ],
+      ),
+    );
+  }
+}
+
+class _ImageComparison extends StatelessWidget {
+  const _ImageComparison({required this.existing, required this.incoming});
+
+  final String? existing;
+  final String incoming;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(child: _preview(context, existing, 'Bisher')),
+      const SizedBox(width: FundusSpace.x2),
+      Expanded(child: _preview(context, incoming, 'Neu')),
+    ],
+  );
+
+  Widget _preview(BuildContext context, String? source, String label) {
+    final child = source == null
+        ? const Icon(Icons.image_not_supported_outlined)
+        : source.startsWith('http')
+        ? _MatchPoster(url: source)
+        : Image.file(File(source), fit: BoxFit.cover);
+    return InkWell(
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (_) => Dialog(child: InteractiveViewer(child: child)),
+      ),
+      child: AspectRatio(
+        aspectRatio: 2 / 3,
+        child: Column(
+          children: [
+            Expanded(child: Center(child: child)),
+            Text(label),
+          ],
+        ),
       ),
     );
   }
@@ -525,6 +641,8 @@ class _MatchRow extends StatelessWidget {
     final subtitle = [
       candidate.releaseYear?.toString(),
       if (candidate.authors.isNotEmpty) candidate.authors.first,
+      if (candidate.alternateTitles.isNotEmpty)
+        'Alias: ${candidate.alternateTitles.first}',
       candidate.provider,
       ...match.reasons,
     ].whereType<String>().join(' · ');

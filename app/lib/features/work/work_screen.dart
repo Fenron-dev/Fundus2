@@ -742,6 +742,8 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
         work: widget.work,
         candidate: choice.candidate,
         fields: choice.fields,
+        mergeMode: choice.mergeMode,
+        forceReplace: choice.mergeMode == MetadataMergeMode.replace,
       );
       scope.library.refreshWork(widget.work.id);
       if (!mounted) return;
@@ -960,6 +962,10 @@ class _Properties extends StatelessWidget {
         Text('ANGABEN', style: theme.textTheme.labelSmall),
         const SizedBox(height: FundusSpace.x3),
         for (final entry in entries) _KeyValueRow(entry.$1, entry.$2),
+        const SizedBox(height: FundusSpace.x6),
+        _StatusEditor(work: work),
+        const SizedBox(height: FundusSpace.x6),
+        _RatingSummary(work: work),
         _CustomProperties(work: work),
         if (WorkFilter.labelsOf(work).isNotEmpty) ...[
           const SizedBox(height: FundusSpace.x6),
@@ -989,6 +995,135 @@ class _Properties extends StatelessWidget {
   static String _formatDate(DateTime value) =>
       '${value.day.toString().padLeft(2, '0')}.'
       '${value.month.toString().padLeft(2, '0')}.${value.year}';
+}
+
+class _RatingSummary extends StatelessWidget {
+  const _RatingSummary({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) {
+    final library = FundusScope.of(context).library.library;
+    if (library == null) return const SizedBox.shrink();
+    final annotations = library.loadAnnotations(work.id);
+    if (annotations.ratings.isEmpty) return const SizedBox.shrink();
+    final tracks = library.playbackTracks(work.id).length;
+    final ratedFiles = annotations.ratings
+        .where((rating) => rating.fileId != null)
+        .map((rating) => rating.fileId)
+        .toSet()
+        .length;
+    final unrated = tracks > ratedFiles ? tracks - ratedFiles : 0;
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('BEWERTUNGEN', style: theme.textTheme.labelSmall),
+        const SizedBox(height: FundusSpace.x3),
+        Wrap(
+          spacing: FundusSpace.x2,
+          runSpacing: FundusSpace.x2,
+          children: [
+            FundusTag('👍 ${annotations.thumbsUpCount}'),
+            FundusTag('👎 ${annotations.thumbsDownCount}'),
+            if (unrated > 0) FundusTag('offen $unrated'),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusEditor extends StatelessWidget {
+  const _StatusEditor({required this.work});
+
+  final WorkView work;
+
+  static const publication = <String, String>{
+    'unknown': 'Unbekannt',
+    'ongoing': 'Laufend',
+    'completed': 'Abgeschlossen',
+    'paused': 'Pausiert',
+    'hiatus': 'Hiatus',
+    'cancelled': 'Abgebrochen',
+  };
+  static const personal = <String, String>{
+    'unseen': 'Ungesehen',
+    'planned': 'Geplant',
+    'started': 'Angefangen',
+    'current': 'Aktuell',
+    'paused': 'Pausiert',
+    'dropped': 'Gedroppt',
+    'completed': 'Abgeschlossen',
+    'reread': 'Wiederholen',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final library = scope.library.library;
+    if (library == null || library.isReadOnly) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _KeyValueRow(
+            'Veröffentlichung',
+            publication[work.summary.publicationStatus] ?? 'Unbekannt',
+          ),
+          _KeyValueRow(
+            'Mein Status',
+            personal[work.summary.personalStatus] ?? 'Ungesehen',
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          value: publication.containsKey(work.summary.publicationStatus)
+              ? work.summary.publicationStatus
+              : 'unknown',
+          decoration: const InputDecoration(labelText: 'Veröffentlichung'),
+          items: [
+            for (final entry in publication.entries)
+              DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+          ],
+          onChanged: (value) {
+            if (value != null) {
+              unawaited(
+                library.setWorkStatuses(
+                  workId: work.id,
+                  publicationStatus: value,
+                ),
+              );
+              scope.library.refreshWork(work.id);
+            }
+          },
+        ),
+        const SizedBox(height: FundusSpace.x2),
+        DropdownButtonFormField<String>(
+          value: personal.containsKey(work.summary.personalStatus)
+              ? work.summary.personalStatus
+              : 'unseen',
+          decoration: const InputDecoration(labelText: 'Mein Lesestatus'),
+          items: [
+            for (final entry in personal.entries)
+              DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+          ],
+          onChanged: (value) {
+            if (value != null) {
+              unawaited(
+                library.setWorkStatuses(workId: work.id, personalStatus: value),
+              );
+              scope.library.refreshWork(work.id);
+            }
+          },
+        ),
+      ],
+    );
+  }
 }
 
 /// Die eigenen Eigenschaften dieses Werks.
