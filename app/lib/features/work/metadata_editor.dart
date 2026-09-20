@@ -8,6 +8,26 @@ import 'package:fundus_design/fundus_design.dart';
 import '../../data/work_view.dart';
 import '../../data/media_type.dart';
 
+const _publicationStatuses = <String, String>{
+  'unknown': 'Unbekannt',
+  'ongoing': 'Laufend',
+  'completed': 'Abgeschlossen',
+  'paused': 'Pausiert',
+  'hiatus': 'Hiatus',
+  'cancelled': 'Abgebrochen',
+};
+
+const _personalStatuses = <String, String>{
+  'unseen': 'Ungesehen',
+  'planned': 'Geplant',
+  'started': 'Angefangen',
+  'current': 'Aktuell',
+  'paused': 'Pausiert',
+  'dropped': 'Gedroppt',
+  'completed': 'Abgeschlossen',
+  'reread': 'Wiederholen',
+};
+
 /// Editing a work by hand.
 ///
 /// What is typed here is written as a *user* value, which the metadata layer
@@ -76,6 +96,8 @@ class _MetadataEditorState extends State<_MetadataEditor> {
   bool _wholeSeries = false;
   late String _kind = widget.work.summary.kind;
   late bool _hhh = widget.work.summary.isHhh;
+  late String _publicationStatus = widget.work.summary.publicationStatus;
+  late String _personalStatus = widget.work.summary.personalStatus;
   Uint8List? _coverBytes;
   String _coverExtension = 'jpg';
   Uint8List? _backdropBytes;
@@ -151,6 +173,11 @@ class _MetadataEditorState extends State<_MetadataEditor> {
         workId: widget.work.id,
         kind: _kind,
         contentSensitivity: _hhh ? 'adult_explicit' : 'general',
+      );
+      widget.library.setWorkStatuses(
+        workId: widget.work.id,
+        publicationStatus: _publicationStatus,
+        personalStatus: _personalStatus,
       );
       if (_coverBytes != null) {
         await widget.library.cacheGeneratedCover(
@@ -278,6 +305,61 @@ class _MetadataEditorState extends State<_MetadataEditor> {
                 controller: _fields['description']!,
                 lines: 5,
               ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue:
+                          _publicationStatuses.containsKey(_publicationStatus)
+                          ? _publicationStatus
+                          : 'unknown',
+                      decoration: const InputDecoration(
+                        labelText: 'Veröffentlichung',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final entry in _publicationStatuses.entries)
+                          DropdownMenuItem(
+                            value: entry.key,
+                            child: Text(entry.value),
+                          ),
+                      ],
+                      onChanged: _saving
+                          ? null
+                          : (value) => setState(
+                              () => _publicationStatus = value ?? 'unknown',
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: FundusSpace.x3),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue:
+                          _personalStatuses.containsKey(_personalStatus)
+                          ? _personalStatus
+                          : 'unseen',
+                      decoration: const InputDecoration(
+                        labelText: 'Mein Lesestatus',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final entry in _personalStatuses.entries)
+                          DropdownMenuItem(
+                            value: entry.key,
+                            child: Text(entry.value),
+                          ),
+                      ],
+                      onChanged: _saving
+                          ? null
+                          : (value) => setState(
+                              () => _personalStatus = value ?? 'unseen',
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: FundusSpace.x3),
               _ImagePickerTile(
                 label: 'Cover',
                 currentPath: widget.work.summary.coverPath,

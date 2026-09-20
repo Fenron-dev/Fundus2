@@ -71,6 +71,10 @@ class FundusTag extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: FundusRadius.smAll,
+      mouseCursor: SystemMouseCursors.click,
+      hoverColor: tokens.hover,
+      splashColor: tokens.accentTint(0.18),
+      highlightColor: tokens.accentTint(0.10),
       child: content,
     );
   }

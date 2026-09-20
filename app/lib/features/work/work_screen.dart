@@ -372,6 +372,28 @@ class _Facts extends StatelessWidget {
             ),
           ),
         ],
+        if (summary.publicationStatus != 'unknown' ||
+            summary.personalStatus != 'unseen') ...[
+          const SizedBox(height: FundusSpace.x3),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            alignment: centred ? WrapAlignment.center : WrapAlignment.start,
+            children: [
+              if (summary.publicationStatus != 'unknown')
+                FundusTag(
+                  _StatusEditor.publication[summary.publicationStatus] ??
+                      summary.publicationStatus,
+                  tone: FundusTagTone.accent,
+                ),
+              if (summary.personalStatus != 'unseen')
+                FundusTag(
+                  'Ich: ${_StatusEditor.personal[summary.personalStatus] ?? summary.personalStatus}',
+                  tone: FundusTagTone.outline,
+                ),
+            ],
+          ),
+        ],
         const SizedBox(height: FundusSpace.x3),
         FundusOriginMark(work.origin, showLabel: true),
         if (work.hasProgress) ...[
