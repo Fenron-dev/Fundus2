@@ -963,10 +963,11 @@ class _Properties extends StatelessWidget {
         const SizedBox(height: FundusSpace.x3),
         for (final entry in entries) _KeyValueRow(entry.$1, entry.$2),
         const SizedBox(height: FundusSpace.x6),
+        _CustomProperties(work: work),
+        const SizedBox(height: FundusSpace.x6),
         _StatusEditor(work: work),
         const SizedBox(height: FundusSpace.x6),
         _RatingSummary(work: work),
-        _CustomProperties(work: work),
         if (WorkFilter.labelsOf(work).isNotEmpty) ...[
           const SizedBox(height: FundusSpace.x6),
           Text(
