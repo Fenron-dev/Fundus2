@@ -48,6 +48,7 @@ final class MetadataChoice {
     required this.candidate,
     this.fields,
     this.mergeMode = MetadataMergeMode.complement,
+    this.useIncomingCover = false,
   });
 
   final MetadataCandidate candidate;
@@ -55,6 +56,7 @@ final class MetadataChoice {
   /// `null` means everything the match knows.
   final Set<MetadataField>? fields;
   final MetadataMergeMode mergeMode;
+  final bool useIncomingCover;
 
   bool get linkOnly => fields != null && fields!.isEmpty;
 }
@@ -119,6 +121,7 @@ Future<MetadataApplyResult> applyMetadata({
   // default).
   MetadataMergeMode mergeMode = MetadataMergeMode.replace,
   bool forceReplace = false,
+  bool useIncomingCover = false,
 }) async {
   final summary = work.summary;
   // Was nicht gewählt wurde, bekommt seinen bisherigen Wert zurück — nicht
@@ -145,16 +148,26 @@ Future<MetadataApplyResult> applyMetadata({
   final existingAuthors = summary.authors.isNotEmpty
       ? summary.authors
       : [if (summary.author.trim().isNotEmpty) summary.author.trim()];
-  final authors = accepts(MetadataField.authors) && candidate.authors.isNotEmpty
-      ? candidate.authors
-      : existingAuthors;
+  final authors = !wants(MetadataField.authors) || candidate.authors.isEmpty
+      ? existingAuthors
+      : mergeMode == MetadataMergeMode.complement
+      ? {...existingAuthors, ...candidate.authors}.toList(growable: false)
+      : candidate.authors;
+  final alternateTitles = !wants(MetadataField.title)
+      ? summary.alternateTitles
+      : mergeMode == MetadataMergeMode.complement
+      ? {
+          ...summary.alternateTitles,
+          ...candidate.alternateTitles,
+        }.where((title) => title != summary.title).toList(growable: false)
+      : candidate.alternateTitles;
   final linkOnly = fields != null && fields.isEmpty;
   await library.updateWorkMetadata(
     workId: work.id,
     title: accepts(MetadataField.title) ? candidate.title : summary.title,
     authors: authors.isEmpty ? const ['Unbekannt'] : authors,
     subtitle: summary.subtitle,
-    alternateTitles: candidate.alternateTitles,
+    alternateTitles: alternateTitles,
     series: accepts(MetadataField.series)
         ? candidate.series ?? summary.series
         : summary.series,
@@ -177,9 +190,11 @@ Future<MetadataApplyResult> applyMetadata({
     // wonach die Bibliothek filtert. Sie reisen mit jedem übernommenen
     // Treffer mit — nur beim reinen Verknüpfen bleibt alles, wie es ist.
     contentSensitivity: linkOnly ? null : candidate.contentSensitivity,
-    genres: accepts(MetadataField.genres) && candidate.genres.isNotEmpty
-        ? candidate.genres
-        : null,
+    genres: !wants(MetadataField.genres) || candidate.genres.isEmpty
+        ? null
+        : mergeMode == MetadataMergeMode.complement
+        ? {...summary.genres, ...candidate.genres}.toList(growable: false)
+        : candidate.genres,
     contentStyle: linkOnly ? null : candidate.contentStyle,
     // Woher der Treffer kam — bei einem Podcast steckt darin die Adresse des
     // Feeds, und der Feed ist das Einzige, was etwas über die einzelnen
@@ -210,7 +225,8 @@ Future<MetadataApplyResult> applyMetadata({
   // all" meant a work that once got a picture could never get a better one,
   // and one whose first attempt failed stayed blank for good.
   if (fetchCover &&
-      accepts(MetadataField.cover) &&
+      wants(MetadataField.cover) &&
+      (accepts(MetadataField.cover) || useIncomingCover) &&
       poster != null &&
       !summary.hasFolderCover) {
     final download = await _fetchCover(poster, client: client);

@@ -68,6 +68,7 @@ class _MetadataDialogState extends State<_MetadataDialog> {
   /// change instead of the result list — picking is one decision, writing is
   /// another.
   MetadataCandidate? _chosen;
+  bool _useIncomingCover = false;
   final Set<MetadataField> _fields = {};
   String? _titleChoice;
   MetadataMergeMode _mergeMode = MetadataMergeMode.complement;
@@ -174,12 +175,14 @@ class _MetadataDialogState extends State<_MetadataDialog> {
         candidate: selected,
         fields: fields,
         mergeMode: _mergeMode,
+        useIncomingCover: _useIncomingCover,
       ),
     );
   }
 
   void _choose(MetadataCandidate candidate) => setState(() {
     _chosen = candidate;
+    _useIncomingCover = widget.work.summary.coverPath == null;
     _titleChoice = candidate.title;
     _fields
       ..clear()
@@ -215,6 +218,11 @@ class _MetadataDialogState extends State<_MetadataDialog> {
             onTitleChoice: (value) => setState(() => _titleChoice = value),
             mergeMode: _mergeMode,
             onMergeMode: (value) => setState(() => _mergeMode = value),
+            useIncomingCover: _useIncomingCover,
+            onSelectCover: (value) => setState(() {
+              _useIncomingCover = value;
+              if (value) _fields.add(MetadataField.cover);
+            }),
           ),
         ),
         actions: [
@@ -466,6 +474,8 @@ class _FieldChoice extends StatelessWidget {
     required this.onTitleChoice,
     required this.mergeMode,
     required this.onMergeMode,
+    required this.useIncomingCover,
+    required this.onSelectCover,
   });
 
   final WorkView work;
@@ -476,6 +486,8 @@ class _FieldChoice extends StatelessWidget {
   final ValueChanged<String> onTitleChoice;
   final MetadataMergeMode mergeMode;
   final ValueChanged<MetadataMergeMode> onMergeMode;
+  final bool useIncomingCover;
+  final ValueChanged<bool> onSelectCover;
 
   @override
   Widget build(BuildContext context) {
@@ -545,6 +557,24 @@ class _FieldChoice extends StatelessWidget {
                     _ImageComparison(
                       existing: work.summary.coverPath,
                       incoming: candidate.posterUrl!,
+                      selected: useIncomingCover,
+                      onSelectIncoming: blocked
+                          ? null
+                          : () => onSelectCover(true),
+                    ),
+                  if (field == MetadataField.cover &&
+                      candidate.posterUrl != null &&
+                      !blocked)
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: useIncomingCover,
+                      onChanged: (value) => onSelectCover(value ?? false),
+                      title: const Text('Neues Titelbild verwenden'),
+                      subtitle: const Text(
+                        'Das neue Bild wird auch bei „Ergänzen“ übernommen.',
+                      ),
                     ),
                   CheckboxListTile(
                     dense: true,
@@ -590,17 +620,39 @@ class _FieldChoice extends StatelessWidget {
 }
 
 class _ImageComparison extends StatelessWidget {
-  const _ImageComparison({required this.existing, required this.incoming});
+  const _ImageComparison({
+    required this.existing,
+    required this.incoming,
+    this.selected = false,
+    this.onSelectIncoming,
+  });
 
   final String? existing;
   final String incoming;
+  final bool selected;
+  final VoidCallback? onSelectIncoming;
 
   @override
   Widget build(BuildContext context) => Row(
     children: [
       Expanded(child: _preview(context, existing, 'Bisher')),
       const SizedBox(width: FundusSpace.x2),
-      Expanded(child: _preview(context, incoming, 'Neu')),
+      Expanded(
+        child: InkWell(
+          onTap: onSelectIncoming,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: _preview(context, incoming, 'Neu'),
+          ),
+        ),
+      ),
     ],
   );
 

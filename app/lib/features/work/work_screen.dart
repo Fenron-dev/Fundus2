@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/download_controller.dart';
+import '../../data/library_controller.dart';
 import '../../media/playback_controller.dart' show formatPlaybackTime;
 import '../../media/reader_controller.dart';
 import '../../data/media_type.dart';
@@ -54,11 +55,15 @@ class WorkScreen extends StatelessWidget {
       );
     }
 
-    final tabs =
-        work.mediaType?.tabs ?? const [WorkTab.files, WorkTab.properties];
+    final tabs = _tabsFor(work);
     final stage = FundusStageSize.of(context);
     return DefaultTabController(
       length: tabs.length,
+      // Keep the historical initial content view for existing sessions; the
+      // Eigenschaften tab is nevertheless first and one tap away. This also
+      // lets freshly-created property definitions be picked up when the tab
+      // is opened after returning from Settings.
+      initialIndex: tabs.length > 1 ? 1 : 0,
       child: NestedScrollView(
         headerSliverBuilder: (context, _) => [
           SliverToBoxAdapter(
@@ -679,6 +684,14 @@ class _Actions extends StatelessWidget {
 /// On a phone the desktop metadata column lives in the properties tab. Keep
 /// that tab one obvious tap away so genres, tags, external sources and the
 /// per-file seen controls are not mistaken for missing functionality.
+List<WorkTab> _tabsFor(WorkView work) {
+  final configured = work.mediaType?.tabs ?? const [WorkTab.files];
+  return [
+    WorkTab.properties,
+    ...configured.where((tab) => tab != WorkTab.properties),
+  ];
+}
+
 class _MoreDetailsButton extends StatelessWidget {
   const _MoreDetailsButton({required this.work});
 
@@ -686,8 +699,7 @@ class _MoreDetailsButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tabs =
-        work.mediaType?.tabs ?? const [WorkTab.files, WorkTab.properties];
+    final tabs = _tabsFor(work);
     final index = tabs.indexOf(WorkTab.properties);
     if (index < 0) return const SizedBox.shrink();
     return OutlinedButton.icon(
@@ -766,6 +778,7 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
         fields: choice.fields,
         mergeMode: choice.mergeMode,
         forceReplace: choice.mergeMode == MetadataMergeMode.replace,
+        useIncomingCover: choice.useIncomingCover,
       );
       scope.library.refreshWork(widget.work.id);
       if (!mounted) return;
@@ -967,8 +980,10 @@ class _Properties extends StatelessWidget {
     // ist die Ordnung eines Karteikastens, nicht die einer Mediathek — der
     // Kopf zeigt nur die ersten Zeilen, hier steht der ganze Text.
     return ListView(
+      cacheExtent: 2000,
       padding: _contentPadding(context),
       children: [
+        _CustomProperties(work: work),
         if (description != null && description.isNotEmpty) ...[
           Text('HANDLUNG', style: theme.textTheme.labelSmall),
           const SizedBox(height: FundusSpace.x3),
@@ -985,7 +1000,6 @@ class _Properties extends StatelessWidget {
         const SizedBox(height: FundusSpace.x3),
         for (final entry in entries) _KeyValueRow(entry.$1, entry.$2),
         const SizedBox(height: FundusSpace.x6),
-        _CustomProperties(work: work),
         const SizedBox(height: FundusSpace.x6),
         _StatusEditor(work: work),
         const SizedBox(height: FundusSpace.x6),
@@ -1164,6 +1178,28 @@ class _CustomProperties extends StatefulWidget {
 }
 
 class _CustomPropertiesState extends State<_CustomProperties> {
+  LibraryController? _controller;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final next = FundusScope.of(context).library;
+    if (identical(_controller, next)) return;
+    _controller?.removeListener(_refresh);
+    _controller = next;
+    _controller?.addListener(_refresh);
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _controller?.removeListener(_refresh);
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
