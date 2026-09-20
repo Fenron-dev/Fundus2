@@ -189,6 +189,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     navigation.addListener(_bump);
     settings.addListener(_bump);
     settings.addListener(_syncDeviceName);
+    settings.addListener(_restartLibraryScanTimer);
     library.addListener(_bump);
     player.addListener(_bump);
     reader.addListener(_bump);
@@ -224,6 +225,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     peerLibraries.setForeground(true);
     _startCatchingUp();
+    _startLibraryScanTimer();
   }
 
   void _syncDeviceName() {
@@ -238,6 +240,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// Handy in der Hand den Stand vom Mac schon kennt.
   static const catchUpEvery = Duration(seconds: 45);
   Timer? _catchUp;
+  Timer? _libraryScanTimer;
 
   /// Holt die Stände der anderen Geräte, ohne zu scannen.
   ///
@@ -267,6 +270,30 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     _catchUp = null;
   }
 
+  void _startLibraryScanTimer() {
+    _libraryScanTimer?.cancel();
+    _libraryScanTimer = null;
+    final minutes = settings.libraryScanIntervalMinutes;
+    if (!mounted || minutes <= 0) return;
+    _libraryScanTimer = Timer.periodic(Duration(minutes: minutes), (_) {
+      if (library.isOpen &&
+          !library.isScanning &&
+          !(library.busyElsewhere?.call() ?? false)) {
+        unawaited(library.checkForChanges(force: true));
+      }
+    });
+  }
+
+  void _restartLibraryScanTimer() {
+    if (!mounted) return;
+    _startLibraryScanTimer();
+  }
+
+  void _stopLibraryScanTimer() {
+    _libraryScanTimer?.cancel();
+    _libraryScanTimer = null;
+  }
+
   /// Coming back to the app is the moment to look for what changed.
   ///
   /// Files arrive in a vault while Fundus is not in front of anyone — copied
@@ -281,6 +308,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // remote progress. Audio playback has its own media-session lifecycle;
       // this timer is only a foreground convenience.
       _stopCatchingUp();
+      _stopLibraryScanTimer();
       peerLibraries.setForeground(false);
       // Weglegen ist das Ende einer Sitzung, auch wenn nichts geschlossen
       // wurde. Auf dem Handy bleibt der Leser offen, wenn man zum Rechner
@@ -293,10 +321,12 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     // billig und beantwortet die Frage, die man beim Hinsehen hat —, und
     // erst danach die Frage nach neuen Dateien.
     _startCatchingUp();
+    _startLibraryScanTimer();
     peerLibraries.setForeground(true);
     unawaited(catchUpWithPeers());
-    if (!settings.watchesLibrary) return;
-    unawaited(library.checkForChanges());
+    if (settings.libraryScanIntervalMinutes > 0) {
+      unawaited(library.checkForChanges());
+    }
   }
 
   /// Sends out where the work that is open right now stands.
@@ -388,9 +418,12 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _stopCatchingUp();
+    _stopLibraryScanTimer();
     navigation.removeListener(_bump);
     settings.removeListener(_bump);
     settings.removeListener(_syncDeviceName);
+    settings.removeListener(_restartLibraryScanTimer);
     library.removeListener(_bump);
     player.removeListener(_bump);
     reader.removeListener(_bump);

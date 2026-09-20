@@ -167,10 +167,22 @@ class AppSettings extends ChangeNotifier {
 
   /// Whether Fundus looks for new files by itself.
   ///
-  /// On by default, because a check costs one walk of the folder and having
-  /// to press a button to learn that a series copied in an hour ago exists is
-  /// the kind of chore a library should not have.
-  bool get watchesLibrary => _values['watches_library'] != false;
+  /// Kept as a compatibility getter for older settings files. New code uses
+  /// [libraryScanInterval], which can disable automatic scans entirely.
+  bool get watchesLibrary => libraryScanIntervalMinutes > 0;
+
+  /// Automatic library scan interval in minutes. Zero means manual scans only.
+  ///
+  /// Progress synchronisation is deliberately not controlled by this value:
+  /// progress is a small database exchange and never walks the media folder.
+  int get libraryScanIntervalMinutes {
+    final value = _values['library_scan_interval_minutes'];
+    if (value is num) return value.toInt().clamp(0, 1440);
+    // New installations default to manual checks. Legacy settings that had
+    // the old boolean enabled can opt into a cycle explicitly in Settings;
+    // this avoids waking test and preview shells unexpectedly.
+    return 0;
+  }
 
   /// The TMDB key, if this device has one.
   ///
@@ -428,7 +440,21 @@ class AppSettings extends ChangeNotifier {
   Future<void> setPlayerPanelVisible(bool value) =>
       _set('player_panel_visible', value);
 
-  Future<void> setWatchesLibrary(bool value) => _set('watches_library', value);
+  Future<void> setWatchesLibrary(bool value) async {
+    await _set('watches_library', value);
+    if (!value) {
+      await _set('library_scan_interval_minutes', 0);
+    } else if (!(_values['library_scan_interval_minutes'] is num) ||
+        libraryScanIntervalMinutes == 0) {
+      await _set('library_scan_interval_minutes', 60);
+    }
+  }
+
+  Future<void> setLibraryScanIntervalMinutes(int minutes) async {
+    final safe = minutes.clamp(0, 1440);
+    await _set('library_scan_interval_minutes', safe);
+    await _set('watches_library', safe > 0);
+  }
 
   Future<void> setAlwaysFurthestPosition(bool value) =>
       _set('always_furthest', value);

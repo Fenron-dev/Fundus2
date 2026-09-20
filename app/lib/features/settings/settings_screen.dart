@@ -682,17 +682,31 @@ class _ScanCardState extends State<_ScanCard> {
             children: [
               Expanded(
                 child: Text(
-                  'Beim Öffnen und bei jeder Rückkehr in die App selbst nach '
-                  'Neuem sehen.',
+                  'Fortschrittssynchronisierung und Bibliotheksscan sind getrennt. '
+                  'Der Scan prüft nur nach neuen oder entfernten Dateien.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: tokens.textMuted,
                   ),
                 ),
               ),
-              Switch(
-                value: scope.settings.watchesLibrary,
-                onChanged: (value) =>
-                    unawaited(scope.settings.setWatchesLibrary(value)),
+              DropdownMenu<int>(
+                initialSelection: scope.settings.libraryScanIntervalMinutes,
+                label: const Text('Scan-Zyklus'),
+                dropdownMenuEntries: const [
+                  DropdownMenuEntry(value: 0, label: 'Nur manuell'),
+                  DropdownMenuEntry(value: 15, label: 'Alle 15 Minuten'),
+                  DropdownMenuEntry(value: 30, label: 'Alle 30 Minuten'),
+                  DropdownMenuEntry(value: 60, label: 'Alle 60 Minuten'),
+                  DropdownMenuEntry(value: 180, label: 'Alle 3 Stunden'),
+                  DropdownMenuEntry(value: 1440, label: 'Einmal täglich'),
+                ],
+                onSelected: (value) {
+                  if (value != null) {
+                    unawaited(
+                      scope.settings.setLibraryScanIntervalMinutes(value),
+                    );
+                  }
+                },
               ),
             ],
           ),
