@@ -29,6 +29,8 @@ final class WorkFilter {
     this.unassignedOnly = false,
     this.favouritesOnly = false,
     this.tags = const {},
+    this.publicationStatus,
+    this.personalStatus,
     this.sourceId,
     this.mediaRoot,
   });
@@ -55,6 +57,8 @@ final class WorkFilter {
   /// als Genre vom Abgleich, beim anderen als Schlagwort von Hand. Wer danach
   /// filtert, meint beide.
   final Set<String> tags;
+  final String? publicationStatus;
+  final String? personalStatus;
 
   /// One machine's shelf out of the several this device holds.
   ///
@@ -75,6 +79,8 @@ final class WorkFilter {
       unassignedOnly ||
       favouritesOnly ||
       tags.isNotEmpty ||
+      publicationStatus != null ||
+      personalStatus != null ||
       sourceId != null ||
       mediaRoot != null;
 
@@ -84,6 +90,8 @@ final class WorkFilter {
       (unassignedOnly ? 1 : 0) +
       (favouritesOnly ? 1 : 0) +
       tags.length +
+      (publicationStatus == null ? 0 : 1) +
+      (personalStatus == null ? 0 : 1) +
       (sourceId == null ? 0 : 1) +
       (mediaRoot == null ? 0 : 1);
 
@@ -97,6 +105,8 @@ final class WorkFilter {
     bool? unassignedOnly,
     bool? favouritesOnly,
     Set<String>? tags,
+    String? publicationStatus,
+    String? personalStatus,
     String? sourceId,
     bool clearSource = false,
     String? mediaRoot,
@@ -110,6 +120,8 @@ final class WorkFilter {
     unassignedOnly: unassignedOnly ?? this.unassignedOnly,
     favouritesOnly: favouritesOnly ?? this.favouritesOnly,
     tags: tags ?? this.tags,
+    publicationStatus: publicationStatus ?? this.publicationStatus,
+    personalStatus: personalStatus ?? this.personalStatus,
     sourceId: clearSource ? null : (sourceId ?? this.sourceId),
     mediaRoot: clearMediaRoot ? null : (mediaRoot ?? this.mediaRoot),
   );
@@ -127,6 +139,9 @@ final class WorkFilter {
     if (text.isNotEmpty) reasons.add('die Suche „$text"');
     if (favouritesOnly) reasons.add('die Beschränkung auf Favoriten');
     if (tags.isNotEmpty) reasons.add('die Schlagworte ${tags.join(', ')}');
+    if (publicationStatus != null)
+      reasons.add('den Veröffentlichungsstatus $publicationStatus');
+    if (personalStatus != null) reasons.add('den Lesestatus $personalStatus');
     if (sourceId != null) reasons.add('das gewählte Gerät');
     if (mediaRoot != null) reasons.add('der Medienordner „$mediaRoot“');
     if (origins.isNotEmpty) {
@@ -164,6 +179,14 @@ final class WorkFilter {
       if (unassignedOnly && work.mediaType != null) return false;
       if (favouritesOnly && !work.summary.favourite) return false;
       if (tags.isNotEmpty && !tags.every(labelsOf(work).contains)) {
+        return false;
+      }
+      if (publicationStatus != null &&
+          work.summary.publicationStatus != publicationStatus) {
+        return false;
+      }
+      if (personalStatus != null &&
+          work.summary.personalStatus != personalStatus) {
         return false;
       }
       if (type != null && work.mediaType?.id != type.id) return false;

@@ -390,11 +390,17 @@ class _Facts extends StatelessWidget {
                   _StatusEditor.publication[summary.publicationStatus] ??
                       summary.publicationStatus,
                   tone: FundusTagTone.accent,
+                  onTap: () => FundusScope.of(
+                    context,
+                  ).showStatus(publication: summary.publicationStatus),
                 ),
               if (summary.personalStatus != 'unseen')
                 FundusTag(
                   'Ich: ${_StatusEditor.personal[summary.personalStatus] ?? summary.personalStatus}',
                   tone: FundusTagTone.outline,
+                  onTap: () => FundusScope.of(
+                    context,
+                  ).showStatus(personal: summary.personalStatus),
                 ),
             ],
           ),

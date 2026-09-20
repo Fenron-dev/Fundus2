@@ -548,6 +548,18 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     navigation.go(const LibraryRoute());
   }
 
+  void showStatus({String? publication, String? personal}) {
+    _bump(() {
+      _activeViews = const {};
+      _filter = WorkFilter(
+        publicationStatus: publication,
+        personalStatus: personal,
+        sort: _filter.sort,
+      );
+    });
+    navigation.go(const LibraryRoute());
+  }
+
   /// Opens a saved view: the filter it stored, and the library showing it.
   void applySavedView(LibrarySavedView view) {
     _bump(() {
