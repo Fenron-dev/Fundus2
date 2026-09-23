@@ -351,9 +351,12 @@ class PeerLibraries extends ChangeNotifier {
         peer.copyWith(libraryId: entries.first.libraryId),
       );
       for (final entry in entries) {
-        if (mirror) await _mirror(entry);
+        if (mirror) await _mirrorWithRecovery(entry);
       }
-      final activeSources = {for (final entry in entries) entry.sourceId};
+      final activeSources = {
+        for (final entry in _connected.values)
+          if (entry.peer.serverId == peer.serverId) entry.sourceId,
+      };
       for (final source in vault.listSources()) {
         if (source.kind == LibrarySourceKind.peer &&
             source.id.startsWith('peer-${peer.serverId}') &&
@@ -458,6 +461,64 @@ class PeerLibraries extends ChangeNotifier {
     } on Object catch (error) {
       FundusLog.instance.warn('sync.playlists', {'error': '$error'});
     }
+  }
+
+  /// Recovers a shell whose old peer identity survived a rename/reinstall.
+  ///
+  /// Work and file IDs are deliberately portable. If an older source row is
+  /// still present, the mirror refuses to overwrite it; here we reuse that
+  /// source row and retry with the same connection handles instead. This is
+  /// safe because the server has already authenticated the request and the
+  /// collision is on the same catalogue pass.
+  Future<void> _mirrorWithRecovery(ConnectedPeer entry) async {
+    final vault = library.library;
+    if (vault == null) return;
+    try {
+      await _mirror(entry);
+    } on RemoteWorkIdCollision catch (error) {
+      await _retryOnExistingSource(entry, error.existingSourceId);
+    } on RemoteFileIdCollision catch (error) {
+      await _retryOnExistingSource(entry, error.existingSourceId);
+    }
+  }
+
+  Future<void> _retryOnExistingSource(
+    ConnectedPeer entry,
+    String existingSourceId,
+  ) async {
+    final vault = library.library;
+    if (vault == null || existingSourceId == entry.sourceId) {
+      throw StateError('Peer-Katalog-Konflikt kann nicht umgebunden werden.');
+    }
+    // Do not delete the new source here: it may already contain offline
+    // copies from an earlier attempt. It is harmless to keep the empty/stale
+    // source row while the authenticated connection is rebound below.
+    _connected.remove(entry.sourceId);
+    final recovered = ConnectedPeer(
+      peer: entry.peer,
+      client: entry.client,
+      proxy: entry.proxy,
+      libraryId: entry.libraryId,
+      libraryName: entry.libraryName,
+      sourceId: existingSourceId,
+      lastContactAt: entry.lastContactAt,
+      refused: false,
+      lastMirror: entry.lastMirror,
+    );
+    _connected[existingSourceId] = recovered;
+    vault.registerPeerSource(
+      sourceId: existingSourceId,
+      displayName: entry.libraryName == null
+          ? entry.peer.name
+          : '${entry.peer.name} · ${entry.libraryName}',
+      libraryId: entry.libraryId,
+      certificatePin: entry.peer.certificateFingerprint.isEmpty
+          ? null
+          : entry.peer.certificateFingerprint,
+      baseUrl: entry.peer.baseUrl,
+    );
+    vault.setSourceReachable(existingSourceId, reachable: true);
+    await _mirror(recovered);
   }
 
   /// Lets go of one machine. Its works stay in the index — that is what
