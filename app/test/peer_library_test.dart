@@ -119,6 +119,29 @@ void main() {
     expect(library.works.first.summary.sourceId, 'peer-server-test');
   });
 
+  test('eine geänderte Serverkennung rebindet die bestehende Quelle', () async {
+    expect(await peers.connect(peer()), isTrue, reason: peers.failure ?? '');
+    expect(library.works, isNotEmpty);
+    final oldSource = library.works.first.summary.sourceId;
+
+    // Der Server antwortet über dieselbe Adresse und liefert dieselbe
+    // Bibliothekskennung, meldet sich aber mit einer neuen Gerätekennung.
+    final renamed = peer().copyWith(name: 'Geräte', libraryId: '');
+    final replacement = PeerConnection(
+      serverId: 'server-after-reinstall',
+      name: renamed.name,
+      baseUrl: renamed.baseUrl,
+      token: renamed.token,
+    );
+    expect(
+      await peers.connect(replacement),
+      isTrue,
+      reason: peers.failure ?? '',
+    );
+    expect(library.works.first.summary.sourceId, oldSource);
+    expect(peers.failure, isNull);
+  });
+
   test(
     'mehrere Bibliotheken eines Servers werden als Quellen gespiegelt',
     () async {

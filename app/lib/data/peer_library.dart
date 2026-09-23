@@ -577,6 +577,19 @@ class PeerLibraries extends ChangeNotifier {
     int offeredCount,
   ) {
     final specific = sourceIdFor(peer, libraryId);
+    // A server name/identity can change after a reinstall or an older
+    // migration even though the served vault keeps the same library id. Reuse
+    // the existing source in that case; otherwise the portable work ids look
+    // like a collision between two peers and the phone can never reconnect.
+    final sameLibrary = vault.listSources().where(
+      (source) =>
+          source.kind == LibrarySourceKind.peer &&
+          source.libraryId == libraryId &&
+          (source.baseUrl == peer.baseUrl ||
+              source.id.startsWith('peer-${peer.serverId}')),
+    );
+    final previous = sameLibrary.firstOrNull;
+    if (previous != null) return previous.id;
     if (vault.listSources().any((source) => source.id == specific)) {
       return specific;
     }
