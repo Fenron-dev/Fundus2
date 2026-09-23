@@ -473,16 +473,28 @@ class PeerLibraries extends ChangeNotifier {
   Future<void> _mirrorWithRecovery(ConnectedPeer entry) async {
     final vault = library.library;
     if (vault == null) return;
-    try {
-      await _mirror(entry);
-    } on RemoteWorkIdCollision catch (error) {
-      await _retryOnExistingSource(entry, error.existingSourceId);
-    } on RemoteFileIdCollision catch (error) {
-      await _retryOnExistingSource(entry, error.existingSourceId);
+    var current = entry;
+    final rebound = <String>{};
+    // A vault can contain more than one legacy source after several server
+    // renames/reinstalls. Rebinding only the first collision still exposed
+    // the second one as an error, although all of them are the same remote
+    // library. Walk the chain until the mirror completes.
+    for (var attempt = 0; attempt < 8; attempt++) {
+      try {
+        await _mirror(current);
+        return;
+      } on RemoteWorkIdCollision catch (error) {
+        if (!rebound.add(error.existingSourceId)) rethrow;
+        current = await _retryOnExistingSource(current, error.existingSourceId);
+      } on RemoteFileIdCollision catch (error) {
+        if (!rebound.add(error.existingSourceId)) rethrow;
+        current = await _retryOnExistingSource(current, error.existingSourceId);
+      }
     }
+    throw StateError('Zu viele alte Peer-Quellen beim Katalog-Abgleich.');
   }
 
-  Future<void> _retryOnExistingSource(
+  Future<ConnectedPeer> _retryOnExistingSource(
     ConnectedPeer entry,
     String existingSourceId,
   ) async {
@@ -518,7 +530,7 @@ class PeerLibraries extends ChangeNotifier {
       baseUrl: entry.peer.baseUrl,
     );
     vault.setSourceReachable(existingSourceId, reachable: true);
-    await _mirror(recovered);
+    return recovered;
   }
 
   /// Lets go of one machine. Its works stay in the index — that is what
