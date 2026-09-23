@@ -652,9 +652,10 @@ class PeerLibraries extends ChangeNotifier {
     // rename, reinstall, DHCP lease change, or migration while the paired
     // library remains the same.  Prefer the current address when there are
     // duplicate legacy rows, otherwise reuse the oldest matching source.
-    final previous = sameLibrary
-        .where((source) => source.baseUrl == peer.baseUrl)
-        .firstOrNull ??
+    final previous =
+        sameLibrary
+            .where((source) => source.baseUrl == peer.baseUrl)
+            .firstOrNull ??
         sameLibrary.firstOrNull;
     if (previous != null) return previous.id;
     if (vault.listSources().any((source) => source.id == specific)) {
