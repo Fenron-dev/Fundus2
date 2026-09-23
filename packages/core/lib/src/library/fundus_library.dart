@@ -20,6 +20,7 @@ import '../model/library_saved_view.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/person_role.dart';
+import '../model/person_profile.dart';
 import '../model/work_property.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
@@ -1280,6 +1281,23 @@ final class FundusLibrary {
 
   /// Der Pfad zum Bild einer Person, relativ zur Bibliothek.
   String? personImage(String name) => _database.personImage(name);
+
+  PersonProfile? personProfile(String name) => _database.personProfile(name);
+
+  void savePersonProfile({
+    required String currentName,
+    required String displayName,
+    required String notes,
+    required Map<String, String> externalIds,
+  }) {
+    _ensureWritable();
+    _database.savePersonProfile(
+      currentName: currentName,
+      displayName: displayName,
+      notes: notes,
+      externalIds: externalIds,
+    );
+  }
 
   /// Legt das Bild einer Person in der Bibliothek ab.
   ///

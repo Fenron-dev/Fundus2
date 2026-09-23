@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
 
@@ -15,10 +16,110 @@ import 'person_credits.dart';
 /// Eine Person steht am Werk und nicht am Regal. Wer einen Sprecher antippt,
 /// will seine Hörbücher sehen — und wenn derselbe Mensch woanders geschrieben
 /// hat, das auch. Deshalb gibt es hier keine Medientypen, sondern Rollen.
-class PersonScreen extends StatelessWidget {
+class PersonScreen extends StatefulWidget {
   const PersonScreen({super.key, required this.name});
 
   final String name;
+
+  @override
+  State<PersonScreen> createState() => _PersonScreenState();
+}
+
+class _PersonScreenState extends State<PersonScreen> {
+  late String _name = widget.name;
+
+  Future<void> _editProfile(BuildContext context, PersonProfile profile) async {
+    final scope = FundusScope.of(context);
+    final name = TextEditingController(text: profile.displayName);
+    final notes = TextEditingController(text: profile.notes);
+    final links = TextEditingController(
+      text: profile.externalIds.entries
+          .map((entry) => '${entry.key}: ${entry.value}')
+          .join('\n'),
+    );
+    final result =
+        await showDialog<({String name, String notes, String links})>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Person bearbeiten'),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: name,
+                      decoration: const InputDecoration(labelText: 'Name'),
+                    ),
+                    const SizedBox(height: FundusSpace.x3),
+                    TextField(
+                      controller: notes,
+                      minLines: 3,
+                      maxLines: 8,
+                      decoration: const InputDecoration(
+                        labelText: 'Notizen zur Person',
+                      ),
+                    ),
+                    const SizedBox(height: FundusSpace.x3),
+                    TextField(
+                      controller: links,
+                      minLines: 2,
+                      maxLines: 5,
+                      decoration: const InputDecoration(
+                        labelText: 'Externe Links',
+                        helperText: 'Eine Zeile je Link: quelle: URL',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop((
+                  name: name.text.trim(),
+                  notes: notes.text,
+                  links: links.text,
+                )),
+                child: const Text('Speichern'),
+              ),
+            ],
+          ),
+        );
+    name.dispose();
+    notes.dispose();
+    links.dispose();
+    if (result == null || !context.mounted || result.name.isEmpty) return;
+    final externalIds = <String, String>{};
+    for (final line in result.links.split('\n')) {
+      final separator = line.indexOf(':');
+      if (separator <= 0) continue;
+      final key = line.substring(0, separator).trim();
+      final value = line.substring(separator + 1).trim();
+      if (key.isNotEmpty && value.isNotEmpty) externalIds[key] = value;
+    }
+    try {
+      final library = scope.library.library!;
+      library.savePersonProfile(
+        currentName: profile.displayName,
+        displayName: result.name,
+        notes: result.notes,
+        externalIds: externalIds,
+      );
+      scope.library.refresh();
+      setState(() => _name = result.name);
+    } on Object catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,8 +127,11 @@ class PersonScreen extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     final stage = FundusStageSize.of(context);
+    final profile =
+        scope.library.library?.personProfile(_name) ??
+        PersonProfile(id: '', displayName: _name);
     final credits = worksOfPerson(
-      name,
+      _name,
       scope.library.works,
       library: scope.library.library,
     );
@@ -35,7 +139,7 @@ class PersonScreen extends StatelessWidget {
     if (credits.isEmpty) {
       return FundusEmptyState(
         icon: FundusIcons.person,
-        title: name,
+        title: _name,
         reason:
             'Zu dieser Person steht gerade nichts im Katalog. Vielleicht hat '
             'ein Abgleich sie inzwischen anders geschrieben.',
@@ -55,9 +159,9 @@ class PersonScreen extends StatelessWidget {
         Row(
           children: [
             PersonAvatar(
-              name: name,
+              name: profile.displayName,
               size: 72,
-              imagePath: scope.library.library?.personImage(name),
+              imagePath: scope.library.library?.personImage(_name),
               root: scope.library.library?.root.path,
             ),
             const SizedBox(width: FundusSpace.x4),
@@ -65,7 +169,10 @@ class PersonScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: theme.textTheme.displaySmall),
+                  Text(
+                    profile.displayName,
+                    style: theme.textTheme.displaySmall,
+                  ),
                   const SizedBox(height: FundusSpace.x1),
                   Text(
                     byRole.keys.join(' · '),
@@ -76,8 +183,40 @@ class PersonScreen extends StatelessWidget {
                 ],
               ),
             ),
+            IconButton(
+              tooltip: 'Person bearbeiten',
+              onPressed: () => _editProfile(context, profile),
+              icon: const Icon(Icons.edit_outlined),
+            ),
           ],
         ),
+        if (profile.notes.trim().isNotEmpty || profile.externalIds.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: FundusSpace.x4),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(FundusSpace.x4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (profile.notes.trim().isNotEmpty)
+                      Text(profile.notes.trim()),
+                    if (profile.externalIds.isNotEmpty) ...[
+                      if (profile.notes.trim().isNotEmpty)
+                        const SizedBox(height: FundusSpace.x2),
+                      Wrap(
+                        spacing: FundusSpace.x2,
+                        children: [
+                          for (final entry in profile.externalIds.entries)
+                            Chip(label: Text('${entry.key}: ${entry.value}')),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
         const SizedBox(height: FundusSpace.x8),
         for (final entry in byRole.entries) ...[
           Text(

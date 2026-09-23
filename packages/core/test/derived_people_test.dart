@@ -68,6 +68,21 @@ void main() {
     );
   });
 
+  test('Personenprofile speichern Notizen und externe Kennungen', () {
+    final work = library.listWorks().single;
+    final person = library.peopleOf(work.id).single.name;
+    library.savePersonProfile(
+      currentName: person,
+      displayName: 'Karl May (Autor)',
+      notes: 'Schreibt Abenteuerromane.',
+      externalIds: const {'wikidata': 'Q123'},
+    );
+    final profile = library.personProfile('Karl May (Autor)');
+    expect(profile?.notes, 'Schreibt Abenteuerromane.');
+    expect(profile?.externalIds['wikidata'], 'Q123');
+    expect(library.peopleOf(work.id).single.name, 'Karl May (Autor)');
+  });
+
   test('eine Besetzung vom Abgleich wird nicht überschrieben', () async {
     // Sie ist genauer und hat Gesichter; was aus einem Dateinamen abgeleitet
     // ist, darf sie nicht verdrängen.

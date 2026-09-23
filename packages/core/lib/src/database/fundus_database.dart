@@ -12,6 +12,7 @@ import '../model/library_playlist.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/person_role.dart';
+import '../model/person_profile.dart';
 import '../model/playback_session.dart';
 import '../model/work_property.dart';
 import '../playback/library_playback.dart';
@@ -226,7 +227,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 21;
+  static const schemaVersion = 22;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -3795,6 +3796,21 @@ final class FundusDatabase {
     }
   }
 
+  static Map<String, String> _stringMap(Object? value) {
+    if (value is! String || value.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is! Map) return const {};
+      return {
+        for (final entry in decoded.entries)
+          if (entry.key is String && entry.value is String)
+            entry.key as String: entry.value as String,
+      };
+    } on FormatException {
+      return const {};
+    }
+  }
+
   /// Die Namen aus einer Liste, hilfsweise aus einem einzelnen Feld.
   ///
   /// „Unbekannt" ist kein Mensch — der Import setzt es, wo nichts dasteht, und
@@ -3842,6 +3858,59 @@ final class FundusDatabase {
       [name.trim()],
     );
     return rows.isEmpty ? null : rows.first['image_path'] as String?;
+  }
+
+  PersonProfile? personProfile(String name) {
+    if (!tableExists('people')) return null;
+    final rows = _database.select(
+      'SELECT id, display_name, image_path, notes, external_ids_json '
+      'FROM people WHERE display_name = ? COLLATE NOCASE',
+      [name.trim()],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return PersonProfile(
+      id: row['id'] as String,
+      displayName: row['display_name'] as String,
+      imagePath: row['image_path'] as String?,
+      notes: row['notes'] as String? ?? '',
+      externalIds: _stringMap(row['external_ids_json']),
+    );
+  }
+
+  void savePersonProfile({
+    required String currentName,
+    required String displayName,
+    required String notes,
+    required Map<String, String> externalIds,
+  }) {
+    if (!tableExists('people')) return;
+    final current = currentName.trim();
+    final next = displayName.trim();
+    if (current.isEmpty || next.isEmpty) throw ArgumentError('displayName');
+    final rows = _database.select(
+      'SELECT id FROM people WHERE display_name = ? COLLATE NOCASE',
+      [current],
+    );
+    if (rows.isEmpty) return;
+    final duplicate = _database.select(
+      'SELECT id FROM people WHERE display_name = ? COLLATE NOCASE AND id <> ?',
+      [next, rows.first['id']],
+    );
+    if (duplicate.isNotEmpty) {
+      throw StateError('Diese Person existiert bereits.');
+    }
+    _database.execute(
+      'UPDATE people SET display_name = ?, sort_name = ?, notes = ?, '
+      'external_ids_json = ? WHERE id = ?',
+      [
+        next,
+        next.toLowerCase(),
+        notes.trim(),
+        jsonEncode(externalIds),
+        rows.first['id'],
+      ],
+    );
   }
 
   /// Merkt sich das Bild einer Person, auch wenn sie noch an keinem Werk
@@ -4053,6 +4122,7 @@ final class FundusDatabase {
     if (_database.userVersion == 18 && !readOnly) _migrateToVersion19();
     if (_database.userVersion == 19 && !readOnly) _migrateToVersion20();
     if (_database.userVersion == 20 && !readOnly) _migrateToVersion21();
+    if (_database.userVersion == 21 && !readOnly) _migrateToVersion22();
   }
 
   void _migrateToVersion1() {
@@ -4538,6 +4608,23 @@ final class FundusDatabase {
     }
   }
 
+  /// Schema 22: editable profile notes for people.
+  void _migrateToVersion22() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('people') && !columnExists('people', 'notes')) {
+        _database.execute(
+          "ALTER TABLE people ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+        );
+      }
+      _database.userVersion = 22;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Copies a table into its version 8 shape.
   ///
   /// Legacy databases in the wild — and the migration fixtures — do not
@@ -4743,6 +4830,7 @@ const _version1Statements = <String>[
     sort_name TEXT,
     aliases_json TEXT NOT NULL DEFAULT '[]',
     external_ids_json TEXT NOT NULL DEFAULT '{}',
+    notes TEXT NOT NULL DEFAULT '',
     image_path TEXT
   )
   ''',
@@ -5105,6 +5193,7 @@ CREATE TABLE people (
   sort_name TEXT,
   aliases_json TEXT NOT NULL DEFAULT '[]',
   external_ids_json TEXT NOT NULL DEFAULT '{}',
+  notes TEXT NOT NULL DEFAULT '',
   image_path TEXT
 )
 ''';

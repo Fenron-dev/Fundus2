@@ -31,4 +31,5 @@ export 'src/search/library_work_query.dart';
 export 'src/video/video_metadata.dart';
 export 'src/metadata/metadata_candidate.dart';
 export 'src/model/person_role.dart';
+export 'src/model/person_profile.dart';
 export 'src/model/work_property.dart';
