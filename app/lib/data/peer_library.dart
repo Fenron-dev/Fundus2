@@ -645,11 +645,17 @@ class PeerLibraries extends ChangeNotifier {
     final sameLibrary = vault.listSources().where(
       (source) =>
           source.kind == LibrarySourceKind.peer &&
-          source.libraryId == libraryId &&
-          (source.baseUrl == peer.baseUrl ||
-              source.id.startsWith('peer-${peer.serverId}')),
+          source.libraryId == libraryId,
     );
-    final previous = sameLibrary.firstOrNull;
+    // `libraryId` is the vault's stable identity.  The server id and address
+    // are deliberately not part of this match: both can change after a
+    // rename, reinstall, DHCP lease change, or migration while the paired
+    // library remains the same.  Prefer the current address when there are
+    // duplicate legacy rows, otherwise reuse the oldest matching source.
+    final previous = sameLibrary
+        .where((source) => source.baseUrl == peer.baseUrl)
+        .firstOrNull ??
+        sameLibrary.firstOrNull;
     if (previous != null) return previous.id;
     if (vault.listSources().any((source) => source.id == specific)) {
       return specific;
