@@ -88,6 +88,9 @@ void main() {
     );
     scope.navigation.reset(WorkRoute(library.works.single.id));
     await tester.pumpAndSettle();
+    final tabContext = tester.element(find.byType(TabBar));
+    DefaultTabController.of(tabContext).animateTo(1);
+    await tester.pumpAndSettle();
     return scope;
   }
 

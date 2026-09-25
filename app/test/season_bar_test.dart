@@ -70,6 +70,9 @@ void main() {
     );
     scope.navigation.reset(WorkRoute(library.works.single.id));
     await tester.pumpAndSettle();
+    final tabContext = tester.element(find.byType(TabBar));
+    DefaultTabController.of(tabContext).animateTo(1);
+    await tester.pumpAndSettle();
 
     expect(find.text('Staffel 1'), findsOneWidget);
     expect(find.text('2 Folgen'), findsOneWidget);

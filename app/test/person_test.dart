@@ -8,6 +8,7 @@ import 'package:fundus/app/fundus_scope.dart';
 import 'package:fundus/app/pairing_scanner.dart';
 import 'package:fundus/app/shell/fundus_shell.dart';
 import 'package:fundus/data/library_controller.dart';
+import 'package:fundus/data/work_filter.dart';
 import 'package:fundus/features/people/person_credits.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -93,6 +94,29 @@ void main() {
     expect(worksOfPerson('karl may', library.works), hasLength(2));
   });
 
+  test('Person und Rolle filtern den Katalog gemeinsam', () {
+    final vault = library.library!;
+    final schacht = library.works.firstWhere(
+      (work) => work.title == 'Der Schacht',
+    );
+    vault.replaceWorkPeople(schacht.id, [
+      (name: 'Marit Sölden', role: 'Regie', imagePath: null),
+      (name: 'Tobias Rehm', role: 'Sprecher', imagePath: null),
+    ]);
+
+    expect(
+      const WorkFilter(
+        person: 'marit sölden',
+        role: 'Regie',
+      ).apply(library.works, library: vault).map((work) => work.title),
+      ['Der Schacht'],
+    );
+    expect(
+      const WorkFilter(role: 'Regie').apply(library.works, library: vault),
+      hasLength(1),
+    );
+  });
+
   testWidgets('die Personenseite zeigt, was von ihr da ist', (tester) async {
     tester.view.physicalSize = const Size(1200, 1600);
     tester.view.devicePixelRatio = 1;
@@ -122,5 +146,11 @@ void main() {
     expect(find.text('Der Schacht'), findsOneWidget);
     expect(find.text('Die Tiefe'), findsOneWidget);
     expect(find.text('Ganz anderes'), findsNothing);
+
+    await tester.tap(find.text('Alle Werke filtern'));
+    await tester.pumpAndSettle();
+
+    expect(scope.filter.person, 'Karl May');
+    expect(scope.navigation.current, isA<LibraryRoute>());
   });
 }

@@ -112,6 +112,38 @@ class ShellHeader extends StatelessWidget {
           steps.add(PathStep(type.label, () => scope.openMediaType(type.id)));
         }
         if (work != null) steps.add(PathStep(work.title));
+      case FileRoute(:final workId, :final fileId):
+        final work = scope.library.workById(workId);
+        if (work != null) {
+          steps.add(
+            PathStep(work.title, () => scope.navigation.go(WorkRoute(workId))),
+          );
+          final track = scope.library.library
+              ?.playbackTracks(workId)
+              .where((entry) => entry.fileId == fileId)
+              .firstOrNull;
+          steps.add(PathStep(track?.title ?? 'Teil'));
+        }
+      case ChapterRoute(:final workId, :final fileId, :final trackIndex):
+        final work = scope.library.workById(workId);
+        if (work != null) {
+          steps.add(
+            PathStep(work.title, () => scope.navigation.go(WorkRoute(workId))),
+          );
+          final track = scope.library.library
+              ?.playbackTracks(workId)
+              .where((entry) => entry.fileId == fileId)
+              .firstOrNull;
+          steps.add(
+            PathStep(
+              track?.title ?? 'Teil',
+              () => scope.navigation.go(
+                FileRoute(workId: workId, fileId: fileId),
+              ),
+            ),
+          );
+          steps.add(PathStep('Kapitel ${trackIndex + 1}'));
+        }
       case SettingsRoute():
         steps.add(const PathStep('Einstellungen'));
       case DownloadsRoute():

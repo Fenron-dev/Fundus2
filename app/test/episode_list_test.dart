@@ -74,6 +74,11 @@ void main() {
     );
     scope.navigation.reset(WorkRoute(library.works.first.id));
     await tester.pumpAndSettle();
+    // Eigenschaften is intentionally the first tab. These tests exercise the
+    // episode list, so enter that tab explicitly like a user would.
+    await tester.ensureVisible(find.text('Folgen'));
+    await tester.tap(find.text('Folgen'));
+    await tester.pumpAndSettle();
     return scope;
   }
 
@@ -85,9 +90,10 @@ void main() {
     expect(find.textContaining('Signalabbruch'), findsOneWidget);
     expect(find.textContaining('Rückkanal'), findsNothing);
 
-    await tester.tap(find.text('Staffel 1'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Staffel 2').last);
+    final seasonPicker = tester.widget<DropdownButton<int>>(
+      find.byType(DropdownButton<int>),
+    );
+    seasonPicker.onChanged!(2);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Rückkanal'), findsOneWidget);
@@ -125,5 +131,17 @@ void main() {
     await tester.tap(find.byTooltip('Als ungesehen markieren'));
     await tester.pumpAndSettle();
     expect(library.library!.finishedFiles(library.works.first.id), isEmpty);
+  });
+
+  testWidgets('eine Folge besitzt eine eigene Detailseite', (tester) async {
+    final scope = await pump(tester);
+
+    await tester.tap(find.byTooltip('Details zu diesem Teil').first);
+    await tester.pumpAndSettle();
+
+    expect(scope.navigation.current, isA<FileRoute>());
+    expect(find.textContaining('Signalabbruch'), findsWidgets);
+    expect(find.text('Bearbeiten'), findsOneWidget);
+    expect(find.text('DATEI'), findsOneWidget);
   });
 }

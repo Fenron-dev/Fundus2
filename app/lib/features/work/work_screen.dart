@@ -59,11 +59,10 @@ class WorkScreen extends StatelessWidget {
     final stage = FundusStageSize.of(context);
     return DefaultTabController(
       length: tabs.length,
-      // Keep the historical initial content view for existing sessions; the
-      // Eigenschaften tab is nevertheless first and one tap away. This also
-      // lets freshly-created property definitions be picked up when the tab
-      // is opened after returning from Settings.
-      initialIndex: tabs.length > 1 ? 1 : 0,
+      // Eigenschaften are the stable overview for every media type. Files,
+      // episodes, and volumes remain one tab away and now have detail pages
+      // of their own.
+      initialIndex: 0,
       child: NestedScrollView(
         headerSliverBuilder: (context, _) => [
           SliverToBoxAdapter(
@@ -1125,7 +1124,7 @@ class _StatusEditor extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         DropdownButtonFormField<String>(
-          value: publication.containsKey(work.summary.publicationStatus)
+          initialValue: publication.containsKey(work.summary.publicationStatus)
               ? work.summary.publicationStatus
               : 'unknown',
           decoration: const InputDecoration(labelText: 'Veröffentlichung'),
@@ -1147,7 +1146,7 @@ class _StatusEditor extends StatelessWidget {
         ),
         const SizedBox(height: FundusSpace.x2),
         DropdownButtonFormField<String>(
-          value: personal.containsKey(work.summary.personalStatus)
+          initialValue: personal.containsKey(work.summary.personalStatus)
               ? work.summary.personalStatus
               : 'unseen',
           decoration: const InputDecoration(labelText: 'Mein Lesestatus'),
@@ -1730,6 +1729,7 @@ class _FilesState extends State<_Files> {
         final number = episodeNumberOf(track.relativePath);
         final detail = _details[track.fileId];
         return _EpisodeRow(
+          workId: widget.work.id,
           track: track,
           position: number.episode ?? tracks.indexOf(track) + 1,
           gutter: gutter,
@@ -1747,6 +1747,9 @@ class _FilesState extends State<_Files> {
           ),
           onPlay: () =>
               unawaited(scope.play(widget.work, startAt: track.fileId)),
+          onOpenDetails: () => scope.navigation.go(
+            FileRoute(workId: widget.work.id, fileId: track.fileId),
+          ),
           onToggle: () => unawaited(_toggleFinished(track)),
           onAddToList: () => unawaited(
             showAddToList(
@@ -1820,6 +1823,7 @@ class _SeasonBar extends StatelessWidget {
 /// drinsteht — Text, Datum und die Marken innerhalb der Folge.
 class _EpisodeRow extends StatelessWidget {
   const _EpisodeRow({
+    required this.workId,
     required this.track,
     required this.position,
     required this.gutter,
@@ -1831,11 +1835,13 @@ class _EpisodeRow extends StatelessWidget {
     required this.expanded,
     required this.onExpand,
     required this.onPlay,
+    required this.onOpenDetails,
     required this.onPlayChapter,
     required this.onToggle,
     required this.onAddToList,
   });
 
+  final String workId;
   final LibraryPlaybackTrack track;
   final int position;
   final double gutter;
@@ -1856,6 +1862,7 @@ class _EpisodeRow extends StatelessWidget {
   final bool expanded;
   final VoidCallback onExpand;
   final VoidCallback onPlay;
+  final VoidCallback onOpenDetails;
   final void Function(LibraryPlaybackChapter chapter) onPlayChapter;
   final VoidCallback onToggle;
 
@@ -1936,6 +1943,15 @@ class _EpisodeRow extends StatelessWidget {
                         ),
                       ),
                     ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: onOpenDetails,
+                  tooltip: 'Details zu diesem Teil',
+                  icon: Icon(
+                    Icons.info_outline,
+                    size: FundusIcons.sizeMd,
+                    color: tokens.textFaint,
                   ),
                 ),
                 IconButton(
@@ -2024,6 +2040,14 @@ class _EpisodeRow extends StatelessWidget {
                           _ChapterLine(
                             chapter: mark,
                             onTap: () => onPlayChapter(mark),
+                            onDetails: () =>
+                                FundusScope.of(context).navigation.go(
+                                  ChapterRoute(
+                                    workId: workId,
+                                    fileId: track.fileId,
+                                    trackIndex: mark.trackIndex,
+                                  ),
+                                ),
                           ),
                       ],
                   ],
@@ -2062,10 +2086,15 @@ class _EpisodeRow extends StatelessWidget {
 
 /// Eine Kapitelmarke innerhalb einer Folge, mit ihrem Bild, wo eines da ist.
 class _ChapterLine extends StatelessWidget {
-  const _ChapterLine({required this.chapter, required this.onTap});
+  const _ChapterLine({
+    required this.chapter,
+    required this.onTap,
+    required this.onDetails,
+  });
 
   final LibraryPlaybackChapter chapter;
   final VoidCallback onTap;
+  final VoidCallback onDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -2105,6 +2134,11 @@ class _ChapterLine extends StatelessWidget {
               style: theme.textTheme.labelMedium?.copyWith(
                 color: tokens.textFaint,
               ),
+            ),
+            IconButton(
+              onPressed: onDetails,
+              tooltip: 'Kapiteldetails',
+              icon: const Icon(Icons.chevron_right),
             ),
           ],
         ),
@@ -2252,11 +2286,18 @@ class _People extends StatelessWidget {
       padding: _contentPadding(context),
       children: [
         for (final entry in byRole.entries) ...[
-          Text(
-            entry.key.toUpperCase(),
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: tokens.textFaint,
-              letterSpacing: 1.2,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => FundusScope.of(context).showRole(entry.key),
+              icon: Icon(FundusIcons.filter, size: FundusIcons.sizeSm),
+              label: Text(
+                entry.key.toUpperCase(),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: tokens.textFaint,
+                  letterSpacing: 1.2,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: FundusSpace.x3),
@@ -2319,13 +2360,34 @@ class _PersonTile extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodyMedium,
             ),
-            Text(
-              role,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: tokens.textFaint,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    role,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: tokens.textFaint,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 28,
+                    height: 28,
+                  ),
+                  tooltip: 'Werke von $name filtern',
+                  onPressed: () => FundusScope.of(context).showPerson(name),
+                  icon: Icon(
+                    FundusIcons.filter,
+                    size: 14,
+                    color: tokens.textFaint,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

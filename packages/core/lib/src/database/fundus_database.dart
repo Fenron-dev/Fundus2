@@ -214,7 +214,8 @@ final class FileDetail {
   final String? description;
   final DateTime? publishedAt;
 
-  bool get isEmpty => description == null && publishedAt == null;
+  bool get isEmpty =>
+      title == null && description == null && publishedAt == null;
 }
 
 final class WorkMetadataOrigin {

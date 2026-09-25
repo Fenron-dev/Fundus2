@@ -85,10 +85,13 @@ void main() {
           protected: protected,
         ),
       )
-      .then((value) => value!);
+      .then((value) {
+        library.refresh();
+        return value!;
+      });
 
   Future<void> openProperties(WidgetTester tester) async {
-    await tester.tap(find.text('Eigenschaften'));
+    // Eigenschaften is intentionally the first and selected tab.
     await tester.pumpAndSettle();
   }
 

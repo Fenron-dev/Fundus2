@@ -59,6 +59,27 @@ final class WorkRoute extends FundusRoute {
   final String workId;
 }
 
+/// One volume, episode, track, or other content file inside a work.
+final class FileRoute extends FundusRoute {
+  const FileRoute({required this.workId, required this.fileId});
+
+  final String workId;
+  final String fileId;
+}
+
+/// One embedded chapter inside a content file.
+final class ChapterRoute extends FundusRoute {
+  const ChapterRoute({
+    required this.workId,
+    required this.fileId,
+    required this.trackIndex,
+  });
+
+  final String workId;
+  final String fileId;
+  final int trackIndex;
+}
+
 final class SearchRoute extends FundusRoute {
   const SearchRoute();
 }
@@ -90,10 +111,9 @@ final class ListRoute extends FundusRoute {
 
 /// Eine Person, und alles von ihr.
 ///
-/// Der Name ist die Kennung: Fundus führt keine Personentabelle, es kennt
-/// Namen an Werken. Zwei Menschen gleichen Namens fielen damit zusammen —
-/// das ist der Preis dafür, dass ein Name aus einer Datei sofort etwas wert
-/// ist, statt erst zugeordnet werden zu müssen.
+/// Die Route verwendet weiterhin den sichtbaren Namen, damit auch noch nicht
+/// redaktionell gepflegte Personen aus Dateidaten sofort erreichbar sind. Das
+/// Profil dahinter besitzt in der Bibliothek bereits eine stabile Kennung.
 final class PersonRoute extends FundusRoute {
   const PersonRoute(this.name);
 

@@ -78,6 +78,10 @@ void main() {
   testWidgets('der Inhalt unter den Reitern ist erreichbar', (tester) async {
     await pumpPhone(tester);
 
+    final tabContext = tester.element(find.byType(TabBar));
+    DefaultTabController.of(tabContext).animateTo(1);
+    await tester.pumpAndSettle();
+
     // Der Kopf steht oben, die Dateien liegen darunter — und sie lassen sich
     // erreichen, statt hinter dem Bildschirmrand zu bleiben.
     expect(find.textContaining('Kapitel'), findsWidgets);

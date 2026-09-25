@@ -61,6 +61,7 @@ class _SearchScreenState extends State<SearchScreen> {
         : scope.filter.apply(
             scope.library.works,
             configuration: scope.library.library?.configuration,
+            library: scope.library.library,
           );
 
     return Column(

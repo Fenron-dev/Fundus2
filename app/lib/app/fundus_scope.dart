@@ -560,6 +560,24 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     navigation.go(const LibraryRoute());
   }
 
+  /// Shows all works connected to one person, optionally in one role.
+  void showPerson(String person, {String? role}) {
+    _bump(() {
+      _activeViews = const {};
+      _filter = WorkFilter(person: person, role: role, sort: _filter.sort);
+    });
+    navigation.go(const LibraryRoute());
+  }
+
+  /// Shows every work carrying the selected canonical role.
+  void showRole(String role) {
+    _bump(() {
+      _activeViews = const {};
+      _filter = WorkFilter(role: role, sort: _filter.sort);
+    });
+    navigation.go(const LibraryRoute());
+  }
+
   /// Opens a saved view: the filter it stored, and the library showing it.
   void applySavedView(LibrarySavedView view) {
     _bump(() {

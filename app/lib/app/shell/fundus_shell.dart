@@ -16,6 +16,7 @@ import '../../features/people/person_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/vault/vault_screen.dart';
 import '../../features/work/work_screen.dart';
+import '../../features/work/file_detail_screen.dart';
 import '../app_navigation.dart';
 import '../fundus_scope.dart';
 import 'navigation_pane.dart';
@@ -163,7 +164,7 @@ class _CompactShell extends StatelessWidget {
     ];
     final selected = switch (route) {
       DashboardRoute() => 0,
-      LibraryRoute() || WorkRoute() => 1,
+      LibraryRoute() || WorkRoute() || FileRoute() || ChapterRoute() => 1,
       SearchRoute() => 2,
       DownloadsRoute() => 3,
       _ => 4,
@@ -273,6 +274,16 @@ class ShellContent extends StatelessWidget {
       DashboardRoute() => const DashboardScreen(),
       LibraryRoute() => LibraryScreen(route: route),
       WorkRoute(:final workId) => WorkScreen(workId: workId),
+      FileRoute(:final workId, :final fileId) => FileDetailScreen(
+        workId: workId,
+        fileId: fileId,
+      ),
+      ChapterRoute(:final workId, :final fileId, :final trackIndex) =>
+        ChapterDetailScreen(
+          workId: workId,
+          fileId: fileId,
+          trackIndex: trackIndex,
+        ),
       SettingsRoute(:final category) => SettingsScreen(category: category),
       DownloadsRoute() => const DownloadsScreen(),
       ListsRoute() => const ListsScreen(),

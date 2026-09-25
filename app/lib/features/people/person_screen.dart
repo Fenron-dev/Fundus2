@@ -1,9 +1,11 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
@@ -27,6 +29,35 @@ class PersonScreen extends StatefulWidget {
 
 class _PersonScreenState extends State<PersonScreen> {
   late String _name = widget.name;
+
+  Future<void> _pickImage(BuildContext context) async {
+    final scope = FundusScope.of(context);
+    final library = scope.library.library;
+    if (library == null || library.isReadOnly) return;
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+      allowMultiple: false,
+    );
+    if (!mounted || result == null || result.files.single.bytes == null) return;
+    final picked = result.files.single;
+    try {
+      await library.cachePersonImage(
+        name: _name,
+        bytes: picked.bytes!,
+        extension: picked.extension ?? 'jpg',
+      );
+      scope.library.refresh();
+      if (mounted) setState(() {});
+    } on Object catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Personenbild konnte nicht gespeichert werden: $error'),
+        ),
+      );
+    }
+  }
 
   Future<void> _editProfile(BuildContext context, PersonProfile profile) async {
     final scope = FundusScope.of(context);
@@ -158,11 +189,41 @@ class _PersonScreenState extends State<PersonScreen> {
       children: [
         Row(
           children: [
-            PersonAvatar(
-              name: profile.displayName,
-              size: 72,
-              imagePath: scope.library.library?.personImage(_name),
-              root: scope.library.library?.root.path,
+            Tooltip(
+              message: 'Eigenes Personenbild wählen',
+              child: InkWell(
+                borderRadius: FundusRadius.mdAll,
+                onTap: scope.library.library?.isReadOnly == false
+                    ? () => _pickImage(context)
+                    : null,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    PersonAvatar(
+                      name: profile.displayName,
+                      size: 72,
+                      imagePath: scope.library.library?.personImage(_name),
+                      root: scope.library.library?.root.path,
+                    ),
+                    if (scope.library.library?.isReadOnly == false)
+                      Positioned(
+                        right: -6,
+                        bottom: -6,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: tokens.surface,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: tokens.divider),
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.all(5),
+                            child: Icon(Icons.add_a_photo_outlined, size: 16),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(width: FundusSpace.x4),
             Expanded(
@@ -179,6 +240,27 @@ class _PersonScreenState extends State<PersonScreen> {
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: tokens.textMuted,
                     ),
+                  ),
+                  const SizedBox(height: FundusSpace.x2),
+                  Wrap(
+                    spacing: FundusSpace.x2,
+                    runSpacing: FundusSpace.x2,
+                    children: [
+                      ActionChip(
+                        avatar: Icon(
+                          FundusIcons.filter,
+                          size: FundusIcons.sizeSm,
+                        ),
+                        label: const Text('Alle Werke filtern'),
+                        onPressed: () => scope.showPerson(profile.displayName),
+                      ),
+                      for (final role in byRole.keys)
+                        ActionChip(
+                          label: Text(role),
+                          onPressed: () =>
+                              scope.showPerson(profile.displayName, role: role),
+                        ),
+                    ],
                   ),
                 ],
               ),
@@ -208,7 +290,10 @@ class _PersonScreenState extends State<PersonScreen> {
                         spacing: FundusSpace.x2,
                         children: [
                           for (final entry in profile.externalIds.entries)
-                            Chip(label: Text('${entry.key}: ${entry.value}')),
+                            _ExternalLinkChip(
+                              service: entry.key,
+                              value: entry.value,
+                            ),
                         ],
                       ),
                     ],
@@ -219,11 +304,19 @@ class _PersonScreenState extends State<PersonScreen> {
           ),
         const SizedBox(height: FundusSpace.x8),
         for (final entry in byRole.entries) ...[
-          Text(
-            '${entry.key.toUpperCase()} · ${entry.value.length}',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: tokens.textFaint,
-              letterSpacing: 1.2,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () =>
+                  scope.showPerson(profile.displayName, role: entry.key),
+              icon: Icon(FundusIcons.filter, size: FundusIcons.sizeSm),
+              label: Text(
+                '${entry.key.toUpperCase()} · ${entry.value.length}',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: tokens.textFaint,
+                  letterSpacing: 1.2,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: FundusSpace.x3),
@@ -245,6 +338,57 @@ class _PersonScreenState extends State<PersonScreen> {
     );
   }
 }
+
+class _ExternalLinkChip extends StatelessWidget {
+  const _ExternalLinkChip({required this.service, required this.value});
+
+  final String service;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = _personLinkUri(service, value);
+    final host = uri?.host.replaceFirst('www.', '');
+    return ActionChip(
+      avatar: const Icon(Icons.open_in_new, size: 16),
+      label: Text(
+        host == null || host.isEmpty
+            ? '$service · $value'
+            : '${_serviceLabel(service)} · $host',
+      ),
+      tooltip: uri?.toString() ?? value,
+      onPressed: uri == null ? null : () => launchUrl(uri),
+    );
+  }
+}
+
+Uri? _personLinkUri(String service, String value) {
+  final direct = Uri.tryParse(value.trim());
+  if (direct != null && (direct.scheme == 'http' || direct.scheme == 'https')) {
+    return direct;
+  }
+  final id = value.trim();
+  if (id.isEmpty) return null;
+  return switch (service.trim().toLowerCase()) {
+    'tmdb' => Uri.parse('https://www.themoviedb.org/person/$id'),
+    'imdb' => Uri.parse('https://www.imdb.com/name/$id/'),
+    'anilist' => Uri.parse('https://anilist.co/staff/$id'),
+    'mal' || 'myanimelist' => Uri.parse('https://myanimelist.net/people/$id'),
+    'goodreads' => Uri.parse('https://www.goodreads.com/author/show/$id'),
+    'hardcover' => Uri.parse('https://hardcover.app/authors/$id'),
+    _ => null,
+  };
+}
+
+String _serviceLabel(String value) => switch (value.trim().toLowerCase()) {
+  'mal' || 'myanimelist' => 'MyAnimeList',
+  'tmdb' => 'TMDB',
+  'imdb' => 'IMDb',
+  'anilist' => 'AniList',
+  'goodreads' => 'Goodreads',
+  'hardcover' => 'Hardcover',
+  _ => value.trim(),
+};
 
 /// Die Kachel einer Person: zwei Buchstaben auf einer Fläche.
 ///

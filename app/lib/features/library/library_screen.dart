@@ -56,6 +56,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final filtered = filter.apply(
       scope.library.works,
       configuration: scope.library.library?.configuration,
+      library: scope.library.library,
     );
     final works = section == null
         ? filtered
@@ -732,6 +733,33 @@ class _ShelfBar extends StatelessWidget {
               onDeleted: () => scope.setFilter(
                 filter.copyWith(tags: {...filter.tags}..remove(label)),
               ),
+              deleteIcon: Icon(FundusIcons.close, size: FundusIcons.sizeSm),
+            ),
+          ],
+          if (filter.person case final person?) ...[
+            const SizedBox(width: FundusSpace.x2),
+            InputChip(
+              selected: true,
+              avatar: Icon(FundusIcons.person, size: FundusIcons.sizeSm),
+              label: Text(person),
+              onSelected: (_) => scope.setFilter(
+                filter.copyWith(clearPerson: true, clearRole: true),
+              ),
+              onDeleted: () => scope.setFilter(
+                filter.copyWith(clearPerson: true, clearRole: true),
+              ),
+              deleteIcon: Icon(FundusIcons.close, size: FundusIcons.sizeSm),
+            ),
+          ],
+          if (filter.role case final role?) ...[
+            const SizedBox(width: FundusSpace.x2),
+            InputChip(
+              selected: true,
+              label: Text(role),
+              onSelected: (_) =>
+                  scope.setFilter(filter.copyWith(clearRole: true)),
+              onDeleted: () =>
+                  scope.setFilter(filter.copyWith(clearRole: true)),
               deleteIcon: Icon(FundusIcons.close, size: FundusIcons.sizeSm),
             ),
           ],

@@ -31,6 +31,8 @@ final class WorkFilter {
     this.tags = const {},
     this.publicationStatus,
     this.personalStatus,
+    this.person,
+    this.role,
     this.sourceId,
     this.mediaRoot,
   });
@@ -59,6 +61,8 @@ final class WorkFilter {
   final Set<String> tags;
   final String? publicationStatus;
   final String? personalStatus;
+  final String? person;
+  final String? role;
 
   /// One machine's shelf out of the several this device holds.
   ///
@@ -81,6 +85,8 @@ final class WorkFilter {
       tags.isNotEmpty ||
       publicationStatus != null ||
       personalStatus != null ||
+      person != null ||
+      role != null ||
       sourceId != null ||
       mediaRoot != null;
 
@@ -92,6 +98,8 @@ final class WorkFilter {
       tags.length +
       (publicationStatus == null ? 0 : 1) +
       (personalStatus == null ? 0 : 1) +
+      (person == null ? 0 : 1) +
+      (role == null ? 0 : 1) +
       (sourceId == null ? 0 : 1) +
       (mediaRoot == null ? 0 : 1);
 
@@ -107,6 +115,10 @@ final class WorkFilter {
     Set<String>? tags,
     String? publicationStatus,
     String? personalStatus,
+    String? person,
+    bool clearPerson = false,
+    String? role,
+    bool clearRole = false,
     String? sourceId,
     bool clearSource = false,
     String? mediaRoot,
@@ -122,6 +134,8 @@ final class WorkFilter {
     tags: tags ?? this.tags,
     publicationStatus: publicationStatus ?? this.publicationStatus,
     personalStatus: personalStatus ?? this.personalStatus,
+    person: clearPerson ? null : (person ?? this.person),
+    role: clearRole ? null : (role ?? this.role),
     sourceId: clearSource ? null : (sourceId ?? this.sourceId),
     mediaRoot: clearMediaRoot ? null : (mediaRoot ?? this.mediaRoot),
   );
@@ -139,9 +153,12 @@ final class WorkFilter {
     if (text.isNotEmpty) reasons.add('die Suche „$text"');
     if (favouritesOnly) reasons.add('die Beschränkung auf Favoriten');
     if (tags.isNotEmpty) reasons.add('die Schlagworte ${tags.join(', ')}');
-    if (publicationStatus != null)
+    if (publicationStatus != null) {
       reasons.add('den Veröffentlichungsstatus $publicationStatus');
+    }
     if (personalStatus != null) reasons.add('den Lesestatus $personalStatus');
+    if (person != null) reasons.add('die Person „$person“');
+    if (role != null) reasons.add('die Rolle „$role“');
     if (sourceId != null) reasons.add('das gewählte Gerät');
     if (mediaRoot != null) reasons.add('der Medienordner „$mediaRoot“');
     if (origins.isNotEmpty) {
@@ -163,6 +180,7 @@ final class WorkFilter {
   List<WorkView> apply(
     List<WorkView> works, {
     LibraryConfiguration? configuration,
+    FundusLibrary? library,
   }) {
     final type = mediaTypeId == null ? null : MediaTypes.byId(mediaTypeId!);
     final needle = text.trim().toLowerCase();
@@ -188,6 +206,30 @@ final class WorkFilter {
       if (personalStatus != null &&
           work.summary.personalStatus != personalStatus) {
         return false;
+      }
+      if (person != null || role != null) {
+        final knownRoles = library?.listPersonRoles() ?? const <PersonRole>[];
+        final credits =
+            library?.peopleOf(work.id) ??
+            <({String name, String role, String? imagePath})>[
+              for (final name in work.summary.authors)
+                (name: name, role: 'Urheber', imagePath: null),
+              for (final name in work.summary.narrators)
+                (name: name, role: 'Sprecher', imagePath: null),
+            ];
+        final wantedPerson = person?.trim().toLowerCase();
+        final wantedRole = role?.trim().toLowerCase();
+        final matchesCredit = credits.any((credit) {
+          final samePerson =
+              wantedPerson == null ||
+              credit.name.trim().toLowerCase() == wantedPerson;
+          final groupedRole = personRoleLabel(credit.role, knownRoles);
+          final sameRole =
+              wantedRole == null ||
+              groupedRole.trim().toLowerCase() == wantedRole;
+          return samePerson && sameRole;
+        });
+        if (!matchesCredit) return false;
       }
       if (type != null && work.mediaType?.id != type.id) return false;
       if (origins.isNotEmpty && !origins.contains(work.origin)) return false;
