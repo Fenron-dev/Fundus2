@@ -4026,6 +4026,67 @@ final class FundusDatabase {
     }
   }
 
+  /// Moves every indexed row of one peer source into another peer source.
+  ///
+  /// This repairs mobile shell vaults that accumulated multiple source ids
+  /// for the same remote library after a server rename or reinstall. Work and
+  /// file ids stay unchanged, so progress, annotations, playlist membership,
+  /// and offline paths keep pointing at the same rows.
+  void mergePeerSource({
+    required String fromSourceId,
+    required String intoSourceId,
+  }) {
+    if (fromSourceId == intoSourceId) return;
+    if (fromSourceId == localSourceId || intoSourceId == localSourceId) {
+      throw ArgumentError(
+        'Die lokale Quelle darf nicht zusammengeführt werden.',
+      );
+    }
+    final sources = _database.select(
+      'SELECT id, kind FROM sources WHERE id IN (?, ?)',
+      [fromSourceId, intoSourceId],
+    );
+    if (sources.length != 2 ||
+        sources.any((row) => row['kind'] as String != 'peer')) {
+      throw StateError(
+        'Es können nur zwei vorhandene Peer-Quellen zusammengeführt werden.',
+      );
+    }
+    final workPathConflict = _database.select(
+      'SELECT 1 FROM works old JOIN works kept '
+      'ON kept.source_id = ? AND kept.source_path = old.source_path '
+      'AND kept.id != old.id WHERE old.source_id = ? LIMIT 1',
+      [intoSourceId, fromSourceId],
+    );
+    final filePathConflict = _database.select(
+      'SELECT 1 FROM files old JOIN files kept '
+      'ON kept.source_id = ? AND kept.path = old.path '
+      'AND kept.id != old.id WHERE old.source_id = ? LIMIT 1',
+      [intoSourceId, fromSourceId],
+    );
+    if (workPathConflict.isNotEmpty || filePathConflict.isNotEmpty) {
+      throw StateError(
+        'Die alten Peer-Quellen enthalten unterschiedliche IDs für denselben Pfad.',
+      );
+    }
+    _database.execute('BEGIN');
+    try {
+      _database.execute('UPDATE works SET source_id = ? WHERE source_id = ?', [
+        intoSourceId,
+        fromSourceId,
+      ]);
+      _database.execute('UPDATE files SET source_id = ? WHERE source_id = ?', [
+        intoSourceId,
+        fromSourceId,
+      ]);
+      _database.execute('DELETE FROM sources WHERE id = ?', [fromSourceId]);
+      _database.execute('COMMIT');
+    } on Object {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Marks a source as answering or not.
   ///
   /// An unreachable source never overwrites what is already known about its

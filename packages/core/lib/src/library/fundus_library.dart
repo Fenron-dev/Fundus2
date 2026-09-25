@@ -242,6 +242,18 @@ final class FundusLibrary {
     );
   }
 
+  /// Consolidates two historical identities of the same remote library.
+  void mergePeerSource({
+    required String fromSourceId,
+    required String intoSourceId,
+  }) {
+    _ensureWritable();
+    _database.mergePeerSource(
+      fromSourceId: fromSourceId,
+      intoSourceId: intoSourceId,
+    );
+  }
+
   /// Records a downloaded copy of a remote file.
   void setOfflineCopy({required String fileId, required String path}) {
     _ensureWritable();

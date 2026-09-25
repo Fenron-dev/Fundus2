@@ -143,6 +143,51 @@ void main() {
     );
   });
 
+  test('legacy peer sources merge without losing offline rows', () {
+    final database = FundusDatabase.inMemory();
+    addTearDown(database.close);
+    for (final id in ['peer-old', 'peer-current']) {
+      database.upsertSource(
+        LibrarySource(id: id, kind: LibrarySourceKind.peer, displayName: id),
+      );
+    }
+    database.rawExecute(
+      "INSERT INTO works (id, source_id, kind, source_path, title, added_at, "
+      "availability) VALUES ('w-old', 'peer-old', 'book', 'Alt', 'Alt', 0, "
+      "'offline_copy')",
+    );
+    database.rawExecute(
+      "INSERT INTO works (id, source_id, kind, source_path, title, added_at, "
+      "availability) VALUES ('w-new', 'peer-current', 'book', 'Neu', 'Neu', "
+      "0, 'remote')",
+    );
+    database.rawExecute(
+      "INSERT INTO files (id, source_id, path, filename, size, offline_path, "
+      "file_modified_at, indexed_at, availability) VALUES ('f-old', "
+      "'peer-old', 'Alt/01.epub', '01.epub', 12, '/offline/01.epub', 0, 0, "
+      "'offline_copy')",
+    );
+
+    database.mergePeerSource(
+      fromSourceId: 'peer-old',
+      intoSourceId: 'peer-current',
+    );
+
+    expect(database.loadSource('peer-old'), isNull);
+    expect(
+      database.rawQuery('SELECT DISTINCT source_id FROM works'),
+      everyElement(containsPair('source_id', 'peer-current')),
+    );
+    final file = database
+        .rawQuery(
+          "SELECT source_id, offline_path, availability FROM files WHERE id = 'f-old'",
+        )
+        .single;
+    expect(file['source_id'], 'peer-current');
+    expect(file['offline_path'], '/offline/01.epub');
+    expect(file['availability'], 'offline_copy');
+  });
+
   test('a peer id collision is rejected before changing the local work', () {
     final database = FundusDatabase.inMemory();
     addTearDown(database.close);

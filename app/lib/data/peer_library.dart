@@ -484,14 +484,47 @@ class PeerLibraries extends ChangeNotifier {
         await _mirror(current);
         return;
       } on RemoteWorkIdCollision catch (error) {
-        if (!rebound.add(error.existingSourceId)) rethrow;
-        current = await _retryOnExistingSource(current, error.existingSourceId);
+        current = await _recoverSourceCollision(
+          current,
+          error.existingSourceId,
+          rebound,
+        );
       } on RemoteFileIdCollision catch (error) {
-        if (!rebound.add(error.existingSourceId)) rethrow;
-        current = await _retryOnExistingSource(current, error.existingSourceId);
+        current = await _recoverSourceCollision(
+          current,
+          error.existingSourceId,
+          rebound,
+        );
       }
     }
     throw StateError('Zu viele alte Peer-Quellen beim Katalog-Abgleich.');
+  }
+
+  Future<ConnectedPeer> _recoverSourceCollision(
+    ConnectedPeer current,
+    String existingSourceId,
+    Set<String> rebound,
+  ) async {
+    final vault = library.library;
+    if (vault == null) return current;
+    if (rebound.isEmpty) {
+      rebound.add(existingSourceId);
+      return _retryOnExistingSource(current, existingSourceId);
+    }
+    if (existingSourceId == current.sourceId) {
+      throw StateError('Peer-Katalog-Konflikt kann nicht umgebunden werden.');
+    }
+    // The catalogue is split across two historical identities. Moving the
+    // old rows into the already selected canonical source keeps their stable
+    // work/file ids and therefore every progress, annotation and offline
+    // reference. Merely switching identities would oscillate forever.
+    vault.mergePeerSource(
+      fromSourceId: existingSourceId,
+      intoSourceId: current.sourceId,
+    );
+    _connected.remove(existingSourceId);
+    rebound.add(existingSourceId);
+    return current;
   }
 
   Future<ConnectedPeer> _retryOnExistingSource(
