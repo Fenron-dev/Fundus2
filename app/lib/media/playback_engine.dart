@@ -5,6 +5,8 @@ import 'package:media_kit/media_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../app/fundus_log.dart';
+
 /// One selectable track of a file — a language, a commentary, a subtitle.
 final class MediaTrackOption {
   const MediaTrackOption({
@@ -113,6 +115,7 @@ final class MediaKitEngine implements PlaybackEngine {
     // The video output has to exist before the first file is opened —
     // attaching it afterwards leaves the picture black while the sound plays.
     _video = VideoController(_player);
+    _nativeTuning = _configureNativePlayback();
     // The rect the engine actually decodes, so the frame around it can be the
     // right shape rather than a guess.
     _video.rect.addListener(() {
@@ -129,6 +132,14 @@ final class MediaKitEngine implements PlaybackEngine {
       _player.stream.track.listen((value) {
         _selected = value;
         _emitTracks();
+      }),
+      _player.stream.buffering.distinct().listen((active) {
+        FundusLog.instance.info('player.buffering', {
+          'active': active,
+          'position_ms': _player.state.position.inMilliseconds,
+          'buffer_ms': _player.state.buffer.inMilliseconds,
+          'percent': _player.state.bufferingPercentage,
+        });
       }),
     ]);
   }
@@ -195,6 +206,39 @@ final class MediaKitEngine implements PlaybackEngine {
 
   final Player _player;
   late final VideoController _video;
+  late final Future<void> _nativeTuning;
+
+  /// Gives libmpv enough material ahead of the playhead and aligns desktop
+  /// frame delivery with the monitor clock.
+  ///
+  /// `bufferSize` alone only caps the cache; without a time target mpv can
+  /// still hover close to the playhead on a mounted SMB/NFS file. Desktop
+  /// display-resampling also avoids the periodic repeated/dropped frame that
+  /// 23.976/24 fps material otherwise shows on a 60 Hz desktop.
+  Future<void> _configureNativePlayback() async {
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    final properties = <String, String>{
+      'cache': 'yes',
+      'demuxer-readahead-secs': '30',
+      'cache-pause': 'yes',
+      'cache-pause-wait': '1',
+      if (_isDesktop) ...{
+        'video-sync': 'display-resample',
+        'interpolation': 'yes',
+        'tscale': 'oversample',
+      },
+    };
+    for (final property in properties.entries) {
+      await platform.setProperty(property.key, property.value);
+    }
+  }
+
+  static bool get _isDesktop =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux);
 
   /// mpv reports what is available and what is selected on two separate
   /// streams; the player only ever wants both together.
@@ -217,6 +261,7 @@ final class MediaKitEngine implements PlaybackEngine {
 
   @override
   Future<void> open(Uri uri, {Duration start = Duration.zero}) async {
+    await _nativeTuning;
     final resume = start > Duration.zero ? start : null;
     await _player.open(Media(uri.toString(), start: resume), play: false);
     if (resume == null) return;
@@ -280,9 +325,8 @@ final class MediaKitEngine implements PlaybackEngine {
   /// A fresh widget on every call meant the picture's subtree was rebuilt
   /// with the rest of the screen; the same instance lets Flutter skip it
   /// entirely, which is what the picture needs while it is running.
-  late final Widget _surface = Video(
-    controller: _video,
-    controls: NoVideoControls,
+  late final Widget _surface = RepaintBoundary(
+    child: Video(controller: _video, controls: NoVideoControls),
   );
 
   @override
