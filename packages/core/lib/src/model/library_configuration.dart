@@ -8,6 +8,7 @@ final class LibraryConfiguration {
     Map<String, Iterable<String>>? mediaRoots,
     Map<String, Iterable<String>>? sensitiveRoots,
     Map<String, String>? mediaRootLabels,
+    Iterable<String>? excludedPaths,
   }) : mediaRoots = Map<String, List<String>>.unmodifiable({
          for (final entry in (mediaRoots ?? defaults).entries)
            entry.key: List<String>.unmodifiable(
@@ -31,6 +32,10 @@ final class LibraryConfiguration {
          for (final entry
              in (mediaRootLabels ?? const <String, String>{}).entries)
            _normalizeRoot(entry.key): entry.value.trim(),
+       }),
+       excludedPaths = List<String>.unmodifiable({
+         for (final value in (excludedPaths ?? const <String>[]))
+           if (_normalizeRoot(value).isNotEmpty) _normalizeRoot(value),
        });
 
   static const formatVersion = 1;
@@ -67,6 +72,9 @@ final class LibraryConfiguration {
   final Map<String, List<String>> mediaRoots;
   final Map<String, List<String>> sensitiveRoots;
   final Map<String, String> mediaRootLabels;
+
+  /// Vault-relative files or folders the scanner must leave untouched.
+  final List<String> excludedPaths;
 
   List<String> rootsFor(String kind) => mediaRoots[kind] ?? const [];
 
@@ -122,17 +130,19 @@ final class LibraryConfiguration {
         }
       }
     }
+    final excluded = value['excluded_paths'];
     return LibraryConfiguration(
       mediaRoots: {...defaults, ...parsed},
       sensitiveRoots: sensitive,
       mediaRootLabels: labels,
+      excludedPaths: excluded is List ? excluded.whereType<String>() : const [],
     );
   }
 
   Future<void> write(File file) async {
     await file.parent.create(recursive: true);
     await file.writeAsString(
-      '${const JsonEncoder.withIndent('  ').convert({'format_version': formatVersion, 'media_roots': mediaRoots, if (mediaRootLabels.isNotEmpty) 'media_root_labels': mediaRootLabels, if (sensitiveRoots.isNotEmpty) 'sensitive_roots': sensitiveRoots})}\n',
+      '${const JsonEncoder.withIndent('  ').convert({'format_version': formatVersion, 'media_roots': mediaRoots, if (mediaRootLabels.isNotEmpty) 'media_root_labels': mediaRootLabels, if (sensitiveRoots.isNotEmpty) 'sensitive_roots': sensitiveRoots, if (excludedPaths.isNotEmpty) 'excluded_paths': excludedPaths})}\n',
       flush: true,
     );
   }

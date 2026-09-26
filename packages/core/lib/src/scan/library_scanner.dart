@@ -93,11 +93,15 @@ base class LibraryScanner {
       '.fseventsd',
     },
     this.ignoredFileNames = const {'.DS_Store', 'Thumbs.db'},
+    this.ignoredPaths = const {},
     this.filesAtOnce = 16,
   });
 
   final Set<String> ignoredDirectoryNames;
   final Set<String> ignoredFileNames;
+
+  /// Vault-relative files or directories to skip, normalized with `/`.
+  final Set<String> ignoredPaths;
 
   /// Wie viele Dateien einer Ablage gleichzeitig gefragt werden.
   ///
@@ -179,6 +183,10 @@ base class LibraryScanner {
             return;
           }
           final name = p.basename(entity.path);
+          final relative = p.posix.joinAll(
+            p.split(p.relative(entity.absolute.path, from: rootPath)),
+          );
+          if (_isIgnoredPath(relative)) continue;
           if (entity is Directory) {
             if (!_isIgnoredDirectory(name)) pending.add(entity);
             continue;
@@ -305,6 +313,10 @@ base class LibraryScanner {
       (ignored) => ignored.toLowerCase() == normalized,
     );
   }
+
+  bool _isIgnoredPath(String relative) => ignoredPaths.any(
+    (ignored) => relative == ignored || relative.startsWith('$ignored/'),
+  );
 }
 
 const _mimeTypes = <String, String>{

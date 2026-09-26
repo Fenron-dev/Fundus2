@@ -25,6 +25,7 @@ final class MediaVaultMetadata {
     this.tags = const [],
     this.genres = const [],
     this.externalRating,
+    this.sourceLinks = const {},
   });
 
   final String? title;
@@ -43,6 +44,7 @@ final class MediaVaultMetadata {
   final List<String> tags;
   final List<String> genres;
   final double? externalRating;
+  final Map<String, String> sourceLinks;
 
   Map<String, Object?> toDatabaseMetadata() => {
     if (authors.isNotEmpty) 'author': authors.first,
@@ -56,6 +58,7 @@ final class MediaVaultMetadata {
     if (publisher != null) 'publisher': publisher,
     if (publishedYear != null) 'published_year': publishedYear,
     if (genres.isNotEmpty) 'genres': genres,
+    if (sourceLinks.isNotEmpty) 'external_ids': sourceLinks,
   };
 }
 
@@ -72,6 +75,7 @@ final class MediaVaultMetadataReader {
       ..._strings(decoded['authors']),
       ?_string(decoded['author']),
     }.toList(growable: false);
+    final notes = _string(decoded['notes'], maximumLength: 50000);
     return MediaVaultMetadata(
       title: _string(decoded['title']),
       authors: authors,
@@ -92,12 +96,13 @@ final class MediaVaultMetadataReader {
       ),
       publicationStatus: _publicationStatus(decoded['status']),
       coverPath: _string(decoded['cover_path']),
-      notes: _string(decoded['notes'], maximumLength: 50000),
+      notes: notes,
       tags: _strings(decoded['tags']),
       genres: _strings(decoded['genres']),
       externalRating: _number(
         decoded['rating_external'] ?? decoded['external_rating'],
       ),
+      sourceLinks: _sourceLinks(notes),
     );
   }
 
@@ -153,5 +158,35 @@ final class MediaVaultMetadataReader {
   static int? _integer(Object? value) {
     final number = _number(value);
     return number?.round();
+  }
+
+  static Map<String, String> _sourceLinks(String? notes) {
+    if (notes == null) return const {};
+    final links = <String, String>{};
+    final urls = RegExp(r'https?://[^\s<>"“”]+', caseSensitive: false)
+        .allMatches(notes)
+        .map((match) => match.group(0)!.replaceFirst(RegExp(r'[.,;]+$'), ''));
+    for (final url in urls) {
+      final uri = Uri.tryParse(url);
+      final host = uri?.host.toLowerCase();
+      if (host == null || host.isEmpty) continue;
+      final base = host.contains('novelupdates')
+          ? 'novelupdates'
+          : host.contains('goodreads')
+          ? 'goodreads'
+          : host.contains('royalroad')
+          ? 'royalroad'
+          : host.contains('novel') || host.contains('novgo')
+          ? 'fero_source'
+          : 'source';
+      var key = base;
+      var suffix = 2;
+      while (links.containsKey(key)) {
+        key = '${base}_$suffix';
+        suffix++;
+      }
+      links[key] = url;
+    }
+    return links;
   }
 }

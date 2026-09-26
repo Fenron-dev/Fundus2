@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -493,38 +494,47 @@ class _External extends StatelessWidget {
   /// führte bei jedem Manga und jeder Novel ins Leere, deshalb entscheidet die
   /// Art des Werks — und wo sie nichts sagt, führt der Suchpfad hin, der für
   /// beide Bestände gilt.
-  static Uri? addressFor(String service, String id, {String? workKind}) =>
-      switch (service) {
-        'tmdb' => Uri.parse('https://www.themoviedb.org/search?query=$id'),
-        'imdb' => Uri.parse('https://www.imdb.com/title/$id/'),
-        'anilist' => Uri.parse(switch (workKind) {
-          'anime' ||
-          'movie' ||
-          'tv' ||
-          'series' => 'https://anilist.co/anime/$id',
-          'manga' ||
-          'webnovel' ||
-          'novel' ||
-          'ebook' => 'https://anilist.co/manga/$id',
-          _ => 'https://anilist.co/search/manga?search=$id',
-        }),
-        'mal' => Uri.parse(switch (workKind) {
-          'anime' ||
-          'movie' ||
-          'tv' ||
-          'series' => 'https://myanimelist.net/anime/$id',
-          _ => 'https://myanimelist.net/manga/$id',
-        }),
-        'mangadex' => Uri.parse('https://mangadex.org/title/$id'),
-        'goodreads' => Uri.parse('https://www.goodreads.com/book/show/$id'),
-        'openlibrary' => Uri.parse('https://openlibrary.org/works/$id'),
-        'hardcover' => Uri.parse('https://hardcover.app/books/$id'),
-        'itunes' => Uri.parse('https://podcasts.apple.com/podcast/id$id'),
-        'audible' || 'asin' => Uri.parse('https://www.audible.de/pd/$id'),
-        // Was schon eine Adresse ist, bleibt eine.
-        'feed' || 'raw' || 'engtl' => Uri.tryParse(id),
-        _ => null,
-      };
+  static Uri? addressFor(
+    String service,
+    String id, {
+    String? workKind,
+  }) => switch (service) {
+    'tmdb' => Uri.parse(switch (workKind) {
+      'movie' => 'https://www.themoviedb.org/movie/$id',
+      'tv' || 'series' => 'https://www.themoviedb.org/tv/$id',
+      _ => 'https://www.themoviedb.org/search?query=$id',
+    }),
+    'imdb' => Uri.parse('https://www.imdb.com/title/$id/'),
+    'anilist' => Uri.parse(switch (workKind) {
+      'anime' || 'movie' || 'tv' || 'series' => 'https://anilist.co/anime/$id',
+      'manga' ||
+      'webnovel' ||
+      'novel' ||
+      'ebook' => 'https://anilist.co/manga/$id',
+      _ => 'https://anilist.co/search/manga?search=$id',
+    }),
+    'mal' => Uri.parse(switch (workKind) {
+      'anime' ||
+      'movie' ||
+      'tv' ||
+      'series' => 'https://myanimelist.net/anime/$id',
+      _ => 'https://myanimelist.net/manga/$id',
+    }),
+    'mangadex' => Uri.parse('https://mangadex.org/title/$id'),
+    'goodreads' => Uri.parse('https://www.goodreads.com/book/show/$id'),
+    'openlibrary' => Uri.parse('https://openlibrary.org/works/$id'),
+    'hardcover' => Uri.parse('https://hardcover.app/books/$id'),
+    'novelupdates' => Uri.parse(id),
+    'itunes' => Uri.parse('https://podcasts.apple.com/podcast/id$id'),
+    'audible' || 'asin' => Uri.parse('https://www.audible.de/pd/$id'),
+    // Was schon eine Adresse ist, bleibt eine.
+    'feed' || 'raw' || 'engtl' || 'fero_source' || 'source' => Uri.tryParse(id),
+    _
+        when service.startsWith('fero_source_') ||
+            service.startsWith('source_') =>
+      Uri.tryParse(id),
+    _ => null,
+  };
 
   static const _names = {
     'tmdb': 'TMDB',
@@ -535,12 +545,15 @@ class _External extends StatelessWidget {
     'goodreads': 'Goodreads',
     'openlibrary': 'Open Library',
     'hardcover': 'Hardcover',
+    'novelupdates': 'NovelUpdates',
     'itunes': 'Apple Podcasts',
     'audible': 'Audible',
     'asin': 'ASIN',
     'feed': 'Feed',
     'raw': 'Original',
     'engtl': 'Offizielle Ausgabe',
+    'fero_source': 'Fero-Quelle',
+    'source': 'Quelle',
   };
 
   @override
@@ -555,6 +568,8 @@ class _External extends StatelessWidget {
           entry.key: entry.value,
     };
     final matched = _matchedAt(work);
+    final showNovelUpdates =
+        work.kind == 'webnovel' && !shown.containsKey('novelupdates');
 
     return Wrap(
       spacing: FundusSpace.x2,
@@ -585,6 +600,21 @@ class _External extends StatelessWidget {
                 workKind: work.summary.kind,
               );
               if (address != null) unawaited(launchUrl(address));
+            },
+          ),
+        if (showNovelUpdates)
+          ActionChip(
+            avatar: Icon(FundusIcons.originStream, size: FundusIcons.sizeSm),
+            label: const Text('NovelUpdates'),
+            onPressed: () {
+              final query = Uri.encodeQueryComponent(work.title);
+              unawaited(
+                launchUrl(
+                  Uri.parse(
+                    'https://www.novelupdates.com/series/?s=$query&post_type=series',
+                  ),
+                ),
+              );
             },
           ),
         if (matched != null)
@@ -660,6 +690,7 @@ class _Actions extends StatelessWidget {
           _FavouriteButton(work: work),
           _ListButton(work: work),
           _OfflineButton(work: work),
+          _LocationButton(work: work),
           _MetadataButtons(work: work),
         ],
       );
@@ -677,12 +708,47 @@ class _Actions extends StatelessWidget {
           children: [
             _ListButton(work: work),
             _OfflineButton(work: work),
+            _LocationButton(work: work),
             _MoreDetailsButton(work: work),
             _MetadataButtons(work: work),
           ],
         ),
       ],
     );
+  }
+}
+
+class _LocationButton extends StatelessWidget {
+  const _LocationButton({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) {
+    final library = FundusScope.of(context).library.library;
+    if (library == null ||
+        work.summary.sourcePath.isEmpty ||
+        MediaQuery.sizeOf(context).width < 700 ||
+        !(Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+      return const SizedBox.shrink();
+    }
+    return OutlinedButton.icon(
+      onPressed: () => _open(library, work.summary.sourcePath),
+      icon: Icon(FundusIcons.folder, size: FundusIcons.sizeSm),
+      label: const Text('Speicherort'),
+    );
+  }
+
+  static Future<void> _open(FundusLibrary library, String relative) async {
+    final target = p.joinAll([library.root.path, ...p.posix.split(relative)]);
+    final path = FileSystemEntity.isDirectorySync(target)
+        ? target
+        : p.dirname(target);
+    try {
+      await Process.run(Platform.isWindows ? 'explorer' : 'open', [path]);
+    } on Object {
+      // A disconnected network mount is already reflected by the work state.
+    }
   }
 }
 

@@ -484,6 +484,7 @@ final class FundusLibrary {
         mediaRoots: roots,
         sensitiveRoots: sensitiveRoots,
         mediaRootLabels: labels,
+        excludedPaths: configuration.excludedPaths,
       ),
     );
   }
@@ -507,6 +508,33 @@ final class FundusLibrary {
     _configuration = next;
   }
 
+  /// Excludes a vault-relative file or folder from indexing. The source stays
+  /// on disk; it simply behaves like an unassigned media area.
+  Future<void> setExcludedPath(String path, {required bool excluded}) async {
+    _ensureWritable();
+    final normalized = path.trim().replaceAll('\\', '/');
+    if (normalized.isEmpty ||
+        normalized.startsWith('/') ||
+        normalized == '.' ||
+        normalized.split('/').contains('..')) {
+      throw ArgumentError('Der Ausschlusspfad muss relativ zum Vault sein.');
+    }
+    final next = {...configuration.excludedPaths};
+    if (excluded) {
+      next.add(normalized);
+    } else {
+      next.remove(normalized);
+    }
+    await saveConfiguration(
+      LibraryConfiguration(
+        mediaRoots: configuration.mediaRoots,
+        sensitiveRoots: configuration.sensitiveRoots,
+        mediaRootLabels: configuration.mediaRootLabels,
+        excludedPaths: next,
+      ),
+    );
+  }
+
   /// A short stamp of the folder assignment the index was last built from.
   ///
   /// Which area a work belongs to is decided from its folder name, so
@@ -522,7 +550,8 @@ final class FundusLibrary {
       for (final entry in configuration.sensitiveRoots.entries)
         '${entry.key}=${([...entry.value]..sort()).join(',')}',
     ]..sort();
-    return '${entries.join(';')}|sensitive:${sensitive.join(';')}';
+    final excluded = [...configuration.excludedPaths]..sort();
+    return '${entries.join(';')}|sensitive:${sensitive.join(';')}|excluded:${excluded.join(',')}';
   }
 
   File get _indexStateFile =>
@@ -533,8 +562,9 @@ final class FundusLibrary {
       final file = _indexStateFile;
       if (!await file.exists()) return true;
       final decoded = jsonDecode(await file.readAsString());
-      return decoded is! Map ||
-          decoded['media_roots'] != _configurationFingerprint;
+      if (decoded is! Map) return true;
+      final stored = decoded['configuration'] ?? decoded['media_roots'];
+      return stored != _configurationFingerprint;
     } on Object {
       return true;
     }
@@ -545,7 +575,7 @@ final class FundusLibrary {
       final file = _indexStateFile;
       await file.parent.create(recursive: true);
       await file.writeAsString(
-        jsonEncode({'media_roots': _configurationFingerprint}),
+        jsonEncode({'configuration': _configurationFingerprint}),
         flush: true,
       );
     } on FileSystemException {
@@ -1985,6 +2015,7 @@ final class FundusLibrary {
         known: delta ? stamps : const {},
         subtree: scope,
         cancellationToken: cancellationToken,
+        ignoredPaths: configuration.excludedPaths.toSet(),
       )) {
         files.addAll(batch.files);
         for (final folder in batch.unreadable) {

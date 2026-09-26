@@ -410,6 +410,99 @@ class _Appearance extends StatelessWidget {
   }
 }
 
+class _ExcludedPathsCard extends StatelessWidget {
+  const _ExcludedPathsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final library = scope.library.library;
+    if (library == null) return const SizedBox.shrink();
+    final paths = library.configuration.excludedPaths;
+    return SettingsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Vom Scan ausschließen',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _add(context, scope),
+                icon: Icon(FundusIcons.add, size: FundusIcons.sizeSm),
+                label: const Text('Hinzufügen'),
+              ),
+            ],
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Vault-relative Dateien oder Ordner wie Logs werden nicht indexiert. '
+            'Sie bleiben unverändert am Speicherort.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (paths.isNotEmpty) ...[
+            const SizedBox(height: FundusSpace.x3),
+            for (final path in paths)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: Icon(FundusIcons.folder, size: FundusIcons.sizeSm),
+                title: Text(path),
+                trailing: IconButton(
+                  tooltip: 'Ausschluss entfernen',
+                  icon: const Icon(Icons.close),
+                  onPressed: () async {
+                    await library.setExcludedPath(path, excluded: false);
+                    await scope.library.scan(full: true);
+                  },
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static Future<void> _add(BuildContext context, FundusScopeState scope) async {
+    final controller = TextEditingController();
+    final path = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Vom Scan ausschließen'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Relativer Pfad',
+            hintText: 'z. B. Logs oder temp/debug.log',
+          ),
+          onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Ausschließen'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (path == null || path.isEmpty) return;
+    final library = scope.library.library;
+    if (library == null) return;
+    await library.setExcludedPath(path, excluded: true);
+    await scope.library.scan(full: true);
+  }
+}
+
 class _Libraries extends StatelessWidget {
   const _Libraries();
 
@@ -427,6 +520,7 @@ class _Libraries extends StatelessWidget {
           'du fest, welche Quellen im Mobile-Katalog sichtbar sind.',
       children: [
         const UnassignedFoldersCard(),
+        const _ExcludedPathsCard(),
         SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

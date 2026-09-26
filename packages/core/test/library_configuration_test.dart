@@ -38,4 +38,19 @@ media_roots:
     expect(configuration.rootsFor('audiobook'), ['Medien/Audio']);
     expect(configuration.rootsFor('podcast'), ['Podcasts']);
   });
+
+  test('persists vault-relative excluded paths', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-config-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/config.yaml');
+    final configuration = LibraryConfiguration(
+      excludedPaths: const ['Logs', r'temp\debug.log', 'Logs'],
+    );
+
+    await configuration.write(file);
+    final restored = await LibraryConfiguration.readOrDefault(file);
+
+    expect(restored.excludedPaths, containsAll(['Logs', 'temp/debug.log']));
+    expect(restored.excludedPaths, hasLength(2));
+  });
 }

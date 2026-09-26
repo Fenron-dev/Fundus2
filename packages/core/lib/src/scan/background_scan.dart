@@ -12,6 +12,7 @@ final class _ScanRequest {
     required this.known,
     required this.ignoredDirectoryNames,
     required this.ignoredFileNames,
+    required this.ignoredPaths,
     this.subtree,
   });
 
@@ -20,6 +21,7 @@ final class _ScanRequest {
   final Map<String, ({int size, int modifiedAt})> known;
   final Set<String> ignoredDirectoryNames;
   final Set<String> ignoredFileNames;
+  final Set<String> ignoredPaths;
   final String? subtree;
 }
 
@@ -64,6 +66,7 @@ Stream<ScanBatch> scanInBackground(
   String? subtree,
   ScanCancellationToken? cancellationToken,
   LibraryScanner? scanner,
+  Set<String> ignoredPaths = const {},
 }) {
   final controller = StreamController<ScanBatch>();
   final receive = ReceivePort();
@@ -97,6 +100,7 @@ Stream<ScanBatch> scanInBackground(
           known: known,
           ignoredDirectoryNames: template.ignoredDirectoryNames,
           ignoredFileNames: template.ignoredFileNames,
+          ignoredPaths: {...template.ignoredPaths, ...ignoredPaths},
           subtree: subtree,
         ),
         errorsAreFatal: true,
@@ -120,6 +124,7 @@ Future<void> _scanEntry(_ScanRequest request) async {
   final scanner = LibraryScanner(
     ignoredDirectoryNames: request.ignoredDirectoryNames,
     ignoredFileNames: request.ignoredFileNames,
+    ignoredPaths: request.ignoredPaths,
   );
   final batch = <ScannedFile>[];
   final unreadable = <String>[];

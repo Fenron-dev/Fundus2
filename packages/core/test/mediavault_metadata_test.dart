@@ -17,6 +17,7 @@ series_sequence: 2
 rating_external: 4.43
 genres: [Fantasy, Adventure]
 tags: [Magic, Time Loop]
+notes: "Quelle: https://novelupdates.com/series/novel · Goodreads: https://goodreads.com/book/show/1"
 ''');
 
     final value = await const MediaVaultMetadataReader().read(file);
@@ -29,6 +30,8 @@ tags: [Magic, Time Loop]
     expect(value.externalRating, 4.43);
     expect(value.genres, ['Fantasy', 'Adventure']);
     expect(value.tags, ['Magic', 'Time Loop']);
+    expect(value.sourceLinks['novelupdates'], contains('novelupdates.com'));
+    expect(value.sourceLinks['goodreads'], contains('goodreads.com'));
   });
 
   test('does not invent a publication state from in-library', () async {
