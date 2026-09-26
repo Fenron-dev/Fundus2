@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import 'media_areas.dart';
+import 'abs_importer.dart';
+import 'mediavault_metadata.dart';
 import '../scan/library_scanner.dart';
 
 final class DocumentImportCandidate {
@@ -15,6 +17,8 @@ final class DocumentImportCandidate {
     this.metadata = const {},
     this.embeddedCoverBytes,
     this.embeddedCoverMimeType,
+    this.metadataSource = WorkMetadataSource.filename,
+    this.mediaVaultMetadata,
   });
 
   final String kind;
@@ -25,6 +29,8 @@ final class DocumentImportCandidate {
   final Map<String, Object?> metadata;
   final Uint8List? embeddedCoverBytes;
   final String? embeddedCoverMimeType;
+  final WorkMetadataSource metadataSource;
+  final MediaVaultMetadata? mediaVaultMetadata;
 
   /// The files that *are* the work, as opposed to the ones that sit beside
   /// it.
@@ -94,17 +100,22 @@ final class DocumentImportCandidate {
   DocumentImportCandidate copyWith({
     String? title,
     Map<String, Object?>? metadata,
+    ScannedFile? coverFile,
     Uint8List? embeddedCoverBytes,
     String? embeddedCoverMimeType,
+    WorkMetadataSource? metadataSource,
+    MediaVaultMetadata? mediaVaultMetadata,
   }) => DocumentImportCandidate(
     kind: kind,
     directory: directory,
     title: title ?? this.title,
     files: files,
-    coverFile: coverFile,
+    coverFile: coverFile ?? this.coverFile,
     metadata: metadata ?? this.metadata,
     embeddedCoverBytes: embeddedCoverBytes ?? this.embeddedCoverBytes,
     embeddedCoverMimeType: embeddedCoverMimeType ?? this.embeddedCoverMimeType,
+    metadataSource: metadataSource ?? this.metadataSource,
+    mediaVaultMetadata: mediaVaultMetadata ?? this.mediaVaultMetadata,
   );
 }
 

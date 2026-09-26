@@ -4,7 +4,7 @@ import 'abs_metadata.dart';
 import 'media_areas.dart';
 import '../scan/library_scanner.dart';
 
-enum WorkMetadataSource { filename, embedded, abs, sidecar, online, user }
+enum WorkMetadataSource { filename, embedded, abs, sidecar, online, user, fero }
 
 final class AbsBookIdentity {
   const AbsBookIdentity({

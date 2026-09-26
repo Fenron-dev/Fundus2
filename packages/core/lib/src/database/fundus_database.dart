@@ -505,9 +505,11 @@ final class FundusDatabase {
       sourcePath: candidate.directory,
       title: candidate.title,
       metadata: {'author': 'Unbekannt', ...candidate.metadata},
-      source: candidate.metadata.isEmpty
-          ? WorkMetadataSource.filename
-          : WorkMetadataSource.embedded,
+      source:
+          candidate.metadataSource == WorkMetadataSource.filename &&
+              candidate.metadata.isNotEmpty
+          ? WorkMetadataSource.embedded
+          : candidate.metadataSource,
       // Hörbücher bekamen ihre Kennung seit jeher aus dem portablen Sidecar
       // zurück, Dokumente und Comics nicht — der Parameter fehlte hier
       // schlicht. Ein neu aufgebauter Katalog vergab ihnen deshalb neue
@@ -1048,6 +1050,101 @@ final class FundusDatabase {
     }
   }
 
+  /// Applies only the fields a person selected in an external-metadata
+  /// conflict. Unlike [updateWorkMetadata], omitted values are untouched.
+  void applyImportedMetadataFields({
+    required String workId,
+    required Map<String, Object?> fields,
+    required WorkMetadataSource source,
+  }) {
+    const allowed = {
+      'title',
+      'author',
+      'authors',
+      'subtitle',
+      'alternate_titles',
+      'series',
+      'series_sequence',
+      'narrators',
+      'language',
+      'description',
+      'publisher',
+      'published_year',
+      'genres',
+      'publication_status',
+    };
+    final rows = _database.select(
+      'SELECT title, metadata_json FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) throw StateError('Werk wurde nicht gefunden.');
+    final decoded = jsonDecode(rows.first['metadata_json'] as String);
+    final metadata = decoded is Map
+        ? Map<String, Object?>.from(decoded)
+        : <String, Object?>{};
+    final origins = _metadataOrigins(metadata);
+    final changedAt = DateTime.now().toUtc();
+    for (final entry in fields.entries) {
+      if (!allowed.contains(entry.key) || _emptyMetadataValue(entry.value)) {
+        continue;
+      }
+      metadata[entry.key] = entry.value;
+      origins[entry.key] = WorkMetadataOrigin(
+        source: source,
+        updatedAt: changedAt,
+      );
+      if (entry.key == 'authors' && entry.value is Iterable) {
+        final authors = (entry.value as Iterable)
+            .whereType<String>()
+            .where((value) => value.trim().isNotEmpty)
+            .toList(growable: false);
+        if (authors.isNotEmpty) {
+          metadata['author'] = authors.first;
+          origins['author'] = WorkMetadataOrigin(
+            source: source,
+            updatedAt: changedAt,
+          );
+        }
+      }
+    }
+    metadata['_field_sources'] = _encodeMetadataOrigins(origins);
+    final title = metadata['title'] as String? ?? rows.first['title'] as String;
+    final series = metadata['series'] as String?;
+    final sequence = (metadata['series_sequence'] as num?)?.toDouble();
+    _database.execute(
+      '''
+      UPDATE works SET title = ?, sort_title = ?, series_name = ?,
+        series_sequence = ?, metadata_json = ? WHERE id = ?
+      ''',
+      [
+        title,
+        title.toLowerCase(),
+        series,
+        sequence,
+        jsonEncode(metadata),
+        workId,
+      ],
+    );
+    final body = [
+      ..._metadataStrings(metadata['authors']),
+      ..._metadataStrings(metadata['alternate_titles']),
+      ?series,
+      ..._metadataStrings(metadata['narrators']),
+      ?metadata['subtitle'] as String?,
+      ?metadata['description'] as String?,
+    ].join(' ');
+    _database.execute(
+      'UPDATE search_index SET title = ?, body = ? '
+      'WHERE entity_type = ? AND entity_id = ?',
+      [title, body, 'work', workId],
+    );
+  }
+
+  static bool _emptyMetadataValue(Object? value) =>
+      value == null ||
+      value is String && value.trim().isEmpty ||
+      value is Iterable && value.isEmpty;
+
   void setWorkStatuses({
     required String workId,
     String? publicationStatus,
@@ -1301,6 +1398,7 @@ final class FundusDatabase {
     WorkMetadataSource.embedded => 2,
     WorkMetadataSource.sidecar => 3,
     WorkMetadataSource.abs => 3,
+    WorkMetadataSource.fero => 3,
     WorkMetadataSource.online => 4,
     WorkMetadataSource.user => 5,
   };

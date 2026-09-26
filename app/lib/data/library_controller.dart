@@ -29,6 +29,7 @@ class LibraryController extends ChangeNotifier {
   List<LibrarySource> _sources = const [];
   LibraryIndexEvent? _scanProgress;
   LibraryIndexEvent? _lastResult;
+  List<MetadataImportConflict> _metadataConflicts = const [];
   DateTime? _lastCheckedAt;
   bool _lastScanWasFull = false;
   Map<String, int> _lastRootCounts = const {};
@@ -74,6 +75,7 @@ class LibraryController extends ChangeNotifier {
 
   /// What the last finished pass found, for the one line that reports it.
   LibraryIndexEvent? get lastResult => _lastResult;
+  List<MetadataImportConflict> get metadataConflicts => _metadataConflicts;
   DateTime? get lastCheckedAt => _lastCheckedAt;
   bool get lastScanWasFull => _lastScanWasFull;
   FundusLibrary? get library => _library;
@@ -170,6 +172,9 @@ class LibraryController extends ChangeNotifier {
     final generation = ++_openGeneration;
     _status = LibraryStatus.opening;
     _error = null;
+    // Conflicts belong to the vault that produced them. Never offer one after
+    // the user has switched to a different library (or an open has failed).
+    _metadataConflicts = const [];
     notifyListeners();
     try {
       if (!await _answers(root) && !createIfMissing) {
@@ -249,6 +254,7 @@ class LibraryController extends ChangeNotifier {
     _library = null;
     _works = const [];
     _sources = const [];
+    _metadataConflicts = const [];
     _status = LibraryStatus.idle;
     notifyListeners();
   }
@@ -290,6 +296,10 @@ class LibraryController extends ChangeNotifier {
           _lastResult = event.phase == LibraryIndexPhase.completed
               ? event
               : null;
+          if (event.phase == LibraryIndexPhase.completed &&
+              event.metadataConflicts.isNotEmpty) {
+            _metadataConflicts = event.metadataConflicts;
+          }
           _reload();
         }
         final now = DateTime.now();
@@ -356,6 +366,26 @@ class LibraryController extends ChangeNotifier {
   static const recheckAfter = Duration(minutes: 30);
 
   void cancelScan() => _scanToken?.cancel();
+
+  Future<void> resolveMetadataConflict(
+    MetadataImportConflict conflict,
+    Iterable<String> importedFields,
+  ) async {
+    final library = _library;
+    if (library == null) return;
+    if (importedFields.isNotEmpty) {
+      await library.resolveMetadataImportConflict(conflict, importedFields);
+      refreshWork(conflict.workId);
+    }
+    dismissMetadataConflict(conflict);
+  }
+
+  void dismissMetadataConflict(MetadataImportConflict conflict) {
+    _metadataConflicts = _metadataConflicts
+        .where((candidate) => !identical(candidate, conflict))
+        .toList(growable: false);
+    notifyListeners();
+  }
 
   /// Reads the whole catalogue again. For after a scan, and little else.
   void refresh() {

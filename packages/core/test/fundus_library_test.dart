@@ -744,7 +744,8 @@ void main() {
     final book = Directory('${root.path}/Neutraler Ordner');
     await book.create(recursive: true);
     await File('${book.path}/audio.mp3').writeAsBytes([1, 2, 3]);
-    await File('${book.path}/metadata.json').writeAsString(
+    final metadataFile = File('${book.path}/metadata.json');
+    await metadataFile.writeAsString(
       jsonEncode({
         'title': 'Titel aus ABS',
         'authors': ['ABS Autor'],
@@ -773,7 +774,97 @@ void main() {
     expect(work.publisher, 'ABS Verlag');
     expect(work.publishedYear, 2025);
     expect(library.loadAnnotations(work.id).tags, ['Fantasy', 'Favorit']);
+
+    await library.replaceWorkTags(work.id, const ['Eigener Tag', 'Fantasy']);
+    await metadataFile.writeAsString(
+      jsonEncode({
+        'title': 'Titel aus ABS',
+        'authors': ['ABS Autor'],
+        'genres': ['Fantasy', 'Mystery'],
+        'tags': ['Favorit'],
+      }),
+    );
+    await library.index().drain<void>();
+    expect(
+      library.loadAnnotations(work.id).tags,
+      containsAll(['Eigener Tag', 'Fantasy', 'Mystery', 'Favorit']),
+    );
   });
+
+  test(
+    'imports and refreshes Fero MediaVault metadata with conflicts',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-fero-yaml-');
+      addTearDown(() => root.delete(recursive: true));
+      final book = Directory('${root.path}/Webnovels/Meine Reihe');
+      await book.create(recursive: true);
+      await File('${book.path}/Meine Reihe.epub').writeAsBytes([1, 2, 3]);
+      final sidecar = File('${book.path}/Meine Reihe.mediavault.yaml');
+      await sidecar.writeAsString('''
+title: Meine Reihe
+author: Fero Autor
+description: Beschreibung aus Fero
+status: completed
+series_title: Meine Reihe
+rating_external: 4.5
+genres:
+  - Fantasy
+  - Adventure
+tags:
+  - Time Loop
+''');
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+
+      var work = library.listWorks().single;
+      expect(work.author, 'Fero Autor');
+      expect(work.description, 'Beschreibung aus Fero');
+      expect(work.publicationStatus, 'completed');
+      expect(work.genres, ['Fantasy', 'Adventure']);
+      expect(library.loadAnnotations(work.id).tags, ['Time Loop']);
+      expect(library.loadWorkProperties(work.id).values.single.value, 4.5);
+
+      await library.updateWorkMetadata(
+        workId: work.id,
+        title: work.title,
+        authors: const ['Eigener Autor'],
+        description: work.description,
+        genres: work.genres,
+      );
+      await sidecar.writeAsString('''
+title: Meine Reihe
+author: Neuer Fero Autor
+description: Aktualisierte Beschreibung
+status: completed
+genres:
+  - Fantasy
+  - Adventure
+  - Mystery
+tags:
+  - Time Loop
+  - Magic
+''');
+
+      final events = await library.index().toList();
+      work = library.listWorks().single;
+      expect(work.author, 'Eigener Autor');
+      expect(events.last.metadataConflicts, hasLength(1));
+      expect(
+        events.last.metadataConflicts.single.fields.map((field) => field.field),
+        contains('authors'),
+      );
+      expect(
+        library.loadAnnotations(work.id).tags,
+        containsAll(['Time Loop', 'Magic']),
+      );
+
+      final conflict = events.last.metadataConflicts.single;
+      await library.resolveMetadataImportConflict(conflict, const ['authors']);
+      expect(library.listWorks().single.author, 'Neuer Fero Autor');
+    },
+  );
 
   test(
     'merges a portable work into an older entry at its destination',

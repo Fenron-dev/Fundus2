@@ -11,6 +11,7 @@ import '../import/abs_metadata.dart';
 import '../import/document_importer.dart';
 import '../import/embedded_cover.dart';
 import '../import/media_areas.dart';
+import '../import/mediavault_metadata.dart';
 import '../model/device_profile.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
@@ -19,6 +20,7 @@ import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
+import '../model/metadata_import_conflict.dart';
 import '../model/person_role.dart';
 import '../model/person_profile.dart';
 import '../model/work_property.dart';
@@ -45,6 +47,7 @@ final class LibraryIndexEvent {
     this.rootCounts = const {},
     this.extensionCounts = const {},
     this.unreadableFolders = const [],
+    this.metadataConflicts = const [],
   });
 
   final LibraryIndexPhase phase;
@@ -64,6 +67,7 @@ final class LibraryIndexEvent {
 
   /// Folders the walk could not open. Nothing below them was judged.
   final List<String> unreadableFolders;
+  final List<MetadataImportConflict> metadataConflicts;
 }
 
 final class _PortableWorkIdentity {
@@ -1739,6 +1743,24 @@ final class FundusLibrary {
     ).firstWhere((work) => work.id == workId);
   }
 
+  Future<void> resolveMetadataImportConflict(
+    MetadataImportConflict conflict,
+    Iterable<String> importedFields,
+  ) async {
+    _ensureWritable();
+    final selected = importedFields.toSet();
+    _database.applyImportedMetadataFields(
+      workId: conflict.workId,
+      fields: {
+        for (final field in conflict.fields)
+          if (selected.contains(field.field)) field.field: field.incomingValue,
+      },
+      source: conflict.source,
+    );
+    _database.derivePeopleFromMetadata(workId: conflict.workId);
+    await _writeMetadataSidecar(conflict.workId);
+  }
+
   Future<LibraryWorkSummary> updateWorkKind({
     required String workId,
     required String kind,
@@ -2029,6 +2051,18 @@ final class FundusLibrary {
       for (final file in files)
         if (!file.unchanged) file.relativePath,
     };
+    final changedMetadataDirectories = {
+      for (final path in changedPaths)
+        if (_isExternalMetadataPath(path)) p.posix.dirname(path),
+    };
+    final externalMetadataDirectories = {
+      for (final file in files)
+        if (_isExternalMetadataPath(file.relativePath))
+          p.posix.dirname(file.relativePath),
+    };
+    final externalMetadataBootstrap = !await File(
+      p.join(root.path, metadataDirectoryName, 'external-metadata-v1'),
+    ).exists();
     // A file below a folder that would not open has not been judged at all.
     //
     // The sweep marks everything it did not meet as missing, and over a
@@ -2050,6 +2084,20 @@ final class FundusLibrary {
     bool touched(String directory, Iterable<ScannedFile> members) {
       if (!delta) return true;
       if (members.any((file) => changedPaths.contains(file.relativePath))) {
+        return true;
+      }
+      // Fero and Audiobookshelf sidecars are sources in their own right. A
+      // changed YAML/JSON must refresh the work even when the EPUB/audio file
+      // itself has the same timestamp as before.
+      if (changedMetadataDirectories.contains(directory) ||
+          changedMetadataDirectories.contains(p.posix.dirname(directory))) {
+        return true;
+      }
+      if (externalMetadataBootstrap &&
+          (externalMetadataDirectories.contains(directory) ||
+              externalMetadataDirectories.contains(
+                p.posix.dirname(directory),
+              ))) {
         return true;
       }
       if (vanished.isEmpty) return false;
@@ -2088,13 +2136,36 @@ final class FundusLibrary {
     final documentCandidates = <DocumentImportCandidate>[];
     final documentWorkIds = <String, String>{};
     final documentWritable = <String, bool>{};
+    final metadataConflicts = <MetadataImportConflict>[];
+    final existingByPath = {
+      for (final work in _database.listWorks(includeMissing: true))
+        work.sourcePath: work,
+    };
     // Zwei Ordner können denselben Sidecar tragen, wenn jemand einen Werkordner
     // kopiert hat. Die Kennung gehört dann dem ersten; der zweite bekommt eine
     // eigene, statt dem ersten seine wegzunehmen.
     final claimedWorkIds = <String>{};
     for (final candidate in groupedDocumentCandidates) {
       if (!touched(candidate.directory, candidate.files)) continue;
-      documentCandidates.add(await _withEpubMetadata(candidate));
+      final withPublication = await _withEpubMetadata(candidate);
+      final enriched = await _withMediaVaultMetadata(withPublication);
+      documentCandidates.add(enriched);
+      final existing = existingByPath[candidate.directory];
+      final imported = enriched.mediaVaultMetadata;
+      if (existing != null && imported != null) {
+        final conflict = _metadataConflict(
+          existing,
+          sourcePath: candidate.directory,
+          source: WorkMetadataSource.fero,
+          incoming: {
+            ...imported.toDatabaseMetadata(),
+            if (imported.title != null) 'title': imported.title,
+            if (imported.publicationStatus != null)
+              'publication_status': imported.publicationStatus,
+          },
+        );
+        if (conflict != null) metadataConflicts.add(conflict);
+      }
       final portable = await _portableWorkId(candidate.directory);
       documentWritable[candidate.directory] = portable.writable;
       if (portable.workId case final workId?) {
@@ -2110,6 +2181,22 @@ final class FundusLibrary {
       final portable = await _readPortableIdentity(grouped);
       portableIdentities[grouped.directory] = portable;
       final withAbsMetadata = await _withAbsMetadata(grouped);
+      final existing = existingByPath[grouped.directory];
+      final imported = withAbsMetadata.absMetadata;
+      if (existing != null && imported != null) {
+        final conflict = _metadataConflict(
+          existing,
+          sourcePath: grouped.directory,
+          source: WorkMetadataSource.abs,
+          incoming: {
+            ...imported.toDatabaseMetadata(),
+            if (imported.title != null) 'title': imported.title,
+            if (imported.series != null) 'series': imported.series,
+            if (imported.sequence != null) 'series_sequence': imported.sequence,
+          },
+        );
+        if (conflict != null) metadataConflicts.add(conflict);
+      }
       if (portable.identity case final identity?) {
         candidates.add(
           withAbsMetadata.copyWith(
@@ -2172,6 +2259,7 @@ final class FundusLibrary {
     });
     for (final indexed in indexedDocuments) {
       await _cachePublicationCover(indexed.candidate, indexed.workId);
+      await _importMediaVaultAnnotations(indexed.candidate, indexed.workId);
       await _importAnnotationSidecars(
         indexed.candidate.directory,
         indexed.workId,
@@ -2212,6 +2300,15 @@ final class FundusLibrary {
       }
     }
     if (scope == null) await _rememberFolderAssignment();
+    if (scope == null && externalMetadataBootstrap) {
+      try {
+        await File(
+          p.join(root.path, metadataDirectoryName, 'external-metadata-v1'),
+        ).writeAsString('${DateTime.now().toUtc().toIso8601String()}\n');
+      } on FileSystemException {
+        // A read-only or temporarily unavailable share may retry next time.
+      }
+    }
     // Erst jetzt, wenn alle Metadaten stehen: aus „Karl May" im Dateinamen
     // wird eine Person mit eigener Seite, statt einer Zeichenkette, die nur
     // aussieht wie eine.
@@ -2225,7 +2322,80 @@ final class FundusLibrary {
       changedFileCount: changedPaths.length + vanished.length,
       rootCounts: rootCounts,
       extensionCounts: extensionCounts,
+      metadataConflicts: metadataConflicts,
     );
+  }
+
+  MetadataImportConflict? _metadataConflict(
+    LibraryWorkSummary current, {
+    required String sourcePath,
+    required WorkMetadataSource source,
+    required Map<String, Object?> incoming,
+  }) {
+    final currentValues = <String, Object?>{
+      'title': current.title,
+      'author': current.author,
+      'authors': current.authors,
+      'subtitle': current.subtitle,
+      'alternate_titles': current.alternateTitles,
+      'series': current.series,
+      'series_sequence': current.seriesSequence,
+      'language': current.language,
+      'description': current.description,
+      'publisher': current.publisher,
+      'published_year': current.publishedYear,
+      'genres': current.genres,
+      'publication_status': current.publicationStatus,
+    };
+    final fields = <MetadataFieldConflict>[];
+    for (final entry in incoming.entries) {
+      if (entry.key == 'author' && incoming['authors'] is Iterable) continue;
+      final value = entry.value;
+      if (_metadataValueIsEmpty(value)) continue;
+      final previous = currentValues[entry.key];
+      if (_metadataValueIsEmpty(previous) ||
+          _sameMetadataValue(previous, value)) {
+        continue;
+      }
+      final origin = current.metadataOrigins[entry.key]?.source;
+      // Filename, embedded tags and older imports are improved automatically.
+      // A manual correction or online match is a decision and must be shown.
+      if (entry.key != 'publication_status' &&
+          origin != WorkMetadataSource.user &&
+          origin != WorkMetadataSource.online) {
+        continue;
+      }
+      fields.add(
+        MetadataFieldConflict(
+          field: entry.key,
+          currentValue: previous,
+          incomingValue: value,
+        ),
+      );
+    }
+    return fields.isEmpty
+        ? null
+        : MetadataImportConflict(
+            workId: current.id,
+            workTitle: current.title,
+            sourcePath: sourcePath,
+            source: source,
+            fields: fields,
+          );
+  }
+
+  static bool _metadataValueIsEmpty(Object? value) =>
+      value == null ||
+      value is String && value.trim().isEmpty ||
+      value is Iterable && value.isEmpty;
+
+  static bool _sameMetadataValue(Object? left, Object? right) {
+    if (left is Iterable && right is Iterable) {
+      final a = left.map((value) => '$value'.trim()).toSet();
+      final b = right.map((value) => '$value'.trim()).toSet();
+      return a.length == b.length && a.containsAll(b);
+    }
+    return left == right;
   }
 
   static Map<String, int> _countScannedFiles(
@@ -2240,6 +2410,11 @@ final class FundusLibrary {
     final entries = counts.entries.toList()
       ..sort((left, right) => right.value.compareTo(left.value));
     return {for (final entry in entries) entry.key: entry.value};
+  }
+
+  static bool _isExternalMetadataPath(String path) {
+    final name = p.posix.basename(path).toLowerCase();
+    return name == 'metadata.json' || name.endsWith('.mediavault.yaml');
   }
 
   Future<DocumentImportCandidate> _withEpubMetadata(
@@ -2282,6 +2457,125 @@ final class FundusLibrary {
     } on EpubPackageException {
       return candidate;
     }
+  }
+
+  /// Reads Fero's `*.mediavault.yaml` without changing that source file.
+  /// If a folder contains several old sidecars, the one matching a content
+  /// filename wins; otherwise the first regular sidecar is used.
+  Future<DocumentImportCandidate> _withMediaVaultMetadata(
+    DocumentImportCandidate candidate,
+  ) async {
+    final directory = _portableWorkDirectory(candidate.directory);
+    try {
+      if (!await directory.exists()) return candidate;
+      final files = await directory
+          .list(followLinks: false)
+          .where((entity) => entity is File)
+          .cast<File>()
+          .where(
+            (file) =>
+                !p.basename(file.path).startsWith('._') &&
+                p
+                    .basename(file.path)
+                    .toLowerCase()
+                    .endsWith('.mediavault.yaml'),
+          )
+          .toList();
+      if (files.isEmpty) return candidate;
+      File selected = files.first;
+      final stems = {
+        for (final file in candidate.contentFiles)
+          p.basenameWithoutExtension(file.filename).toLowerCase(),
+      };
+      for (final file in files) {
+        final name = p.basename(file.path).toLowerCase();
+        final stem = name.substring(0, name.length - '.mediavault.yaml'.length);
+        if (stems.contains(stem)) {
+          selected = file;
+          break;
+        }
+      }
+      final metadata = await const MediaVaultMetadataReader().read(selected);
+      if (metadata == null) return candidate;
+      final wantedCover = metadata.coverPath?.replaceAll('\\', '/');
+      final selectedCover = wantedCover == null
+          ? null
+          : candidate.files
+                .where(
+                  (file) =>
+                      file.relativePath == wantedCover ||
+                      file.filename.toLowerCase() ==
+                          p.posix.basename(wantedCover).toLowerCase(),
+                )
+                .firstOrNull;
+      return candidate.copyWith(
+        title: metadata.title ?? candidate.title,
+        metadata: {...candidate.metadata, ...metadata.toDatabaseMetadata()},
+        coverFile: selectedCover,
+        metadataSource: WorkMetadataSource.fero,
+        mediaVaultMetadata: metadata,
+      );
+    } on FileSystemException {
+      return candidate;
+    } on YamlException {
+      return candidate;
+    }
+  }
+
+  Future<void> _importMediaVaultAnnotations(
+    DocumentImportCandidate candidate,
+    String workId,
+  ) async {
+    final metadata = candidate.mediaVaultMetadata;
+    if (metadata == null) return;
+    final annotations = loadAnnotations(workId);
+    final mergedTags = {...annotations.tags, ...metadata.tags};
+    if (!_sameStrings(annotations.tags, mergedTags)) {
+      _database.replaceWorkTags(workId, mergedTags);
+    }
+    final note = metadata.notes?.trim();
+    if (note != null &&
+        note.isNotEmpty &&
+        !annotations.notes.any((entry) => entry.markdown.trim() == note)) {
+      _database.saveWorkNote(workId, note);
+    }
+    final status = metadata.publicationStatus;
+    final summary = _database.workSummary(workId);
+    if (status != null &&
+        summary != null &&
+        summary.publicationStatus == 'unknown') {
+      _database.setWorkStatuses(workId: workId, publicationStatus: status);
+    }
+    final rating = metadata.externalRating;
+    if (rating != null) {
+      final existing = _database
+          .listPropertyDefinitions(mediaKind: candidate.kind)
+          .where(
+            (definition) =>
+                definition.name.toLowerCase() == 'fero-wertung' &&
+                definition.valueType == PropertyValueType.number,
+          )
+          .firstOrNull;
+      final definition =
+          existing ??
+          _database.savePropertyDefinition(
+            mediaKind: candidate.kind,
+            name: 'Fero-Wertung',
+            valueType: PropertyValueType.number,
+          );
+      _database.setWorkProperty(
+        workId: workId,
+        definitionId: definition.id,
+        value: rating,
+        source: 'fero',
+      );
+    }
+  }
+
+  static bool _sameStrings(Iterable<String> left, Iterable<String> right) {
+    final a = left.toSet();
+    final b = right.toSet();
+    return a.length == b.length && a.containsAll(b);
   }
 
   Future<void> _cachePublicationCover(
@@ -2350,10 +2644,12 @@ final class FundusLibrary {
     final metadata = candidate.absMetadata;
     if (metadata == null) return;
     final existing = loadAnnotations(workId);
-    if (existing.tags.isNotEmpty) return;
     final tags = {...metadata.tags, ...metadata.genres};
     if (tags.isEmpty) return;
-    _database.replaceWorkTags(workId, tags);
+    final merged = {...existing.tags, ...tags};
+    if (!_sameStrings(existing.tags, merged)) {
+      _database.replaceWorkTags(workId, merged);
+    }
   }
 
   Future<AudiobookImportCandidate> _withEmbeddedIdentity(

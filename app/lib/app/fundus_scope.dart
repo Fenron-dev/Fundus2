@@ -28,6 +28,7 @@ import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
 import '../features/work/progress_choice_sheet.dart';
+import '../features/library/metadata_import_conflict_dialog.dart';
 import 'app_navigation.dart';
 import 'fundus_log.dart';
 import 'fullscreen.dart';
@@ -191,6 +192,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     settings.addListener(_syncDeviceName);
     settings.addListener(_restartLibraryScanTimer);
     library.addListener(_bump);
+    library.addListener(_offerMetadataConflict);
     player.addListener(_bump);
     reader.addListener(_bump);
     textReader.addListener(_bump);
@@ -244,6 +246,31 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   static const catchUpEvery = Duration(seconds: 45);
   Timer? _catchUp;
   Timer? _libraryScanTimer;
+  bool _metadataConflictOpen = false;
+
+  void _offerMetadataConflict() {
+    if (!mounted ||
+        _metadataConflictOpen ||
+        library.metadataConflicts.isEmpty) {
+      return;
+    }
+    _metadataConflictOpen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || library.metadataConflicts.isEmpty) {
+        _metadataConflictOpen = false;
+        return;
+      }
+      final conflict = library.metadataConflicts.first;
+      final selected = await showMetadataImportConflictDialog(
+        context,
+        conflict,
+      );
+      if (!mounted) return;
+      await library.resolveMetadataConflict(conflict, selected ?? const {});
+      _metadataConflictOpen = false;
+      _offerMetadataConflict();
+    });
+  }
 
   /// Holt die Stände der anderen Geräte, ohne zu scannen.
   ///
@@ -428,6 +455,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     settings.removeListener(_syncDeviceName);
     settings.removeListener(_restartLibraryScanTimer);
     library.removeListener(_bump);
+    library.removeListener(_offerMetadataConflict);
     player.removeListener(_bump);
     reader.removeListener(_bump);
     textReader.removeListener(_bump);
