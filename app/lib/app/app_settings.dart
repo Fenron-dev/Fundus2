@@ -352,6 +352,26 @@ class AppSettings extends ChangeNotifier {
     await _set('hidden_source_ids', hidden.toList()..sort());
   }
 
+  /// Works hidden from the dashboard's recent/continue rails on this device.
+  /// Progress and catalogue metadata remain untouched; this is only a local
+  /// presentation preference and therefore must not be written to the vault.
+  List<String> get dashboardHiddenWorkIds {
+    final value = _values['dashboard_hidden_work_ids'];
+    return value is List
+        ? value.whereType<String>().where((id) => id.isNotEmpty).toList()
+        : const [];
+  }
+
+  Future<void> setDashboardWorkVisible(String workId, bool visible) async {
+    final hidden = {...dashboardHiddenWorkIds};
+    if (visible) {
+      hidden.remove(workId);
+    } else {
+      hidden.add(workId);
+    }
+    await _set('dashboard_hidden_work_ids', hidden.toList()..sort());
+  }
+
   /// Renames this device, unless the new name says nothing.
   ///
   /// An empty field is a field someone cleared on the way to typing, not a

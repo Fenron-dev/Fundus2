@@ -114,7 +114,9 @@ final class WorkFilter {
     bool? favouritesOnly,
     Set<String>? tags,
     String? publicationStatus,
+    bool clearPublicationStatus = false,
     String? personalStatus,
+    bool clearPersonalStatus = false,
     String? person,
     bool clearPerson = false,
     String? role,
@@ -132,8 +134,12 @@ final class WorkFilter {
     unassignedOnly: unassignedOnly ?? this.unassignedOnly,
     favouritesOnly: favouritesOnly ?? this.favouritesOnly,
     tags: tags ?? this.tags,
-    publicationStatus: publicationStatus ?? this.publicationStatus,
-    personalStatus: personalStatus ?? this.personalStatus,
+    publicationStatus: clearPublicationStatus
+        ? null
+        : (publicationStatus ?? this.publicationStatus),
+    personalStatus: clearPersonalStatus
+        ? null
+        : (personalStatus ?? this.personalStatus),
     person: clearPerson ? null : (person ?? this.person),
     role: clearRole ? null : (role ?? this.role),
     sourceId: clearSource ? null : (sourceId ?? this.sourceId),
@@ -241,8 +247,19 @@ final class WorkFilter {
         return false;
       }
       if (needle.isEmpty) return true;
-      return work.title.toLowerCase().contains(needle) ||
-          work.subtitle.toLowerCase().contains(needle);
+      final searchable = <String>[
+        work.title,
+        work.subtitle,
+        work.summary.author,
+        ...work.summary.authors,
+        ...work.summary.narrators,
+        ...work.summary.alternateTitles,
+        ...work.summary.genres,
+        ...work.summary.tags,
+        if (work.summary.series case final series?) series,
+        if (work.summary.publisher case final publisher?) publisher,
+      ];
+      return searchable.any((value) => value.toLowerCase().contains(needle));
     }).toList();
 
     matched.sort(_comparator);

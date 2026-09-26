@@ -257,6 +257,16 @@ class _SearchFieldState extends State<_SearchField> {
         hintText: 'Suchen in dieser Ansicht …',
         prefixIcon: Icon(FundusIcons.search, size: FundusIcons.sizeSm),
         prefixIconConstraints: const BoxConstraints(minWidth: 34),
+        suffixIcon: scope.filter.text.isEmpty
+            ? null
+            : IconButton(
+                onPressed: () {
+                  _controller.clear();
+                  scope.setFilter(scope.filter.copyWith(text: ''));
+                },
+                icon: Icon(FundusIcons.close, size: FundusIcons.sizeSm),
+                tooltip: 'Suche leeren',
+              ),
       ),
     );
   }

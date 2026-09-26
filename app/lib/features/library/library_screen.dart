@@ -720,6 +720,11 @@ class _ShelfBar extends StatelessWidget {
             ),
             label: const Text('Favoriten'),
           ),
+          if (filter.mediaTypeId == 'manga' ||
+              filter.mediaTypeId == 'novel') ...[
+            const SizedBox(width: FundusSpace.x2),
+            _StatusChip(filter: filter, onChanged: scope.setFilter),
+          ],
           // Die gewählten Genres stehen als eigene Chips daneben: sie sind
           // das, was gerade gilt, und ein Tipp nimmt sie wieder weg.
           for (final label in filter.tags) ...[
@@ -1101,6 +1106,86 @@ class _SortChip extends StatelessWidget {
         onSelected: null,
         avatar: Icon(FundusIcons.sort, size: FundusIcons.sizeSm),
         label: Text(filter.sort.label),
+      ),
+    );
+  }
+}
+
+/// Veröffentlichungs- und eigener Lesestatus gehören zur Werkfilterung, nicht
+/// nur in den Bearbeitungsdialog. So lassen sich Manga und Novels schnell nach
+/// „Laufend“, „Abgeschlossen“ oder „Angefangen“ aufrufen.
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.filter, required this.onChanged});
+
+  final WorkFilter filter;
+  final void Function(WorkFilter) onChanged;
+
+  static const publication = <String, String>{
+    'ongoing': 'Laufend',
+    'completed': 'Abgeschlossen',
+    'paused': 'Pausiert',
+    'hiatus': 'Hiatus',
+    'cancelled': 'Abgebrochen',
+  };
+  static const personal = <String, String>{
+    'planned': 'Geplant',
+    'started': 'Angefangen',
+    'current': 'Aktuell',
+    'paused': 'Pausiert',
+    'dropped': 'Gedroppt',
+    'completed': 'Gelesen',
+    'reread': 'Wiederholen',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    final label = [
+      if (filter.publicationStatus case final value?)
+        publication[value] ?? value,
+      if (filter.personalStatus case final value?) personal[value] ?? value,
+    ].join(' · ');
+    return PopupMenuButton<String>(
+      tooltip: 'Nach Status filtern',
+      position: PopupMenuPosition.under,
+      color: tokens.surface,
+      onSelected: (value) {
+        if (value.isEmpty) {
+          onChanged(
+            filter.copyWith(
+              clearPublicationStatus: true,
+              clearPersonalStatus: true,
+            ),
+          );
+        } else if (value.startsWith('publication:')) {
+          onChanged(filter.copyWith(publicationStatus: value.substring(12)));
+        } else {
+          onChanged(filter.copyWith(personalStatus: value.substring(9)));
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: '', child: Text('Alle Status')),
+        if (publication.entries.isNotEmpty) const PopupMenuDivider(),
+        for (final entry in publication.entries)
+          CheckedPopupMenuItem(
+            value: 'publication:${entry.key}',
+            checked: filter.publicationStatus == entry.key,
+            child: Text('Veröffentlichung · ${entry.value}'),
+          ),
+        const PopupMenuDivider(),
+        for (final entry in personal.entries)
+          CheckedPopupMenuItem(
+            value: 'personal:${entry.key}',
+            checked: filter.personalStatus == entry.key,
+            child: Text('Lesestatus · ${entry.value}'),
+          ),
+      ],
+      child: FilterChip(
+        selected:
+            filter.publicationStatus != null || filter.personalStatus != null,
+        onSelected: null,
+        avatar: Icon(FundusIcons.filter, size: FundusIcons.sizeSm),
+        label: Text(label.isEmpty ? 'Status' : label),
       ),
     );
   }

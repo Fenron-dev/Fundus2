@@ -25,6 +25,16 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  Set<String> _hiddenFromDashboard = const {};
+
+  Future<void> _hideFromDashboard(WorkView work) async {
+    final scope = FundusScope.of(context);
+    setState(() {
+      _hiddenFromDashboard = {..._hiddenFromDashboard, work.id};
+    });
+    await scope.settings.setDashboardWorkVisible(work.id, false);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -37,10 +47,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
     final stage = FundusStageSize.of(context);
-    final works = scope.library.works;
+    if (_hiddenFromDashboard.isEmpty &&
+        scope.settings.dashboardHiddenWorkIds.isNotEmpty) {
+      _hiddenFromDashboard = scope.settings.dashboardHiddenWorkIds.toSet();
+    }
+    final allWorks = scope.library.works;
+    // The desktop header search is intentionally global. On the dashboard it
+    // used to update the filter but this screen ignored it, making searches
+    // appear empty even though the library view could find the work.
+    final works = scope.filter.hasActiveFilters
+        ? scope.filter.apply(
+            allWorks,
+            configuration: scope.library.library?.configuration,
+            library: scope.library.library,
+          )
+        : allWorks;
+    final dashboardWorks = works
+        .where((work) => !_hiddenFromDashboard.contains(work.id))
+        .where((work) => !scope.protection.hides(work))
+        .toList(growable: false);
 
     final continuing =
-        works
+        dashboardWorks
             .where((work) => work.hasProgress && !work.finished)
             .toList(growable: false)
           ..sort(
@@ -48,16 +76,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
               a.summary.lastListenedAt ?? a.summary.addedAt,
             ),
           );
-    final recent = works.toList(growable: false)
+    final recent = dashboardWorks.toList(growable: false)
       ..sort((a, b) => b.summary.addedAt.compareTo(a.summary.addedAt));
-    final favourites = works
+    final favourites = dashboardWorks
         .where((work) => work.summary.favourite)
         .toList(growable: false);
     // Was zuletzt lief, nicht was noch offen ist. Ein Film, den man zu Ende
     // gesehen hat, verschwindet aus „Fortsetzen" — und war damit nirgends
     // mehr zu finden, obwohl er das Letzte war, was man gesehen hat.
     final played =
-        works
+        dashboardWorks
             .where((work) => work.summary.lastListenedAt != null)
             .toList(growable: false)
           ..sort(
@@ -67,7 +95,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Something to watch, drawn from the whole library rather than from one
     // shelf: a start screen that only ever offers what is already half
     // finished never shows anybody the rest of what they own.
-    final picks = _picks(works);
+    final picks = _picks(dashboardWorks);
 
     return ListView(
       padding: EdgeInsets.only(top: stage.gutter, bottom: FundusSpace.x16),
@@ -108,6 +136,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 key: ValueKey('fortsetzen-${continuing[index].id}'),
                 work: continuing[index],
                 width: stage == FundusStageSize.handset ? 268.0 : 320.0,
+                onHide: () => _hideFromDashboard(continuing[index]),
               ),
             ),
           ),
@@ -182,11 +211,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               padding: EdgeInsets.symmetric(horizontal: stage.gutter),
               itemCount: played.length.clamp(0, 20),
               separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
-              itemBuilder: (context, index) => WorkPoster(
+              itemBuilder: (context, index) => _DashboardPoster(
                 key: ValueKey('gesehen-${played[index].id}'),
                 work: played[index],
                 width: stage.posterWidth,
                 onTap: () => scope.navigation.go(WorkRoute(played[index].id)),
+                onHide: () => _hideFromDashboard(played[index]),
               ),
             ),
           ),
@@ -224,10 +254,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               padding: EdgeInsets.symmetric(horizontal: stage.gutter),
               itemCount: recent.length.clamp(0, 20),
               separatorBuilder: (_, _) => SizedBox(width: stage.railGap),
-              itemBuilder: (context, index) => WorkPoster(
+              itemBuilder: (context, index) => _DashboardPoster(
                 work: recent[index],
                 width: stage.posterWidth,
                 onTap: () => scope.navigation.go(WorkRoute(recent[index].id)),
+                onHide: () => _hideFromDashboard(recent[index]),
               ),
             ),
           ),
@@ -551,10 +582,16 @@ class _Greeting extends StatelessWidget {
 /// poster alone does not answer it. Tapping it carries on — that is what the
 /// row is called.
 class _ContinueCard extends StatelessWidget {
-  const _ContinueCard({super.key, required this.work, required this.width});
+  const _ContinueCard({
+    super.key,
+    required this.work,
+    required this.width,
+    required this.onHide,
+  });
 
   final WorkView work;
   final double width;
+  final VoidCallback onHide;
 
   @override
   Widget build(BuildContext context) {
@@ -565,94 +602,152 @@ class _ContinueCard extends StatelessWidget {
 
     return SizedBox(
       width: width,
-      child: Material(
-        color: tokens.surface,
-        borderRadius: FundusArtwork.cardRadius,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => scope.play(work),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 88,
-                child: WorkArtwork(
-                  work: work,
-                  borderRadius: BorderRadius.zero,
-                  showOrigin: false,
-                ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(FundusSpace.x4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Row(
+      child: Stack(
+        children: [
+          Material(
+            color: tokens.surface,
+            borderRadius: FundusArtwork.cardRadius,
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => scope.play(work),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 88,
+                    child: WorkArtwork(
+                      work: work,
+                      borderRadius: BorderRadius.zero,
+                      showOrigin: false,
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(FundusSpace.x4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          if (type != null) ...[
-                            Icon(
-                              type.icon,
-                              size: FundusIcons.sizeSm,
-                              color: tokens.accentRamp.s300,
-                            ),
-                            const SizedBox(width: FundusSpace.x2),
-                          ],
-                          Expanded(
-                            child: Text(
-                              type?.label.toUpperCase() ?? '',
+                          Row(
+                            children: [
+                              if (type != null) ...[
+                                Icon(
+                                  type.icon,
+                                  size: FundusIcons.sizeSm,
+                                  color: tokens.accentRamp.s300,
+                                ),
+                                const SizedBox(width: FundusSpace.x2),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  type?.label.toUpperCase() ?? '',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: tokens.accentRamp.s300,
+                                  ),
+                                ),
+                              ),
+                              FundusOriginMark(work.origin),
+                            ],
+                          ),
+                          const SizedBox(height: FundusSpace.x2),
+                          Text(
+                            work.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall,
+                          ),
+                          if (work.subtitle.isNotEmpty)
+                            Text(
+                              work.subtitle,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: tokens.accentRamp.s300,
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: tokens.textFaint,
                               ),
                             ),
+                          const SizedBox(height: FundusSpace.x2),
+                          Text(
+                            work.progressLabel ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: tokens.accentRamp.s200,
+                            ),
                           ),
-                          FundusOriginMark(work.origin),
+                          const SizedBox(height: FundusSpace.x2),
+                          ClipRRect(
+                            borderRadius: FundusRadius.smAll,
+                            child: FundusProgressBar(
+                              fraction: work.progressFraction ?? 0,
+                              finished: work.finished,
+                              height: 3,
+                            ),
+                          ),
                         ],
                       ),
-                      const SizedBox(height: FundusSpace.x2),
-                      Text(
-                        work.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall,
-                      ),
-                      if (work.subtitle.isNotEmpty)
-                        Text(
-                          work.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: tokens.textFaint,
-                          ),
-                        ),
-                      const SizedBox(height: FundusSpace.x2),
-                      Text(
-                        work.progressLabel ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: tokens.accentRamp.s200,
-                        ),
-                      ),
-                      const SizedBox(height: FundusSpace.x2),
-                      ClipRRect(
-                        borderRadius: FundusRadius.smAll,
-                        child: FundusProgressBar(
-                          fraction: work.progressFraction ?? 0,
-                          finished: work.finished,
-                          height: 3,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
+          ),
+          Positioned(
+            top: FundusSpace.x1,
+            right: FundusSpace.x1,
+            child: IconButton(
+              onPressed: onHide,
+              icon: Icon(FundusIcons.close, size: FundusIcons.sizeSm),
+              tooltip: 'Aus Fortsetzen entfernen',
+              visualDensity: VisualDensity.compact,
+              style: IconButton.styleFrom(
+                backgroundColor: tokens.surface.withValues(alpha: .88),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A poster with a small local dismiss action. Dismissing only removes it
+/// from the dashboard rails; its progress and the catalogue entry stay intact.
+class _DashboardPoster extends StatelessWidget {
+  const _DashboardPoster({
+    super.key,
+    required this.work,
+    required this.width,
+    required this.onTap,
+    required this.onHide,
+  });
+
+  final WorkView work;
+  final double width;
+  final VoidCallback onTap;
+  final VoidCallback onHide;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.fundus;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        WorkPoster(work: work, width: width, onTap: onTap),
+        Positioned(
+          top: -FundusSpace.x1,
+          right: -FundusSpace.x1,
+          child: IconButton(
+            onPressed: onHide,
+            icon: Icon(FundusIcons.close, size: FundusIcons.sizeSm),
+            tooltip: 'Aus Übersicht entfernen',
+            visualDensity: VisualDensity.compact,
+            style: IconButton.styleFrom(
+              backgroundColor: tokens.surface.withValues(alpha: .9),
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
