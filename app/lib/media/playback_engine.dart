@@ -348,6 +348,7 @@ final class MediaKitEngine implements PlaybackEngine {
     final resume = start > Duration.zero ? start : null;
     await _player.open(Media(uri.toString(), start: resume), play: false);
     if (_isWindows) {
+      await _configureWindowsPresentation();
       unawaited(
         Future<void>.delayed(
           const Duration(seconds: 2),
@@ -369,6 +370,41 @@ final class MediaKitEngine implements PlaybackEngine {
     if (_player.state.position < resume - const Duration(seconds: 2)) {
       await _player.seek(resume);
     }
+  }
+
+  /// Windows' copy-back hardware decoder is fast and stable, but the default
+  /// audio-clock presentation repeats 23.976-fps frames on a 60-Hz desktop in
+  /// a visible cadence. Once a file has opened we know whether hardware
+  /// decoding is actually active: only then enable display resampling and
+  /// light interpolation, keeping the cheaper fallback for software decode.
+  Future<void> _configureWindowsPresentation() async {
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    final hardwareDecoder = await platform.getProperty('hwdec-current');
+    final accelerated =
+        hardwareDecoder.trim().isNotEmpty &&
+        hardwareDecoder.trim().toLowerCase() != 'no';
+    final properties = accelerated
+        ? const {
+            'video-sync': 'display-resample',
+            'interpolation': 'yes',
+            // Blends only around cadence boundaries. It is much cheaper than
+            // motion interpolation and is the mpv-recommended judder fix.
+            'tscale': 'oversample',
+            'framedrop': 'vo',
+          }
+        : const {
+            'video-sync': 'audio',
+            'interpolation': 'no',
+            'framedrop': 'vo',
+          };
+    for (final property in properties.entries) {
+      await platform.setProperty(property.key, property.value);
+    }
+    FundusLog.instance.info('player.video.presentation', {
+      'mode': accelerated ? 'display-resample' : 'audio',
+      'hwdec': hardwareDecoder,
+    });
   }
 
   @override
