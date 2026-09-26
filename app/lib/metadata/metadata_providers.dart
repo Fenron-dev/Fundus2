@@ -644,7 +644,7 @@ final class TmdbProvider implements MetadataProvider {
           ).replace(
             queryParameters: {
               'api_key': apiKey,
-              'append_to_response': 'credits,external_ids',
+              'append_to_response': 'credits,external_ids,keywords',
             },
           ),
           headers: const {
@@ -670,13 +670,26 @@ final class TmdbProvider implements MetadataProvider {
         );
         credits = _decodeObject(fallback, provider);
       }
-      final people = [
-        ..._people(
-          credits['cast'],
-          roleKey: 'character',
-          fallback: 'Darsteller',
-        ),
-        ..._people(credits['crew'], roleKey: 'job', fallback: 'Crew'),
+      final cast = _people(
+        credits['cast'],
+        roleKey: 'character',
+        fallback: 'Darsteller',
+      );
+      final crew = _people(credits['crew'], roleKey: 'job', fallback: 'Crew');
+      // Do not let a long cast push every director and writer beyond the old
+      // global limit. Keep the key creative departments, then fill the
+      // remaining portrait row with the leading cast.
+      final importantCrew = crew.where(
+        (person) => const {
+          'Regie',
+          'Drehbuch',
+          'Produktion',
+        }.contains(person.roleGroup),
+      );
+      final people = <MetadataPerson>[
+        ...importantCrew.take(8),
+        ...cast.take(_peopleLimit),
+        ...crew.where((person) => !importantCrew.contains(person)).take(8),
       ];
       final genres = [
         for (final entry
@@ -693,6 +706,14 @@ final class TmdbProvider implements MetadataProvider {
             in data['networks'] is List ? data['networks'] as List : const [])
           if (entry is Map && entry['name'] is String) entry['name'] as String,
       ];
+      final keywordPayload = data['keywords'];
+      final keywordValues = keywordPayload is Map
+          ? (keywordPayload['keywords'] ?? keywordPayload['results'])
+          : null;
+      final tags = [
+        for (final entry in keywordValues is List ? keywordValues : const [])
+          if (entry is Map && entry['name'] is String) entry['name'] as String,
+      ];
       final ids = <String, String>{...candidate.externalIds};
       final external = data['external_ids'];
       if (external is Map && external['imdb_id'] is String) {
@@ -701,11 +722,13 @@ final class TmdbProvider implements MetadataProvider {
       return candidate.copyWith(
         genres: genres.isEmpty ? null : genres,
         publisher: companies.isEmpty ? null : companies.join(', '),
+        tags: tags,
+        sourceRating: (data['vote_average'] as num?)?.toDouble(),
         series: data['belongs_to_collection'] is Map
             ? (data['belongs_to_collection'] as Map)['name'] as String?
             : null,
         episodeCount: (data['number_of_episodes'] as num?)?.round(),
-        credits: people.isEmpty ? null : people.take(_peopleLimit).toList(),
+        credits: people.isEmpty ? null : people.toList(),
         externalIds: ids,
       );
     } on MetadataProviderException {
@@ -795,6 +818,7 @@ final class TmdbProvider implements MetadataProvider {
       releaseYear: int.tryParse(date?.split('-').first ?? ''),
       isAdult: isAdult,
       description: _cleanDescription(value['overview']),
+      sourceRating: (value['vote_average'] as num?)?.toDouble(),
       language: value['original_language'] as String?,
       posterUrl: _tmdbImage(value['poster_path'], 'w500'),
       backdropUrl: _tmdbImage(value['backdrop_path'], 'w1280'),
@@ -1475,13 +1499,18 @@ query Books($where: books_bool_exp!, $limit: Int!) {
       );
     }
     final searchDocuments = _searchDocuments(result['results']);
-    final ids = <int>{
-      for (final id in result['ids'] is List ? result['ids'] as List : const [])
-        if (_integer(id) case final id?) id,
-      if (result['ids'] is! List || (result['ids'] as List).isEmpty)
-        for (final document in searchDocuments)
-          if (_integer(document['id']) case final id?) id,
-    };
+    final ids = <int>{};
+    final rawIds = result['ids'];
+    if (rawIds is List) {
+      for (final raw in rawIds) {
+        if (_integer(raw) case final id?) ids.add(id);
+      }
+    }
+    if (rawIds is! List || rawIds.isEmpty) {
+      for (final document in searchDocuments) {
+        if (_integer(document['id']) case final id?) ids.add(id);
+      }
+    }
     if (ids.isEmpty) return const [];
     return _books(
       {
@@ -1505,10 +1534,12 @@ query Books($where: books_bool_exp!, $limit: Int!) {
     final data = _object(books['data']);
     final values = data?['books'];
     if (values is! List) throw _invalidResponse();
-    final documentsById = {
-      for (final document in searchDocuments)
-        if (_integer(document['id']) case final id?) id: document,
-    };
+    final documentsById = <int, Map>{};
+    for (final document in searchDocuments) {
+      if (_integer(document['id']) case final id?) {
+        documentsById[id] = document;
+      }
+    }
     final candidates = [
       for (final value in values)
         if (value is Map)
@@ -1936,8 +1967,8 @@ final class AudibleProvider implements MetadataProvider {
       providerId: asin.trim(),
       title: title,
       alternateTitles: subtitle == null ? const [] : ['$title: $subtitle'],
-      // Wer es geschrieben hat steht vorn, wer es gelesen hat dahinter — beide
-      // gehören zum Werk, aber die Reihenfolge ist die eines Hörbuchregals.
+      // Kept for existing catalogue grouping: older vaults use this combined
+      // list. The role-aware credits below are the authoritative display.
       authors: [..._people(value['authors']), ..._people(value['narrators'])],
       workKind: 'audiobook',
       series: series?.$1,
@@ -1950,6 +1981,12 @@ final class AudibleProvider implements MetadataProvider {
       language: _firstString([value['language']]) ?? language,
       isAdult: value['is_adult_product'] == true,
       posterUrl: _largestImage(value['product_images']),
+      credits: [
+        for (final name in _people(value['authors']))
+          MetadataPerson(name: name, role: 'Autor'),
+        for (final name in _people(value['narrators']))
+          MetadataPerson(name: name, role: 'Sprecher'),
+      ],
       externalIds: {'audible': asin.trim(), 'asin': asin.trim()},
     );
   }
@@ -2099,6 +2136,7 @@ final class ApplePodcastProvider implements MetadataProvider {
       providerId: '${id.round()}',
       title: title,
       authors: [?host],
+      credits: [if (host != null) MetadataPerson(name: host, role: 'Host')],
       workKind: 'podcast',
       releaseYear: _year(value['releaseDate']),
       episodeCount: (value['trackCount'] as num?)?.round(),

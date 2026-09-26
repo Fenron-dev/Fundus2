@@ -50,7 +50,9 @@ void main() {
 
   test('die Podcast-Ablage kennt Folgen statt Kapiteln', () {
     final podcasts = MediaTypes.byId('podcast')!;
-    expect(podcasts.tabs.first, WorkTab.episodes);
+    expect(podcasts.tabs.first, WorkTab.properties);
+    expect(podcasts.tabs, contains(WorkTab.episodes));
+    expect(podcasts.tabs, isNot(contains(WorkTab.chapters)));
     expect(MediaTypes.audiobook.workKinds, isNot(contains('podcast')));
   });
 }

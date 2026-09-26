@@ -157,10 +157,11 @@ abstract final class MediaTypes {
     workKinds: const {'audiobook'},
     progressKind: ProgressKind.seconds,
     tabs: const [
+      WorkTab.properties,
+      WorkTab.cast,
       WorkTab.files,
       WorkTab.chapters,
       WorkTab.notes,
-      WorkTab.properties,
       WorkTab.devices,
     ],
     groupings: const [
@@ -187,10 +188,10 @@ abstract final class MediaTypes {
     workKinds: const {'podcast', 'podcast_episode'},
     progressKind: ProgressKind.seconds,
     tabs: const [
+      WorkTab.properties,
       WorkTab.episodes,
       WorkTab.cast,
       WorkTab.notes,
-      WorkTab.properties,
       WorkTab.devices,
     ],
     groupings: const [
@@ -227,10 +228,10 @@ abstract final class MediaTypes {
     workKinds: const {'tv', 'series', 'season', 'episode'},
     progressKind: ProgressKind.seconds,
     tabs: const [
+      WorkTab.properties,
       WorkTab.episodes,
       WorkTab.cast,
       WorkTab.extras,
-      WorkTab.properties,
       WorkTab.devices,
     ],
   );
@@ -243,9 +244,10 @@ abstract final class MediaTypes {
     workKinds: const {'anime', 'anime_season', 'anime_episode'},
     progressKind: ProgressKind.seconds,
     tabs: const [
+      WorkTab.properties,
+      WorkTab.cast,
       WorkTab.episodes,
       WorkTab.related,
-      WorkTab.properties,
       WorkTab.devices,
     ],
   );
@@ -258,10 +260,11 @@ abstract final class MediaTypes {
     workKinds: const {'manga', 'comic', 'chapter'},
     progressKind: ProgressKind.pagePerVolume,
     tabs: const [
+      WorkTab.properties,
+      WorkTab.cast,
       WorkTab.volumes,
       WorkTab.related,
       WorkTab.notes,
-      WorkTab.properties,
       WorkTab.devices,
     ],
     groupings: const [
@@ -282,9 +285,10 @@ abstract final class MediaTypes {
     workKinds: const {'webnovel', 'light_novel', 'novel'},
     progressKind: ProgressKind.chapterFraction,
     tabs: const [
+      WorkTab.properties,
+      WorkTab.cast,
       WorkTab.volumes,
       WorkTab.notes,
-      WorkTab.properties,
       WorkTab.devices,
     ],
     groupings: const [
@@ -306,9 +310,10 @@ abstract final class MediaTypes {
     workKinds: const {'ebook', 'book', 'book_series'},
     progressKind: ProgressKind.chapterFraction,
     tabs: const [
+      WorkTab.properties,
+      WorkTab.cast,
       WorkTab.files,
       WorkTab.notes,
-      WorkTab.properties,
       WorkTab.devices,
     ],
     groupings: const [
@@ -327,7 +332,12 @@ abstract final class MediaTypes {
     icon: FundusIcons.document,
     workKinds: const {'document', 'archive'},
     progressKind: ProgressKind.documentPage,
-    tabs: const [WorkTab.files, WorkTab.notes, WorkTab.properties],
+    tabs: const [
+      WorkTab.properties,
+      WorkTab.cast,
+      WorkTab.files,
+      WorkTab.notes,
+    ],
     groupings: const [
       GroupingMode.folder,
       GroupingMode.fileType,
@@ -343,7 +353,12 @@ abstract final class MediaTypes {
     icon: FundusIcons.ttrpg,
     workKinds: const {'ttrpg_product'},
     progressKind: ProgressKind.documentPage,
-    tabs: const [WorkTab.files, WorkTab.notes, WorkTab.properties],
+    tabs: const [
+      WorkTab.properties,
+      WorkTab.cast,
+      WorkTab.files,
+      WorkTab.notes,
+    ],
     groupings: const [
       GroupingMode.round,
       GroupingMode.system,
@@ -376,7 +391,7 @@ abstract final class MediaTypes {
     // lief, beantwortet die Frage „wo war ich" nicht — und ließ Musik aus
     // „Fortsetzen" verschwinden.
     progressKind: ProgressKind.seconds,
-    tabs: const [WorkTab.files, WorkTab.properties],
+    tabs: const [WorkTab.properties, WorkTab.cast, WorkTab.files],
   );
 
   static final protectedType = MediaTypeDefinition(
@@ -385,7 +400,7 @@ abstract final class MediaTypes {
     icon: FundusIcons.protected,
     workKinds: const {},
     progressKind: ProgressKind.none,
-    tabs: const [WorkTab.files, WorkTab.properties],
+    tabs: const [WorkTab.properties, WorkTab.files],
     protected: true,
   );
 

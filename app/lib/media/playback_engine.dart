@@ -208,8 +208,8 @@ final class MediaKitEngine implements PlaybackEngine {
   late final VideoController _video;
   late final Future<void> _nativeTuning;
 
-  /// Gives libmpv enough material ahead of the playhead and aligns desktop
-  /// frame delivery with the monitor clock.
+  /// Gives libmpv enough material ahead of the playhead without making it
+  /// stop the clock merely because the cache briefly falls below a target.
   ///
   /// `bufferSize` alone only caps the cache; without a time target mpv can
   /// still hover close to the playhead on a mounted SMB/NFS file. Desktop
@@ -221,12 +221,18 @@ final class MediaKitEngine implements PlaybackEngine {
     final properties = <String, String>{
       'cache': 'yes',
       'demuxer-readahead-secs': '30',
-      'cache-pause': 'yes',
-      'cache-pause-wait': '1',
+      // `cache-pause=yes` produced a very characteristic one-second cadence
+      // on SMB/NFS and slower peer streams: play until the target is missed,
+      // wait, play, wait. Let mpv consume its read-ahead continuously instead.
+      'cache-pause': 'no',
       if (_isDesktop) ...{
-        'video-sync': 'display-resample',
-        'interpolation': 'yes',
-        'tscale': 'oversample',
+        // Display resampling plus interpolation is useful on a fast GPU, but
+        // it is expensive enough to stall software-decoded video on both
+        // Windows and macOS. Audio is the stable clock for media playback;
+        // mpv may drop a late frame instead of freezing the entire picture.
+        'video-sync': 'audio',
+        'interpolation': 'no',
+        'framedrop': 'vo',
       },
     };
     for (final property in properties.entries) {

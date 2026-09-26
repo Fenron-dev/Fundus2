@@ -79,7 +79,7 @@ void main() {
     await pumpPhone(tester);
 
     final tabContext = tester.element(find.byType(TabBar));
-    DefaultTabController.of(tabContext).animateTo(1);
+    DefaultTabController.of(tabContext).animateTo(2);
     await tester.pumpAndSettle();
 
     // Der Kopf steht oben, die Dateien liegen darunter — und sie lassen sich

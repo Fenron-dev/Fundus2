@@ -397,6 +397,7 @@ Set<MetadataField> offeredFields(MetadataCandidate candidate) => {
   if (candidate.publisher != null) MetadataField.publisher,
   if (candidate.language != null) MetadataField.language,
   if (candidate.genres.isNotEmpty) MetadataField.genres,
+  if (candidate.tags.isNotEmpty) MetadataField.tags,
   if (candidate.description != null) MetadataField.description,
   if (candidate.posterUrl != null) MetadataField.cover,
   if (candidate.backdropUrl != null) MetadataField.backdrop,
@@ -428,6 +429,7 @@ String currentValue(WorkView work, MetadataField field) {
     MetadataField.publisher => summary.publisher ?? '',
     MetadataField.language => summary.language ?? '',
     MetadataField.genres => summary.genres.join(', '),
+    MetadataField.tags => '',
     MetadataField.description => summary.description ?? '',
     MetadataField.cover =>
       summary.hasFolderCover
@@ -452,6 +454,7 @@ String matchValue(MetadataCandidate candidate, MetadataField field) =>
       MetadataField.publisher => candidate.publisher ?? '',
       MetadataField.language => candidate.language ?? '',
       MetadataField.genres => candidate.genres.join(', '),
+      MetadataField.tags => candidate.tags.join(', '),
       MetadataField.description => candidate.description ?? '',
       MetadataField.cover => 'Bild vom Dienst',
       MetadataField.backdrop => 'Breitbild vom Dienst',

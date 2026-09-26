@@ -17,7 +17,8 @@ import 'person_credits.dart';
 ///
 /// Eine Person steht am Werk und nicht am Regal. Wer einen Sprecher antippt,
 /// will seine Hörbücher sehen — und wenn derselbe Mensch woanders geschrieben
-/// hat, das auch. Deshalb gibt es hier keine Medientypen, sondern Rollen.
+/// hat, das auch. Zuerst nach Medientyp und darin nach Rolle zu gliedern hält
+/// dabei Hörbücher, Filme und Musik auseinander, ohne die Person zu teilen.
 class PersonScreen extends StatefulWidget {
   const PersonScreen({super.key, required this.name});
 
@@ -178,7 +179,11 @@ class _PersonScreenState extends State<PersonScreen> {
     }
 
     final byRole = <String, List<WorkView>>{};
+    final byMedia = <String, List<({WorkView work, Set<String> roles})>>{};
     for (final entry in credits) {
+      byMedia
+          .putIfAbsent(entry.work.mediaType?.label ?? 'Weitere Werke', () => [])
+          .add(entry);
       for (final role in entry.roles) {
         byRole.putIfAbsent(role, () => []).add(entry.work);
       }
@@ -303,41 +308,50 @@ class _PersonScreenState extends State<PersonScreen> {
             ),
           ),
         const SizedBox(height: FundusSpace.x8),
-        for (final entry in byRole.entries) ...[
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: () =>
-                  scope.showPerson(profile.displayName, role: entry.key),
-              icon: Icon(FundusIcons.filter, size: FundusIcons.sizeSm),
-              label: Text(
-                '${entry.key.toUpperCase()} · ${entry.value.length}',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: tokens.textFaint,
-                  letterSpacing: 1.2,
-                ),
-              ),
+        for (final media in byMedia.entries) ...[
+          Text(
+            '${media.key.toUpperCase()} · ${media.value.length}',
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: tokens.textMuted,
+              letterSpacing: 1.1,
             ),
           ),
           const SizedBox(height: FundusSpace.x3),
-          Wrap(
-            spacing: stage.railGap,
-            runSpacing: stage.railGap,
-            children: [
-              for (final work in entry.value)
-                WorkPoster(
-                  work: work,
-                  width: stage.posterWidth,
-                  onTap: () => scope.navigation.go(WorkRoute(work.id)),
-                ),
-            ],
-          ),
-          const SizedBox(height: FundusSpace.x8),
+          for (final role in _rolesIn(media.value)) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () =>
+                    scope.showPerson(profile.displayName, role: role),
+                icon: Icon(FundusIcons.filter, size: FundusIcons.sizeSm),
+                label: Text(role),
+              ),
+            ),
+            Wrap(
+              spacing: stage.railGap,
+              runSpacing: stage.railGap,
+              children: [
+                for (final credit in media.value)
+                  if (credit.roles.contains(role))
+                    WorkPoster(
+                      work: credit.work,
+                      width: stage.posterWidth,
+                      onTap: () =>
+                          scope.navigation.go(WorkRoute(credit.work.id)),
+                    ),
+              ],
+            ),
+            const SizedBox(height: FundusSpace.x4),
+          ],
+          const SizedBox(height: FundusSpace.x4),
         ],
       ],
     );
   }
 }
+
+List<String> _rolesIn(List<({WorkView work, Set<String> roles})> credits) =>
+    {for (final credit in credits) ...credit.roles}.toList(growable: false);
 
 class _ExternalLinkChip extends StatelessWidget {
   const _ExternalLinkChip({required this.service, required this.value});

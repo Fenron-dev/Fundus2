@@ -162,4 +162,63 @@ void main() {
 
     expect(same.credits, isEmpty);
   });
+
+  test('TMDB behält Kreativteam, Studios, Tags und Wertung', () async {
+    final client = FakeHttp(
+      (_) => http.Response(
+        jsonEncode({
+          'vote_average': 8.4,
+          'genres': [
+            {'name': 'Science-Fiction'},
+          ],
+          'production_companies': [
+            {'name': 'Example Studio'},
+          ],
+          'keywords': {
+            'keywords': [
+              {'name': 'post-apocalypse'},
+            ],
+          },
+          'credits': {
+            'cast': [
+              for (var index = 0; index < 20; index++)
+                {'name': 'Darsteller $index', 'character': 'Figur $index'},
+            ],
+            'crew': [
+              {
+                'name': 'Die Regie',
+                'job': 'Director',
+                'department': 'Directing',
+              },
+              {
+                'name': 'Das Drehbuch',
+                'job': 'Screenplay',
+                'department': 'Writing',
+              },
+            ],
+          },
+        }),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      ),
+    );
+    const candidate = MetadataCandidate(
+      provider: 'tmdb',
+      providerId: '7',
+      title: 'Film',
+      workKind: 'movie',
+    );
+
+    final full = await TmdbProvider(
+      apiKey: 'geheim',
+      client: client,
+    ).enrich(candidate);
+
+    expect(full.credits.map((person) => person.name), contains('Die Regie'));
+    expect(full.credits.map((person) => person.name), contains('Das Drehbuch'));
+    expect(full.publisher, 'Example Studio');
+    expect(full.genres, ['Science-Fiction']);
+    expect(full.tags, ['post-apocalypse']);
+    expect(full.sourceRating, 8.4);
+  });
 }

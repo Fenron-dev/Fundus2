@@ -3737,8 +3737,8 @@ final class FundusDatabase {
     if (!columnExists('work_people', 'source')) return 0;
     final works = _database.select(
       workId == null
-          ? 'SELECT id, metadata_json FROM works'
-          : 'SELECT id, metadata_json FROM works WHERE id = ?',
+          ? 'SELECT id, kind, metadata_json FROM works'
+          : 'SELECT id, kind, metadata_json FROM works WHERE id = ?',
       workId == null ? const [] : [workId],
     );
     var touched = 0;
@@ -3754,12 +3754,18 @@ final class FundusDatabase {
         if (fromProvider.isNotEmpty) continue;
 
         final metadata = _decodeMetadata(row['metadata_json']);
+        final kind = row['kind'] as String? ?? '';
+        final creatorRole = switch (kind) {
+          'album' || 'track' || 'music' => 'Künstler',
+          'movie' || 'tv' || 'series' || 'anime' => 'Urheber',
+          _ => 'Autor',
+        };
         final derived = <({String name, String role})>[
           for (final name in _namesFrom(
             metadata['authors'],
             metadata['author'],
           ))
-            (name: name, role: 'Autor'),
+            (name: name, role: creatorRole),
           for (final name in _namesFrom(metadata['narrators'], null))
             (name: name, role: 'Sprecher'),
         ];

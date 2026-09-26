@@ -71,6 +71,8 @@ final class MetadataCandidate {
     this.publisher,
     this.language,
     this.genres = const [],
+    this.tags = const [],
+    this.sourceRating,
     this.posterUrl,
     this.backdropUrl,
     this.credits = const [],
@@ -106,6 +108,12 @@ final class MetadataCandidate {
   final String? publisher;
   final String? language;
   final List<String> genres;
+
+  /// Provider keywords, kept separate from broad genres.
+  final List<String> tags;
+
+  /// Rating on the provider's native scale. TMDB uses 0–10.
+  final double? sourceRating;
   final String? posterUrl;
   final String? backdropUrl;
 
@@ -134,6 +142,8 @@ final class MetadataCandidate {
     String? publisher,
     String? language,
     List<String>? genres,
+    List<String>? tags,
+    double? sourceRating,
     String? posterUrl,
     String? backdropUrl,
     List<MetadataPerson>? credits,
@@ -158,6 +168,8 @@ final class MetadataCandidate {
     publisher: publisher ?? this.publisher,
     language: language ?? this.language,
     genres: genres ?? this.genres,
+    tags: tags ?? this.tags,
+    sourceRating: sourceRating ?? this.sourceRating,
     posterUrl: posterUrl ?? this.posterUrl,
     backdropUrl: backdropUrl ?? this.backdropUrl,
     credits: credits ?? this.credits,
@@ -184,6 +196,8 @@ final class MetadataCandidate {
     if (publisher != null) 'publisher': publisher,
     if (language != null) 'language': language,
     if (genres.isNotEmpty) 'genres': genres,
+    if (tags.isNotEmpty) 'tags': tags,
+    if (sourceRating != null) 'source_rating': sourceRating,
     if (posterUrl != null) 'poster_url': posterUrl,
     if (backdropUrl != null) 'backdrop_url': backdropUrl,
     if (credits.isNotEmpty)
@@ -222,6 +236,8 @@ final class MetadataCandidate {
       publisher: value['publisher'] as String?,
       language: value['language'] as String?,
       genres: strings(value['genres']),
+      tags: strings(value['tags']),
+      sourceRating: (value['source_rating'] as num?)?.toDouble(),
       posterUrl: value['poster_url'] as String?,
       backdropUrl: value['backdrop_url'] as String?,
       credits: value['credits'] is List

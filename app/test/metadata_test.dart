@@ -358,6 +358,30 @@ void main() {
       expect(updated.coverPath, isNotNull);
     });
 
+    test('TMDB-Tags und -Wertung landen in eigenen Feldern', () async {
+      await applyMetadata(
+        library: library,
+        work: work,
+        fetchCover: false,
+        candidate: const MetadataCandidate(
+          provider: 'tmdb',
+          providerId: '7',
+          title: 'Berserk',
+          tags: ['post-apocalypse', 'survival'],
+          sourceRating: 8.4,
+        ),
+      );
+
+      expect(library.loadAnnotations(work.id).tags, [
+        'post-apocalypse',
+        'survival',
+      ]);
+      final definition = library
+          .listPropertyDefinitions(mediaKind: work.mediaType?.id)
+          .singleWhere((entry) => entry.name == 'TMDB-Wertung');
+      expect(library.loadWorkProperties(work.id)[definition.id]?.value, 8.4);
+    });
+
     test(
       'ein von Hand gesetzter Titel überlebt den nächsten Abgleich',
       () async {

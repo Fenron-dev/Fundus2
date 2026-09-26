@@ -26,6 +26,7 @@ enum MetadataField {
   publisher('Verlag'),
   language('Sprache'),
   genres('Genres'),
+  tags('Tags'),
   description('Beschreibung'),
   cover('Titelbild'),
   backdrop('Breitbild');
@@ -137,6 +138,7 @@ Future<MetadataApplyResult> applyMetadata({
     MetadataField.publisher => summary.publisher?.trim().isNotEmpty ?? false,
     MetadataField.language => summary.language?.trim().isNotEmpty ?? false,
     MetadataField.genres => summary.genres.isNotEmpty,
+    MetadataField.tags => library.loadAnnotations(work.id).tags.isNotEmpty,
     MetadataField.description =>
       summary.description?.trim().isNotEmpty ?? false,
     MetadataField.cover => summary.coverPath != null,
@@ -213,6 +215,44 @@ Future<MetadataApplyResult> applyMetadata({
       workId: work.id,
       publicationStatus: candidate.publicationStatus,
     );
+  }
+  if (!linkOnly && wants(MetadataField.tags) && candidate.tags.isNotEmpty) {
+    final current = library.loadAnnotations(work.id).tags;
+    await library.replaceWorkTags(
+      work.id,
+      mergeMode == MetadataMergeMode.complement
+          ? {...current, ...candidate.tags}
+          : candidate.tags,
+    );
+  }
+  if (!linkOnly && candidate.sourceRating != null) {
+    final mediaKind = work.mediaType?.id ?? candidate.workKind ?? '';
+    final wantedName = candidate.provider == 'tmdb'
+        ? 'TMDB-Wertung'
+        : '${candidate.provider.toUpperCase()}-Wertung';
+    final definitions = library.listPropertyDefinitions(mediaKind: mediaKind);
+    final named = definitions
+        .where((entry) => entry.name.toLowerCase() == wantedName.toLowerCase())
+        .firstOrNull;
+    // A user may already have created a five-star field with this name. An
+    // online match must never silently change its type to a 0–10 number.
+    final definition = named?.valueType == PropertyValueType.number
+        ? named!
+        : await library.savePropertyDefinition(
+            mediaKind: mediaKind,
+            name: named == null ? wantedName : '$wantedName (0–10)',
+            valueType: PropertyValueType.number,
+          );
+    final values = library.loadWorkProperties(work.id);
+    if (mergeMode == MetadataMergeMode.replace ||
+        !values.containsKey(definition.id)) {
+      await library.setWorkProperty(
+        workId: work.id,
+        definitionId: definition.id,
+        value: candidate.sourceRating!,
+        source: candidate.provider,
+      );
+    }
   }
 
   var fetched = false;
