@@ -357,17 +357,23 @@ _Response _exchange(
       _query(request, 19 | 0x20000000, nullptr, status.cast(), length, nullptr),
       'status',
     );
-    length.value = 0;
-    final probe = _query(request, 22, nullptr, nullptr, length, nullptr);
-    final probeError = probe == 0 ? _lastError() : 0;
-    if (probe == 0 && probeError != 122) {
-      throw WindowsMetadataException(uri.host, 'headers size', probeError);
+    // Asking WinHTTP for the required size with a null buffer is documented
+    // to fail with ERROR_INSUFFICIENT_BUFFER. In practice GetLastError can be
+    // cleared before Dart observes it (notably on hosted Windows runners),
+    // which turned a valid response into the misleading `WinHTTP 0` error.
+    // Response headers are bounded anyway, so query once into that bound and
+    // avoid making normal control flow depend on the thread-local error slot.
+    const maximumHeaderBytes = 65536;
+    length.value = maximumHeaderBytes;
+    final raw = arena<Uint8>(maximumHeaderBytes + 2);
+    final queried = _query(request, 22, nullptr, raw.cast(), length, nullptr);
+    if (queried == 0) {
+      final code = _lastError();
+      if (code == 122 && length.value > maximumHeaderBytes) {
+        throw http.ClientException('Metadata headers too large');
+      }
+      throw WindowsMetadataException(uri.host, 'headers', code);
     }
-    if (length.value > 65536) {
-      throw http.ClientException('Metadata headers too large');
-    }
-    final raw = arena<Uint8>(length.value + 2);
-    check(_query(request, 22, nullptr, raw.cast(), length, nullptr), 'headers');
     final responseHeaders = <String, String>{};
     for (final line in raw.cast<Utf16>().toDartString().split('\r\n').skip(1)) {
       final colon = line.indexOf(':');
