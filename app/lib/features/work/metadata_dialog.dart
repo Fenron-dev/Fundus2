@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_settings.dart';
 import '../../data/work_view.dart';
@@ -197,6 +198,9 @@ class _MetadataDialogState extends State<_MetadataDialog> {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     final chosen = _chosen;
+    final browserCheck =
+        _provider == MetadataProviderKind.novelUpdates &&
+        (_error?.contains('Browserprüfung') ?? false);
 
     if (chosen != null) {
       return AlertDialog(
@@ -351,6 +355,27 @@ class _MetadataDialogState extends State<_MetadataDialog> {
                   color: theme.colorScheme.error,
                 ),
               ),
+              if (browserCheck) ...[
+                const SizedBox(height: FundusSpace.x2),
+                Text(
+                  'Der Browser und Fundus teilen aus Datenschutzgründen keine '
+                  'Cookies. Ein Login im normalen Browser kann diese Anfrage '
+                  'deshalb nicht freischalten.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textFaint,
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _loading
+                        ? null
+                        : () => launchUrl(_novelUpdatesUrl(_query.text)),
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('NovelUpdates im Browser öffnen'),
+                  ),
+                ),
+              ],
             ],
             if (_matches.isNotEmpty) ...[
               const SizedBox(height: FundusSpace.x3),
@@ -382,6 +407,17 @@ class _MetadataDialogState extends State<_MetadataDialog> {
         ),
       ],
     );
+  }
+
+  static Uri _novelUpdatesUrl(String title) {
+    final slug = title
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r"['’]"), '')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-|-$'), '');
+    return Uri.parse('https://www.novelupdates.com/series/$slug/');
   }
 }
 
