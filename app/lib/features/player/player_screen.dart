@@ -453,95 +453,98 @@ class _Controls extends StatelessWidget {
     final tokens = context.fundus;
     final theme = Theme.of(context);
 
-    return Column(
-      children: [
-        Row(
-          children: [
-            Text(
-              formatPlaybackTime(player.position),
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: tokens.textFaint,
-              ),
-            ),
-            Expanded(
-              child: Slider(
-                value: player.progressFraction,
-                onChanged: (value) {
-                  final total = player.duration;
-                  if (total == null) return;
-                  player.seek(total * value);
-                },
-              ),
-            ),
-            Text(
-              player.duration == null
-                  ? '--:--'
-                  : formatPlaybackTime(player.duration!),
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: tokens.textFaint,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: FundusSpace.x4),
-        Wrap(
-          spacing: FundusSpace.x3,
-          runSpacing: FundusSpace.x3,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          alignment: WrapAlignment.center,
-          children: [
-            TextButton(
-              onPressed: player.skipBackward,
-              child: Text('−${player.habits.skipBack.inSeconds} s'),
-            ),
-            IconButton(
-              onPressed: player.previous,
-              icon: Icon(FundusIcons.skipBack, size: FundusIcons.sizeLg),
-              tooltip: 'Vorheriger Titel',
-            ),
-            IconButton.filled(
-              onPressed: player.playOrPause,
-              iconSize: FundusIcons.sizeLg,
-              icon: Icon(
-                player.isPlaying ? FundusIcons.pause : FundusIcons.play,
-              ),
-              tooltip: player.isPlaying ? 'Pause' : 'Wiedergabe',
-            ),
-            IconButton(
-              onPressed: player.next,
-              icon: Icon(FundusIcons.skipForward, size: FundusIcons.sizeLg),
-              tooltip: 'Nächster Titel',
-            ),
-            TextButton(
-              onPressed: player.skipForward,
-              child: Text('+${player.habits.skipForward.inSeconds} s'),
-            ),
-            if (!minimal) const PlaybackRateButton(),
-            if (!minimal && player.hasQueueControls) ...[
-              IconButton(
-                onPressed: () => player.setShuffle(!player.isShuffling),
-                isSelected: player.isShuffling,
-                icon: Icon(FundusIcons.shuffle, size: FundusIcons.sizeLg),
-                tooltip: player.isShuffling
-                    ? 'Zufällige Reihenfolge — aus'
-                    : 'Zufällige Reihenfolge',
-              ),
-              IconButton(
-                onPressed: player.cycleRepeat,
-                isSelected: player.repeatMode != RepeatMode.none,
-                icon: Icon(
-                  player.repeatMode == RepeatMode.one
-                      ? FundusIcons.repeatOne
-                      : FundusIcons.repeat,
-                  size: FundusIcons.sizeLg,
+    return ValueListenableBuilder<Duration>(
+      valueListenable: player.positionListenable,
+      builder: (context, _, _) => Column(
+        children: [
+          Row(
+            children: [
+              Text(
+                formatPlaybackTime(player.position),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.textFaint,
                 ),
-                tooltip: player.repeatMode.label,
+              ),
+              Expanded(
+                child: Slider(
+                  value: player.progressFraction,
+                  onChanged: (value) {
+                    final total = player.duration;
+                    if (total == null) return;
+                    player.seek(total * value);
+                  },
+                ),
+              ),
+              Text(
+                player.duration == null
+                    ? '--:--'
+                    : formatPlaybackTime(player.duration!),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.textFaint,
+                ),
               ),
             ],
-            if (!minimal) const _SleepButton(),
-          ],
-        ),
-      ],
+          ),
+          const SizedBox(height: FundusSpace.x4),
+          Wrap(
+            spacing: FundusSpace.x3,
+            runSpacing: FundusSpace.x3,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.center,
+            children: [
+              TextButton(
+                onPressed: player.skipBackward,
+                child: Text('−${player.habits.skipBack.inSeconds} s'),
+              ),
+              IconButton(
+                onPressed: player.previous,
+                icon: Icon(FundusIcons.skipBack, size: FundusIcons.sizeLg),
+                tooltip: 'Vorheriger Titel',
+              ),
+              IconButton.filled(
+                onPressed: player.playOrPause,
+                iconSize: FundusIcons.sizeLg,
+                icon: Icon(
+                  player.isPlaying ? FundusIcons.pause : FundusIcons.play,
+                ),
+                tooltip: player.isPlaying ? 'Pause' : 'Wiedergabe',
+              ),
+              IconButton(
+                onPressed: player.next,
+                icon: Icon(FundusIcons.skipForward, size: FundusIcons.sizeLg),
+                tooltip: 'Nächster Titel',
+              ),
+              TextButton(
+                onPressed: player.skipForward,
+                child: Text('+${player.habits.skipForward.inSeconds} s'),
+              ),
+              if (!minimal) const PlaybackRateButton(),
+              if (!minimal && player.hasQueueControls) ...[
+                IconButton(
+                  onPressed: () => player.setShuffle(!player.isShuffling),
+                  isSelected: player.isShuffling,
+                  icon: Icon(FundusIcons.shuffle, size: FundusIcons.sizeLg),
+                  tooltip: player.isShuffling
+                      ? 'Zufällige Reihenfolge — aus'
+                      : 'Zufällige Reihenfolge',
+                ),
+                IconButton(
+                  onPressed: player.cycleRepeat,
+                  isSelected: player.repeatMode != RepeatMode.none,
+                  icon: Icon(
+                    player.repeatMode == RepeatMode.one
+                        ? FundusIcons.repeatOne
+                        : FundusIcons.repeat,
+                    size: FundusIcons.sizeLg,
+                  ),
+                  tooltip: player.repeatMode.label,
+                ),
+              ],
+              if (!minimal) const _SleepButton(),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

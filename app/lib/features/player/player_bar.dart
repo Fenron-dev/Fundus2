@@ -79,33 +79,36 @@ class PlayerBar extends StatelessWidget {
           const SizedBox(width: FundusSpace.x3),
           Expanded(
             flex: 5,
-            child: Row(
-              children: [
-                Text(
-                  formatPlaybackTime(player.position),
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: tokens.textFaint,
+            child: ValueListenableBuilder<Duration>(
+              valueListenable: player.positionListenable,
+              builder: (context, _, _) => Row(
+                children: [
+                  Text(
+                    formatPlaybackTime(player.position),
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: tokens.textFaint,
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: Slider(
-                    value: player.progressFraction,
-                    onChanged: (value) {
-                      final total = player.duration;
-                      if (total == null) return;
-                      player.seek(total * value);
-                    },
+                  Expanded(
+                    child: Slider(
+                      value: player.progressFraction,
+                      onChanged: (value) {
+                        final total = player.duration;
+                        if (total == null) return;
+                        player.seek(total * value);
+                      },
+                    ),
                   ),
-                ),
-                Text(
-                  player.duration == null
-                      ? '--:--'
-                      : formatPlaybackTime(player.duration!),
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: tokens.textFaint,
+                  Text(
+                    player.duration == null
+                        ? '--:--'
+                        : formatPlaybackTime(player.duration!),
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: tokens.textFaint,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           const SizedBox(width: FundusSpace.x2),
@@ -176,7 +179,13 @@ class CompactPlayerBar extends StatelessWidget {
                 ),
               ],
             ),
-            FundusProgressBar(fraction: player.progressFraction, height: 2),
+            ValueListenableBuilder<Duration>(
+              valueListenable: player.positionListenable,
+              builder: (context, _, _) => FundusProgressBar(
+                fraction: player.progressFraction,
+                height: 2,
+              ),
+            ),
           ],
         ),
       ),

@@ -111,6 +111,7 @@ class PlaybackController extends ChangeNotifier {
   MediaTracks _tracks = const MediaTracks();
 
   Duration _position = Duration.zero;
+  final ValueNotifier<Duration> _positionClock = ValueNotifier(Duration.zero);
   Duration? _duration;
   bool _playing = false;
   bool _playbackRequested = false;
@@ -258,6 +259,7 @@ class PlaybackController extends ChangeNotifier {
       _index < _sources.length ? _sources[_index] : null;
 
   Duration get position => _position;
+  ValueListenable<Duration> get positionListenable => _positionClock;
   Duration? get duration => _duration;
   bool get isPlaying => _playing;
 
@@ -413,7 +415,7 @@ class PlaybackController extends ChangeNotifier {
     _order = const [];
     _chapters = const [];
     _trackChapters = const [];
-    _position = Duration.zero;
+    _setPosition(Duration.zero);
     _duration = null;
     _expanded = false;
     _failure = message;
@@ -587,7 +589,7 @@ class PlaybackController extends ChangeNotifier {
     _clearBetweenEpisodes();
     await _engineOrNull?.stop();
     _playing = false;
-    _position = Duration.zero;
+    _setPosition(Duration.zero);
     _duration = null;
     _trackChapters = const [];
     _tracks = const MediaTracks();
@@ -670,7 +672,7 @@ class PlaybackController extends ChangeNotifier {
     // Stand des vorigen Titels stehen, und „abspielen" hätte die neue Datei
     // mitten im Nichts geöffnet.
     _duration = source.duration;
-    _position = at;
+    _setPosition(at);
     final reach = Stopwatch()..start();
     final reachable = await _reach(source);
     if (cancelled()) return;
@@ -744,17 +746,23 @@ class PlaybackController extends ChangeNotifier {
     if (_subscriptions.isNotEmpty) return;
     _subscriptions.addAll([
       _engine.positionStream.listen((value) {
-        final previous = _position;
-        _position = value;
+        final previousTitle = chapterTitle;
+        final previousImage = chapterImagePath;
+        _setPosition(value);
         if (_resumeTries > 0 &&
             value - _brokeOffAt > const Duration(minutes: 1)) {
           _resumeTries = 0;
         }
-        // mpv meldet die Position vielfach pro Sekunde. Jede Meldung baute
-        // bisher den ganzen Baum neu — sichtbar wird davon aber nur die
-        // Sekunde, also wird auch nur dafür neu gebaut. Das Ruckeln kam
-        // daher, dass über dem laufenden Bild ständig alles neu entstand.
-        if (value.inSeconds != previous.inSeconds) notifyListeners();
+        // Position is a high-frequency value. Sending it through the main
+        // ChangeNotifier invalidated every FundusScope-dependent screen once
+        // per second. On Windows that work blocked the raster/video texture
+        // in the same rhythm as the reported picture freezes. Time labels
+        // listen to [_positionClock] directly; the app-wide tree only needs
+        // rebuilding when a real chapter boundary changes its contents.
+        if (chapterTitle != previousTitle ||
+            chapterImagePath != previousImage) {
+          notifyListeners();
+        }
       }),
       _engine.durationStream.listen((value) {
         if (value > Duration.zero) _duration = value;
@@ -815,7 +823,7 @@ class PlaybackController extends ChangeNotifier {
 
   Future<void> seek(Duration value) async {
     await _engine.seek(value);
-    _position = value;
+    _setPosition(value);
     notifyListeners();
   }
 
@@ -1193,7 +1201,7 @@ class PlaybackController extends ChangeNotifier {
     _order = const [];
     _chapters = const [];
     _trackChapters = const [];
-    _position = Duration.zero;
+    _setPosition(Duration.zero);
     _duration = null;
     _expanded = false;
     notifyListeners();
@@ -1272,6 +1280,13 @@ class PlaybackController extends ChangeNotifier {
     });
   }
 
+  void _setPosition(Duration value) {
+    _position = value;
+    if (_positionClock.value.inSeconds != value.inSeconds) {
+      _positionClock.value = value;
+    }
+  }
+
   @override
   void dispose() {
     if (_disposed) return;
@@ -1286,6 +1301,7 @@ class PlaybackController extends ChangeNotifier {
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
+    _positionClock.dispose();
     _engineOrNull?.dispose();
     super.dispose();
   }

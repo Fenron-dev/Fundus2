@@ -110,7 +110,10 @@ final class MediaKitEngine implements PlaybackEngine {
     : _player =
           player ??
           Player(
-            configuration: const PlayerConfiguration(bufferSize: _bufferSize),
+            configuration: const PlayerConfiguration(
+              bufferSize: _bufferSize,
+              logLevel: MPVLogLevel.warn,
+            ),
           ) {
     // The video output has to exist before the first file is opened —
     // attaching it afterwards leaves the picture black while the sound plays.
@@ -141,7 +144,24 @@ final class MediaKitEngine implements PlaybackEngine {
           'percent': _player.state.bufferingPercentage,
         });
       }),
+      _player.stream.log
+          .where((entry) => entry.level == 'warn' || entry.level == 'error')
+          .listen((entry) {
+            FundusLog.instance.warn('player.native', {
+              'source': entry.prefix,
+              'level': entry.level,
+              'message': entry.text.replaceAll(RegExp(r'[\r\n]+'), ' ').trim(),
+            });
+          }),
+      _player.stream.error.listen((message) {
+        FundusLog.instance.warn('player.native.error', {'message': message});
+      }),
     ]);
+    if (_isWindows) {
+      _healthTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+        if (_player.state.playing) unawaited(_recordNativeHealth('playing'));
+      });
+    }
   }
 
   void _emitTracks() {
@@ -207,6 +227,8 @@ final class MediaKitEngine implements PlaybackEngine {
   final Player _player;
   late final VideoController _video;
   late final Future<void> _nativeTuning;
+  Timer? _healthTimer;
+  bool _healthReading = false;
 
   /// Gives libmpv enough material ahead of the playhead without making it
   /// stop the clock merely because the cache briefly falls below a target.
@@ -225,6 +247,17 @@ final class MediaKitEngine implements PlaybackEngine {
       // on SMB/NFS and slower peer streams: play until the target is missed,
       // wait, play, wait. Let mpv consume its read-ahead continuously instead.
       'cache-pause': 'no',
+      if (_isWindows) ...{
+        // mpv's normal 128-KiB low-level reads are specifically inefficient
+        // on some network filesystems. Windows SMB showed no buffering event,
+        // yet its synchronous small reads could still starve presentation.
+        'stream-buffer-size': '4MiB',
+        // Keep decoded frames away from brief Flutter raster stalls. This is
+        // deliberately Windows-only; libavcodec remains multithreaded and the
+        // queue is merely a small timing cushion between decode and display.
+        'vd-queue-enable': 'yes',
+        'vd-queue-max-secs': '2',
+      },
       if (_isDesktop) ...{
         // Display resampling plus interpolation is useful on a fast GPU, but
         // it is expensive enough to stall software-decoded video on both
@@ -245,6 +278,50 @@ final class MediaKitEngine implements PlaybackEngine {
       (defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.macOS ||
           defaultTargetPlatform == TargetPlatform.linux);
+
+  static bool get _isWindows =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+  /// Captures the values needed to tell I/O starvation, software decoding and
+  /// presentation stalls apart. Earlier logs only contained `buffering=false`,
+  /// which cannot explain dropped or delayed Windows frames.
+  Future<void> _recordNativeHealth(String reason) async {
+    if (_healthReading) return;
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    _healthReading = true;
+    const names = [
+      'video-codec',
+      'hwdec-current',
+      'container-fps',
+      'estimated-vf-fps',
+      'display-fps',
+      'avsync',
+      'frame-drop-count',
+      'decoder-frame-drop-count',
+      'mistimed-frame-count',
+      'vo-delayed-frame-count',
+      'demuxer-cache-duration',
+      'cache-buffering-state',
+    ];
+    try {
+      final values = await Future.wait([
+        for (final name in names) platform.getProperty(name),
+      ]);
+      FundusLog.instance.info('player.video.health', {
+        'reason': reason,
+        'position_ms': _player.state.position.inMilliseconds,
+        for (var index = 0; index < names.length; index++)
+          if (values[index].isNotEmpty) names[index]: values[index],
+      });
+    } on Object catch (error) {
+      FundusLog.instance.warn('player.video.health.failed', {
+        'error': '$error',
+      });
+    } finally {
+      _healthReading = false;
+    }
+  }
 
   /// mpv reports what is available and what is selected on two separate
   /// streams; the player only ever wants both together.
@@ -270,6 +347,14 @@ final class MediaKitEngine implements PlaybackEngine {
     await _nativeTuning;
     final resume = start > Duration.zero ? start : null;
     await _player.open(Media(uri.toString(), start: resume), play: false);
+    if (_isWindows) {
+      unawaited(
+        Future<void>.delayed(
+          const Duration(seconds: 2),
+          () => _recordNativeHealth('opened'),
+        ),
+      );
+    }
     if (resume == null) return;
     // mpv honours the start position while loading, but a container that
     // reports its length late can ignore it. So: wait for a length, then put
@@ -345,6 +430,7 @@ final class MediaKitEngine implements PlaybackEngine {
 
   @override
   Future<void> dispose() async {
+    _healthTimer?.cancel();
     for (final subscription in _trackSubscriptions) {
       await subscription.cancel();
     }

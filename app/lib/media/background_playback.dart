@@ -22,6 +22,7 @@ import 'playback_controller.dart';
 final class FundusAudioHandler extends BaseAudioHandler {
   FundusAudioHandler(this._player) {
     _player.addListener(_publish);
+    _player.positionListenable.addListener(_publishPosition);
     _publish();
   }
 
@@ -138,6 +139,16 @@ final class FundusAudioHandler extends BaseAudioHandler {
     );
   }
 
+  /// Position ticks no longer invalidate the complete application tree. The
+  /// Android media session still receives them through its own narrow path.
+  void _publishPosition() {
+    final current = playbackState.value;
+    if (_player.work == null) return;
+    playbackState.add(
+      current.copyWith(updatePosition: _player.position, speed: _player.rate),
+    );
+  }
+
   @override
   Future<void> play() =>
       _player.isPlaybackRequested ? Future.value() : _player.playOrPause();
@@ -168,6 +179,7 @@ final class FundusAudioHandler extends BaseAudioHandler {
 
   void detach() {
     _player.removeListener(_publish);
+    _player.positionListenable.removeListener(_publishPosition);
     for (final subscription in _focusSubscriptions) {
       unawaited(subscription.cancel());
     }

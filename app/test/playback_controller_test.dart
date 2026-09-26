@@ -195,6 +195,23 @@ void main() {
     expect(resumeEngine.starts.single, const Duration(minutes: 12));
   });
 
+  test('Positionstakte bauen nicht mehr die gesamte App neu', () async {
+    await controller.open(library, work);
+    var globalChanges = 0;
+    var positionChanges = 0;
+    controller.addListener(() => globalChanges++);
+    controller.positionListenable.addListener(() => positionChanges++);
+
+    engine.emitPosition(const Duration(seconds: 1));
+    engine.emitPosition(const Duration(milliseconds: 1500));
+    engine.emitPosition(const Duration(seconds: 2));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.position, const Duration(seconds: 2));
+    expect(positionChanges, 2);
+    expect(globalChanges, 0);
+  });
+
   test('Pause schreibt den Stand sofort', () async {
     await controller.open(library, work);
     engine.emitPosition(const Duration(minutes: 3));
