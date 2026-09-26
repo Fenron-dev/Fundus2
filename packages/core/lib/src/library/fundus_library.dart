@@ -2445,7 +2445,9 @@ final class FundusLibrary {
 
   static bool _isExternalMetadataPath(String path) {
     final name = p.posix.basename(path).toLowerCase();
-    return name == 'metadata.json' || name.endsWith('.mediavault.yaml');
+    return name == 'metadata.json' ||
+        name.endsWith('.mediavault.yaml') ||
+        name.endsWith('.mediavault.json');
   }
 
   Future<DocumentImportCandidate> _withEpubMetadata(
@@ -2490,7 +2492,8 @@ final class FundusLibrary {
     }
   }
 
-  /// Reads Fero's `*.mediavault.yaml` without changing that source file.
+  /// Reads Fero's `*.mediavault.yaml` or `*.mediavault.json` without changing
+  /// that source file.
   /// If a folder contains several old sidecars, the one matching a content
   /// filename wins; otherwise the first regular sidecar is used.
   Future<DocumentImportCandidate> _withMediaVaultMetadata(
@@ -2506,10 +2509,14 @@ final class FundusLibrary {
           .where(
             (file) =>
                 !p.basename(file.path).startsWith('._') &&
+                    p
+                        .basename(file.path)
+                        .toLowerCase()
+                        .endsWith('.mediavault.yaml') ||
                 p
                     .basename(file.path)
                     .toLowerCase()
-                    .endsWith('.mediavault.yaml'),
+                    .endsWith('.mediavault.json'),
           )
           .toList();
       if (files.isEmpty) return candidate;
@@ -2520,7 +2527,10 @@ final class FundusLibrary {
       };
       for (final file in files) {
         final name = p.basename(file.path).toLowerCase();
-        final stem = name.substring(0, name.length - '.mediavault.yaml'.length);
+        final suffix = name.endsWith('.mediavault.json')
+            ? '.mediavault.json'
+            : '.mediavault.yaml';
+        final stem = name.substring(0, name.length - suffix.length);
         if (stems.contains(stem)) {
           selected = file;
           break;

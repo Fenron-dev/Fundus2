@@ -607,14 +607,7 @@ class _External extends StatelessWidget {
             avatar: Icon(FundusIcons.originStream, size: FundusIcons.sizeSm),
             label: const Text('NovelUpdates'),
             onPressed: () {
-              final query = Uri.encodeQueryComponent(work.title);
-              unawaited(
-                launchUrl(
-                  Uri.parse(
-                    'https://www.novelupdates.com/series/?s=$query&post_type=series',
-                  ),
-                ),
-              );
+              unawaited(launchUrl(_novelUpdatesUrl(work.title)));
             },
           ),
         if (matched != null)
@@ -624,6 +617,20 @@ class _External extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  /// NovelUpdates exposes series pages as `/series/<slug>/`; its WordPress
+  /// search endpoint is not reliable and often returns an empty page. This is
+  /// therefore a useful direct starting point, while a URL imported from Fero
+  /// remains authoritative and is shown above as `novelupdates`.
+  static Uri _novelUpdatesUrl(String title) {
+    final slug = title
+        .toLowerCase()
+        .replaceAll(RegExp(r"['’]"), '')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-|-$'), '');
+    return Uri.parse('https://www.novelupdates.com/series/$slug/');
   }
 
   /// Wann zuletzt ein Dienst etwas an diesem Werk geschrieben hat.

@@ -53,6 +53,7 @@ enum MetadataProviderKind {
   tmdb('TMDB (Filme & Serien)'),
   openLibrary('Open Library (Bücher)'),
   hardcover('Hardcover.app (Bücher & Reihen)'),
+  novelUpdates('NovelUpdates (Webnovels)'),
   audible('Audible (Hörbücher)'),
   applePodcasts('Apple Podcasts');
 
@@ -123,6 +124,7 @@ enum MetadataProviderKind {
           MetadataProviderKind.myAnimeList,
         ],
         'novel' => const [
+          MetadataProviderKind.novelUpdates,
           MetadataProviderKind.anilistManga,
           MetadataProviderKind.hardcover,
           MetadataProviderKind.mangaDex,
@@ -220,9 +222,135 @@ MetadataProvider providerFor(
     token: apiKey,
     client: client,
   ),
+  MetadataProviderKind.novelUpdates => NovelUpdatesProvider(client: client),
   MetadataProviderKind.audible => AudibleProvider(client: client),
   MetadataProviderKind.applePodcasts => ApplePodcastProvider(client: client),
 };
+
+/// Best-effort NovelUpdates series reader. NovelUpdates has no public JSON API
+/// and may present a Cloudflare challenge; in that case the provider reports a
+/// useful error and the other metadata sources remain available. A known Fero
+/// URL is preferred by the work detail screen, while this adapter derives the
+/// conventional `/series/<slug>/` address for a manual lookup.
+final class NovelUpdatesProvider implements MetadataProvider {
+  NovelUpdatesProvider({http.Client? client})
+    : _client = client ?? createMetadataHttpClient();
+
+  final http.Client _client;
+
+  @override
+  String get provider => 'novelupdates';
+
+  @override
+  Future<MetadataCandidate> enrich(MetadataCandidate candidate) async =>
+      candidate;
+
+  @override
+  Future<List<MetadataCandidate>> search(
+    String query, {
+    int limit = 25,
+    String? language,
+  }) async {
+    final title = query.trim();
+    if (title.isEmpty) return const [];
+    final slug = title
+        .toLowerCase()
+        .replaceAll(RegExp(r"['’]"), '')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-|-$'), '');
+    final url = Uri.parse('https://www.novelupdates.com/series/$slug/');
+    final response = await _request(url);
+    final html = response.body;
+    final heading = _first(html, r'<h1[^>]*>([\s\S]*?)</h1>') ?? title;
+    final cleanTitle = _clean(heading);
+    final genres = _linksAfter(html, 'Genres');
+    final tags = _linksAfter(html, 'Tags');
+    final statusText = _clean(
+      _first(
+            html,
+            r'(?:Story Status|Status)[^>]*>[\s\S]{0,300}?([^<]{4,30})',
+          ) ??
+          '',
+    ).toLowerCase();
+    final status = switch (statusText) {
+      final value when value.contains('complete') => 'completed',
+      final value when value.contains('hiatus') => 'hiatus',
+      final value when value.contains('cancel') => 'cancelled',
+      final value when value.contains('ongoing') => 'ongoing',
+      _ => null,
+    };
+    return [
+      MetadataCandidate(
+        provider: provider,
+        providerId: url.toString(),
+        title: cleanTitle,
+        workKind: 'webnovel',
+        publicationStatus: status,
+        genres: genres,
+        tags: tags,
+        externalIds: {'novelupdates': url.toString()},
+      ),
+    ];
+  }
+
+  Future<http.Response> _request(Uri url) async {
+    try {
+      final response = await _client
+          .get(
+            url,
+            headers: const {
+              'accept': 'text/html',
+              'user-agent': metadataUserAgent,
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 403 || response.statusCode == 503) {
+        throw MetadataProviderException(
+          provider,
+          'NovelUpdates verlangt für diese Anfrage eine Browserprüfung.',
+        );
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw MetadataProviderException(
+          provider,
+          'HTTP ${response.statusCode}',
+        );
+      }
+      return response;
+    } on TimeoutException {
+      throw MetadataProviderException(provider, 'Zeitüberschreitung');
+    } on MetadataProviderException {
+      rethrow;
+    } on Object catch (error) {
+      throw MetadataProviderException(provider, _networkMessage(error));
+    }
+  }
+
+  static String? _first(String html, String pattern) =>
+      RegExp(pattern, caseSensitive: false).firstMatch(html)?.group(1);
+
+  static List<String> _linksAfter(String html, String heading) {
+    final match = RegExp(
+      '$heading[\\s\\S]{0,500}?((?:<a\\b[^>]*>[\\s\\S]*?</a>){1,20})',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (match == null) return const [];
+    return RegExp(r'<a\b[^>]*>([\s\S]*?)</a>', caseSensitive: false)
+        .allMatches(match.group(1)!)
+        .map((entry) => _clean(entry.group(1)!))
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  static String _clean(String value) => value
+      .replaceAll(RegExp(r'<[^>]+>'), ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&#039;', "'")
+      .replaceAll(RegExp(r'\\s+'), ' ')
+      .trim();
+}
 
 /// Combines providers and applies the same local ranking to all of them.
 ///

@@ -44,4 +44,29 @@ notes: "Quelle: https://novelupdates.com/series/novel · Goodreads: https://good
 
     expect(value?.publicationStatus, isNull);
   });
+
+  test('reads the current nested Fero JSON export', () async {
+    final root = await Directory.systemTemp.createTemp('fero-json-');
+    addTearDown(() => root.delete(recursive: true));
+    final file = File('${root.path}/Novel.mediavault.json');
+    await file.writeAsString('''
+{
+  "work": {
+    "name": "JSON Novel",
+    "creators": ["Author"],
+    "genres": ["Fantasy"],
+    "tags": ["System"],
+    "source": "https://www.novelupdates.com/series/json-novel/"
+  }
+}
+''');
+
+    final value = await const MediaVaultMetadataReader().read(file);
+
+    expect(value?.title, 'JSON Novel');
+    expect(value?.authors, ['Author']);
+    expect(value?.genres, ['Fantasy']);
+    expect(value?.tags, ['System']);
+    expect(value?.sourceLinks['novelupdates'], contains('json-novel'));
+  });
 }
