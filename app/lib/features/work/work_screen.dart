@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as p;
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -740,17 +739,20 @@ class _LocationButton extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return OutlinedButton.icon(
-      onPressed: () => _open(library, work.summary.sourcePath),
+      onPressed: () => _open(library, work.id),
       icon: Icon(FundusIcons.folder, size: FundusIcons.sizeSm),
       label: const Text('Speicherort'),
     );
   }
 
-  static Future<void> _open(FundusLibrary library, String relative) async {
-    final target = p.joinAll([library.root.path, ...p.posix.split(relative)]);
-    final path = FileSystemEntity.isDirectorySync(target)
-        ? target
-        : p.dirname(target);
+  static Future<void> _open(FundusLibrary library, String workId) async {
+    // The index already knows whether this work is represented by a folder or
+    // a single file.  Reconstructing the path from sourcePath here caused
+    // file-backed works (and unavailable network entries) to fall back to the
+    // parent directory.  Use the same resolver as sidecars and readers so the
+    // folder opened by the OS is the actual work directory.
+    final path = library.workDirectoryPath(workId);
+    if (path == null || path.isEmpty) return;
     try {
       await Process.run(Platform.isWindows ? 'explorer' : 'open', [path]);
     } on Object {

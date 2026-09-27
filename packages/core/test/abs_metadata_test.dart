@@ -57,4 +57,21 @@ void main() {
       );
     },
   );
+
+  test('removes the ABS author prefix from a series label', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-abs-meta-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/metadata.json');
+    await file.writeAsString(
+      jsonEncode({
+        'authors': ['Autor Beispiel'],
+        'series': ['Autor Beispiel > Die Reihe #2'],
+      }),
+    );
+
+    final metadata = await const AbsMetadataReader().read(file);
+
+    expect(metadata?.series, 'Die Reihe');
+    expect(metadata?.sequence, 2);
+  });
 }

@@ -735,7 +735,14 @@ class _ContinuousPagesState extends State<_ContinuousPages> {
                     child: _Page(
                       index: index,
                       continuous: true,
-                      onMeasured: (value) => _preserveAnchor(index, value),
+                      onMeasured: (value) {
+                        _preserveAnchor(index, value);
+                        reader.rememberAspect(index, value);
+                        // The lazy list uses the measured aspect for its
+                        // item extent. Rebuild it so a tall webtoon page is
+                        // no longer clipped to the fallback height.
+                        if (mounted) setState(() {});
+                      },
                     ),
                   ),
                 ),

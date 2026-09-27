@@ -70,7 +70,7 @@ final class AbsMetadataReader {
     if (decoded is! Map) return null;
     final authors = _strings(decoded['authors']);
     final seriesValues = _strings(decoded['series']);
-    final parsedSeries = _parseSeries(seriesValues.firstOrNull);
+    final parsedSeries = _parseSeries(seriesValues.firstOrNull, authors);
     return AbsAudiobookMetadata(
       title: _string(decoded['title']),
       subtitle: _string(decoded['subtitle']),
@@ -96,10 +96,29 @@ final class AbsMetadataReader {
     );
   }
 
-  static ({String? name, double? sequence}) _parseSeries(String? value) {
+  static ({String? name, double? sequence}) _parseSeries(
+    String? value,
+    List<String> authors,
+  ) {
     if (value == null) return (name: null, sequence: null);
-    final match = RegExp(r'^(.*?)\s+#(\d+(?:[.,]\d+)?)$').firstMatch(value);
-    if (match == null) return (name: value, sequence: null);
+    var normalized = value.trim();
+    // Audiobookshelf may serialise a series as "Author > Series".  That is
+    // a display convention, not part of the series title.  Strip it only
+    // when the left hand side is one of the parsed authors, so legitimate
+    // titles containing a greater-than sign remain untouched.
+    final separator = normalized.indexOf('>');
+    if (separator > 0 && separator < normalized.length - 1) {
+      final prefix = normalized.substring(0, separator).trim();
+      if (authors.any(
+        (author) => author.trim().toLowerCase() == prefix.toLowerCase(),
+      )) {
+        normalized = normalized.substring(separator + 1).trim();
+      }
+    }
+    final match = RegExp(
+      r'^(.*?)\s+#(\d+(?:[.,]\d+)?)$',
+    ).firstMatch(normalized);
+    if (match == null) return (name: normalized, sequence: null);
     return (
       name: _string(match.group(1)),
       sequence: double.tryParse(match.group(2)!.replaceAll(',', '.')),
