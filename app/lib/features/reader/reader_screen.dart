@@ -323,6 +323,27 @@ class _ReaderSurface extends StatelessWidget {
 
   List<Widget> _tapZones(ReaderController reader, double width) {
     final edge = width * reader.profile.tapZoneWidth;
+    // A continuous manga is scrolled, not page-turned. Keeping the side
+    // navigation overlays here made an accidental edge tap call nextPage()
+    // while the strip was still scrolling; the visible item then changed and
+    // the anchor logic appeared to jump. Only the centre remains interactive
+    // in continuous layouts. Page-turn zones are still available in the
+    // single/double-page layouts below.
+    if (reader.isContinuous) {
+      return [
+        Positioned(
+          left: edge,
+          right: edge,
+          top: 0,
+          bottom: 0,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: reader.toggleChrome,
+            onDoubleTap: reader.toggleZoom,
+          ),
+        ),
+      ];
+    }
     // The choice is explicit so a side tap cannot accidentally turn a page
     // while somebody is trying to scroll a continuous manga. The old
     // invertTapZones flag remains the compatibility switch for automatic
