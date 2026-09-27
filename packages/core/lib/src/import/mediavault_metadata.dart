@@ -58,6 +58,7 @@ final class MediaVaultMetadata {
     if (language != null) 'language': language,
     if (publisher != null) 'publisher': publisher,
     if (publishedYear != null) 'published_year': publishedYear,
+    if (tags.isNotEmpty) 'tags': tags,
     if (genres.isNotEmpty) 'genres': genres,
     if (sourceLinks.isNotEmpty) 'external_ids': sourceLinks,
   };

@@ -30,6 +30,7 @@ notes: "Quelle: https://novelupdates.com/series/novel · Goodreads: https://good
     expect(value.externalRating, 4.43);
     expect(value.genres, ['Fantasy', 'Adventure']);
     expect(value.tags, ['Magic', 'Time Loop']);
+    expect(value.toDatabaseMetadata()['tags'], ['Magic', 'Time Loop']);
     expect(value.sourceLinks['novelupdates'], contains('novelupdates.com'));
     expect(value.sourceLinks['goodreads'], contains('goodreads.com'));
   });

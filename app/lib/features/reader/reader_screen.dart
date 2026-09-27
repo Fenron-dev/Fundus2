@@ -1606,7 +1606,11 @@ class _MeasuredPageState extends State<_MeasuredPage> {
     final image = Image.file(
       File(widget.file),
       width: double.infinity,
-      fit: BoxFit.fitWidth,
+      // During the first frame the list may still carry the conservative
+      // placeholder extent. Contain prevents that temporary extent from
+      // cropping the decoded image; after measurement the parent recalculates
+      // the exact height and the page fills the strip again.
+      fit: BoxFit.contain,
       filterQuality: FilterQuality.medium,
       errorBuilder: (context, error, stack) => const SizedBox.shrink(),
     );

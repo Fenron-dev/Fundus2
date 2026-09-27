@@ -171,21 +171,25 @@ class WorkArtwork extends StatelessWidget {
   const WorkArtwork({
     super.key,
     required this.work,
-    this.aspectRatio = 2 / 3,
+    this.aspectRatio,
     this.borderRadius = FundusArtwork.posterRadius,
     this.showProgress = true,
     this.showOrigin = true,
   });
 
   final WorkView work;
-  final double aspectRatio;
+
+  /// Audiobooks use the square artwork convention of CD covers. Other
+  /// library works keep the portrait poster ratio unless a caller explicitly
+  /// requests another shape.
+  final double? aspectRatio;
   final BorderRadius borderRadius;
   final bool showProgress;
   final bool showOrigin;
 
   @override
   Widget build(BuildContext context) => AspectRatio(
-    aspectRatio: aspectRatio,
+    aspectRatio: aspectRatio ?? (work.mediaType?.id == 'audiobook' ? 1 : 2 / 3),
     child: ClipRRect(
       borderRadius: borderRadius,
       child: Stack(

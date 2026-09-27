@@ -2131,6 +2131,11 @@ final class FundusLibrary {
               ))) {
         return true;
       }
+      // A Fero sidecar is intentionally cheap to read. Revisit its document
+      // on every normal scan so an existing novel receives newly exported
+      // sources, tags, genres, and status even when the EPUB itself did not
+      // change (older scans did not persist a sidecar revision).
+      if (externalMetadataDirectories.contains(directory)) return true;
       if (vanished.isEmpty) return false;
       final prefix = directory == '.' ? '' : '$directory/';
       return vanished.any(
@@ -2506,18 +2511,13 @@ final class FundusLibrary {
           .list(followLinks: false)
           .where((entity) => entity is File)
           .cast<File>()
-          .where(
-            (file) =>
-                !p.basename(file.path).startsWith('._') &&
-                    p
-                        .basename(file.path)
-                        .toLowerCase()
-                        .endsWith('.mediavault.yaml') ||
-                p
-                    .basename(file.path)
-                    .toLowerCase()
-                    .endsWith('.mediavault.json'),
-          )
+          .where((file) {
+            final name = p.basename(file.path).toLowerCase();
+            return !name.startsWith('._') &&
+                (name == 'metadata.json' ||
+                    name.endsWith('.mediavault.yaml') ||
+                    name.endsWith('.mediavault.json'));
+          })
           .toList();
       if (files.isEmpty) return candidate;
       File selected = files.first;
@@ -2527,11 +2527,15 @@ final class FundusLibrary {
       };
       for (final file in files) {
         final name = p.basename(file.path).toLowerCase();
-        final suffix = name.endsWith('.mediavault.json')
+        final suffix = name == 'metadata.json'
+            ? 'metadata.json'
+            : name.endsWith('.mediavault.json')
             ? '.mediavault.json'
             : '.mediavault.yaml';
-        final stem = name.substring(0, name.length - suffix.length);
-        if (stems.contains(stem)) {
+        final stem = suffix == 'metadata.json'
+            ? ''
+            : name.substring(0, name.length - suffix.length);
+        if (stem.isNotEmpty && stems.contains(stem)) {
           selected = file;
           break;
         }
