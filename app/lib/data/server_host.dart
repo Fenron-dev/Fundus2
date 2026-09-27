@@ -158,6 +158,7 @@ class ServerHostController extends ChangeNotifier {
       'type': 'fundus_pairing',
       'version': 1,
       'base_url': address.toString(),
+      'base_urls': [for (final value in _addresses) value.toString()],
       'server_id': identity.serverId,
       'server_name': settings.deviceName,
       'certificate_sha256': identity.certificateFingerprint,

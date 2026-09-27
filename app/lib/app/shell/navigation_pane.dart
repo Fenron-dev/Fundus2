@@ -631,7 +631,7 @@ class _NavigationTile extends StatelessWidget {
                       height: 28,
                     ),
                     icon: Icon(
-                      FundusIcons.more,
+                      FundusIcons.moreVertical,
                       size: FundusIcons.sizeSm,
                       color: tokens.textFaint,
                     ),

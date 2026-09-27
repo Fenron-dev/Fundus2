@@ -34,6 +34,7 @@ abstract final class FundusIcons {
   static final devices = PhosphorIcons.devices();
   static final activity = PhosphorIcons.bellSimple();
   static final more = PhosphorIcons.dotsThreeOutline();
+  static final moreVertical = PhosphorIcons.dotsThreeVertical();
 
   // Media types.
   static final audiobook = PhosphorIcons.headphones();

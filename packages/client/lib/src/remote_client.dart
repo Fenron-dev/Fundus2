@@ -103,36 +103,50 @@ final class FundusRemoteClient {
     }
     // The code names the certificate; from here on nothing else is accepted.
     final client = httpClient ?? pinnedHttpClient(code.certificateFingerprint);
+    final addresses = [code.baseUri, ...code.alternateBaseUris];
+    FundusRemoteException? lastFailure;
     try {
-      final http.Response response;
-      try {
-        response = await client
-            .post(
-              code.baseUri.resolve('/v1/pairing/claim'),
-              headers: const {'content-type': 'application/json'},
-              body: jsonEncode({
-                'nonce': code.nonce,
-                'pin': pin.trim(),
-                'device_id': deviceId,
-                'device_name': deviceName,
-              }),
-            )
-            .timeout(timeout);
-      } on Object catch (error) {
-        throw _unreachable(error);
+      for (var index = 0; index < addresses.length; index++) {
+        final address = addresses[index];
+        final lastAddress = index == addresses.length - 1;
+        try {
+          final response = await client
+              .post(
+                address.resolve('/v1/pairing/claim'),
+                headers: const {'content-type': 'application/json'},
+                body: jsonEncode({
+                  'nonce': code.nonce,
+                  'pin': pin.trim(),
+                  'device_id': deviceId,
+                  'device_name': deviceName,
+                }),
+              )
+              .timeout(timeout);
+          final decoded = _decode(response);
+          final issued = decoded['token'];
+          if (issued is! String || issued.isEmpty) {
+            throw const FundusRemoteException(
+              'Die Gegenstelle hat kein Zugangstoken ausgestellt.',
+            );
+          }
+          return (
+            token: issued,
+            serverId: '${decoded['server_id'] ?? code.serverId}',
+            serverName: '${decoded['server_name'] ?? code.serverName ?? ''}',
+          );
+        } on FundusRemoteException catch (error) {
+          // HTTP responses (especially a wrong PIN or an expired session)
+          // are authoritative and must not be hidden by trying another IP.
+          if (error.statusCode != null || lastAddress) rethrow;
+          lastFailure = error;
+        } on Object catch (error) {
+          final unreachable = _unreachable(error);
+          if (lastAddress) throw unreachable;
+          lastFailure = unreachable;
+        }
       }
-      final decoded = _decode(response);
-      final issued = decoded['token'];
-      if (issued is! String || issued.isEmpty) {
-        throw const FundusRemoteException(
-          'Die Gegenstelle hat kein Zugangstoken ausgestellt.',
-        );
-      }
-      return (
-        token: issued,
-        serverId: '${decoded['server_id'] ?? code.serverId}',
-        serverName: '${decoded['server_name'] ?? code.serverName ?? ''}',
-      );
+      throw lastFailure ??
+          const FundusRemoteException('Die Gegenstelle antwortet nicht.');
     } finally {
       if (httpClient == null) client.close();
     }

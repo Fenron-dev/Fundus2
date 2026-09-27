@@ -15,6 +15,7 @@ final class FundusPairingCode {
     required this.nonce,
     required this.expiresAt,
     this.serverName,
+    this.alternateBaseUris = const [],
   });
 
   final Uri baseUri;
@@ -26,6 +27,7 @@ final class FundusPairingCode {
   final String nonce;
   final DateTime expiresAt;
   final String? serverName;
+  final List<Uri> alternateBaseUris;
 
   bool get isExpired => !DateTime.now().isBefore(expiresAt);
 
@@ -52,7 +54,7 @@ final class FundusPairingCode {
     final nonce = '${value['nonce'] ?? ''}';
 
     if (baseUri == null ||
-        baseUri.host.isEmpty ||
+        !_isValidBaseUri(baseUri) ||
         // A user info section would send the credentials to a different host
         // than the one shown; a code carrying one is not one to trust.
         baseUri.userInfo.isNotEmpty ||
@@ -74,6 +76,19 @@ final class FundusPairingCode {
       throw const FormatException('Der Kopplungscode ist unvollständig.');
     }
 
+    final alternateBaseUris = <Uri>[];
+    if (value['base_urls'] case final List<dynamic> addresses) {
+      for (final raw in addresses) {
+        final candidate = Uri.tryParse('$raw');
+        if (candidate != null &&
+            _isValidBaseUri(candidate) &&
+            candidate != baseUri &&
+            !alternateBaseUris.contains(candidate)) {
+          alternateBaseUris.add(candidate);
+        }
+      }
+    }
+
     return FundusPairingCode(
       baseUri: baseUri,
       serverId: '${value['server_id'] ?? ''}',
@@ -83,13 +98,26 @@ final class FundusPairingCode {
       serverName: value['server_name'] is String
           ? value['server_name'] as String
           : null,
+      alternateBaseUris: alternateBaseUris,
     );
+  }
+
+  static bool _isValidBaseUri(Uri value) {
+    if (value.host.isEmpty || value.userInfo.isNotEmpty) return false;
+    if (value.scheme != 'https' && value.scheme != 'http') return false;
+    return value.scheme != 'http' ||
+        const {'localhost', '127.0.0.1', '::1'}.contains(value.host);
   }
 
   String encode() => jsonEncode({
     'type': 'fundus_pairing',
     'version': 1,
     'base_url': baseUri.toString(),
+    if (alternateBaseUris.isNotEmpty)
+      'base_urls': [
+        baseUri.toString(),
+        for (final address in alternateBaseUris) address.toString(),
+      ],
     'server_id': serverId,
     'server_name': serverName,
     'certificate_sha256': certificateFingerprint,
