@@ -260,15 +260,35 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         _metadataConflictOpen = false;
         return;
       }
-      final conflict = library.metadataConflicts.first;
-      final selected = await showMetadataImportConflictDialog(
+      final conflicts = List<MetadataImportConflict>.of(
+        library.metadataConflicts,
+      );
+      final selected = await showMetadataImportConflictInboxDialog(
         context,
-        conflict,
+        conflicts,
       );
       if (!mounted) return;
-      await library.resolveMetadataConflict(conflict, selected ?? const {});
+      if (selected != null) {
+        for (final entry in selected.entries) {
+          if (entry.key >= conflicts.length) continue;
+          await library.resolveMetadataConflict(
+            conflicts[entry.key],
+            entry.value,
+          );
+        }
+        // An empty decision means “keep everything as it is”. Dismiss the
+        // remaining inbox in one step; “Später” leaves it available in
+        // Einstellungen > Benachrichtigungen.
+        if (selected.isEmpty) {
+          for (final conflict in conflicts) {
+            library.dismissMetadataConflict(conflict);
+          }
+        }
+      }
       _metadataConflictOpen = false;
-      _offerMetadataConflict();
+      if (selected != null && library.metadataConflicts.isNotEmpty) {
+        _offerMetadataConflict();
+      }
     });
   }
 

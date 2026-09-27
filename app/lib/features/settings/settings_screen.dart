@@ -31,6 +31,7 @@ import '../../media/track_preference.dart';
 import 'settings_catalog.dart';
 import 'maintenance_page.dart';
 import 'settings_shell.dart';
+import '../library/metadata_import_conflict_dialog.dart';
 
 /// Settings, with the scope of each one visible.
 ///
@@ -54,6 +55,7 @@ class SettingsScreen extends StatelessWidget {
       'wartung' => const MaintenancePage(),
       'bibliotheken' => const _Libraries(),
       'metadaten' => const _Metadata(),
+      'benachrichtigungen' => const _Notifications(),
       'eigenschaften' => const _Properties(),
       'synchronisation' => const _Sync(),
       'schutz' => const _Protection(),
@@ -329,6 +331,77 @@ class _Index extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _Notifications extends StatelessWidget {
+  const _Notifications();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final conflicts = scope.library.metadataConflicts;
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    return SettingsPage(
+      title: 'Benachrichtigungen',
+      subtitle:
+          'Metadatenänderungen werden gesammelt, damit ein großer Fero- oder '
+          'Audiobookshelf-Abgleich nicht hunderte Dialoge öffnet.',
+      children: [
+        SettingsCard(
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  conflicts.isEmpty
+                      ? 'Keine offenen Änderungen'
+                      : '${conflicts.length} offene Änderungen',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              if (conflicts.isNotEmpty)
+                FilledButton.icon(
+                  onPressed: () async {
+                    final selected =
+                        await showMetadataImportConflictInboxDialog(
+                          context,
+                          List<MetadataImportConflict>.of(conflicts),
+                        );
+                    if (selected == null) return;
+                    final snapshot = List<MetadataImportConflict>.of(conflicts);
+                    for (final entry in selected.entries) {
+                      if (entry.key >= snapshot.length) continue;
+                      await scope.library.resolveMetadataConflict(
+                        snapshot[entry.key],
+                        entry.value,
+                      );
+                    }
+                    if (selected.isEmpty) {
+                      for (final conflict in snapshot) {
+                        scope.library.dismissMetadataConflict(conflict);
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.tune),
+                  label: const Text('Öffnen'),
+                ),
+            ],
+          ),
+        ),
+        if (conflicts.isNotEmpty)
+          SettingsCard(
+            child: Text(
+              'Offene Änderungen bleiben erhalten, bis du sie übernimmst '
+              'oder als bisherige Werte bestätigst. Die Quelldateien werden '
+              'dabei nicht verändert.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: tokens.textMuted,
               ),
             ),
           ),

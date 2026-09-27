@@ -57,6 +57,12 @@ abstract final class SettingsAreas {
       description: 'Zugangsdaten für TMDB, MyAnimeList und Hardcover.',
     ),
     SettingsArea(
+      key: 'benachrichtigungen',
+      label: 'Benachrichtigungen',
+      icon: FundusIcons.warning,
+      description: 'Offene Metadatenänderungen gesammelt bearbeiten.',
+    ),
+    SettingsArea(
       key: 'eigenschaften',
       label: 'Eigenschaften & Schlagwörter',
       icon: FundusIcons.note,
