@@ -2451,6 +2451,7 @@ final class FundusLibrary {
   static bool _isExternalMetadataPath(String path) {
     final name = p.posix.basename(path).toLowerCase();
     return name == 'metadata.json' ||
+        name == 'fero.info.json' ||
         name.endsWith('.mediavault.yaml') ||
         name.endsWith('.mediavault.json');
   }
@@ -2515,6 +2516,7 @@ final class FundusLibrary {
             final name = p.basename(file.path).toLowerCase();
             return !name.startsWith('._') &&
                 (name == 'metadata.json' ||
+                    name == 'fero.info.json' ||
                     name.endsWith('.mediavault.yaml') ||
                     name.endsWith('.mediavault.json'));
           })
@@ -2527,12 +2529,12 @@ final class FundusLibrary {
       };
       for (final file in files) {
         final name = p.basename(file.path).toLowerCase();
-        final suffix = name == 'metadata.json'
-            ? 'metadata.json'
+        final suffix = name == 'metadata.json' || name == 'fero.info.json'
+            ? name
             : name.endsWith('.mediavault.json')
             ? '.mediavault.json'
             : '.mediavault.yaml';
-        final stem = suffix == 'metadata.json'
+        final stem = suffix == 'metadata.json' || suffix == 'fero.info.json'
             ? ''
             : name.substring(0, name.length - suffix.length);
         if (stem.isNotEmpty && stems.contains(stem)) {

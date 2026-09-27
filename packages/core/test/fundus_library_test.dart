@@ -772,6 +772,7 @@ void main() {
     expect(work.description, 'Erster Absatz.\n\nZweiter Absatz.');
     expect(work.narrators, ['ABS Sprecher']);
     expect(work.publisher, 'ABS Verlag');
+    expect(work.genres, ['Fantasy']);
     expect(work.publishedYear, 2025);
     expect(library.loadAnnotations(work.id).tags, ['Fantasy', 'Favorit']);
 

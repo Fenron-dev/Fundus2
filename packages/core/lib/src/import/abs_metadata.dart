@@ -51,6 +51,7 @@ final class AbsAudiobookMetadata {
     if (publishedYear != null) 'published_year': publishedYear,
     if (isbn != null) 'isbn': isbn,
     if (asin != null) 'asin': asin,
+    if (tags.isNotEmpty) 'tags': tags,
     if (genres.isNotEmpty) 'genres': genres,
     if (explicit != null) 'explicit': explicit,
     if (abridged != null) 'abridged': abridged,

@@ -70,4 +70,27 @@ notes: "Quelle: https://novelupdates.com/series/novel · Goodreads: https://good
     expect(value?.tags, ['System']);
     expect(value?.sourceLinks['novelupdates'], contains('json-novel'));
   });
+
+  test('reads the Fero info JSON export filename', () async {
+    final root = await Directory.systemTemp.createTemp('fero-info-json-');
+    addTearDown(() => root.delete(recursive: true));
+    final file = File('${root.path}/fero.info.json');
+    await file.writeAsString('''
+{
+  "title": "World's Best Martial Artist",
+  "author": "Eagle Eats The Chick",
+  "source_url": "https://novelphoenix.com/novel/worlds-best-martial-artist",
+  "genres": ["Wuxia", "Action"],
+  "tags": ["Cultivation", "System"],
+  "status": "ongoing"
+}
+''');
+
+    final value = await const MediaVaultMetadataReader().read(file);
+
+    expect(value?.publicationStatus, 'ongoing');
+    expect(value?.genres, ['Wuxia', 'Action']);
+    expect(value?.tags, ['Cultivation', 'System']);
+    expect(value?.sourceLinks['fero_source'], contains('novelphoenix'));
+  });
 }
