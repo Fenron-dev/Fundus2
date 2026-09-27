@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
@@ -18,6 +20,7 @@ final class NavigationEntry {
     this.active = false,
     this.ruleAfter = false,
     this.mediaTypeEntry = false,
+    this.onMenu,
   });
 
   final String label;
@@ -29,6 +32,9 @@ final class NavigationEntry {
   /// A hairline below this entry — the design groups by rules, not headings.
   final bool ruleAfter;
   final bool mediaTypeEntry;
+
+  /// Optional context actions shown as a vertical three-dot menu.
+  final void Function(BuildContext context)? onMenu;
 }
 
 /// The left column: place first, everything else below it.
@@ -162,6 +168,12 @@ class _NavigationPaneState extends State<NavigationPane> {
             count: _formatCount(counts[type.id] ?? 0),
             active: activeType == type.id,
             onTap: () => scope.openMediaType(type.id),
+            onMenu: (context) => _showRefreshMenu(
+              context,
+              scope,
+              type.label,
+              _rootsForType(scope, type),
+            ),
           ),
       for (final root in rootEntries)
         NavigationEntry(
@@ -170,6 +182,8 @@ class _NavigationPaneState extends State<NavigationPane> {
           count: _formatCount(root.count),
           active: scope.filter.mediaRoot == root.path,
           onTap: () => scope.openMediaRoot(root.path, root.type.id),
+          onMenu: (context) =>
+              _showRefreshMenu(context, scope, root.label, [root.path]),
         ),
       if (unassigned > 0)
         NavigationEntry(
@@ -202,6 +216,46 @@ class _NavigationPaneState extends State<NavigationPane> {
           ),
       ...sources,
     ];
+  }
+
+  List<String> _rootsForType(FundusScopeState scope, MediaTypeDefinition type) {
+    final kind = type.configurationKind;
+    final library = scope.library.library;
+    if (kind == null || library == null) return const [];
+    return library.configuration.rootsFor(kind).toList(growable: false);
+  }
+
+  Future<void> _showRefreshMenu(
+    BuildContext context,
+    FundusScopeState scope,
+    String label,
+    List<String> roots,
+  ) async {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final origin = box.localToGlobal(Offset.zero);
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        origin.dx + box.size.width - 8,
+        origin.dy,
+        MediaQuery.sizeOf(context).width - origin.dx - box.size.width,
+        MediaQuery.sizeOf(context).height - origin.dy - box.size.height,
+      ),
+      items: const [
+        PopupMenuItem(value: 'check', child: Text('Aktualisieren')),
+        PopupMenuItem(value: 'full', child: Text('Vollständig neu einlesen')),
+      ],
+    );
+    if (!context.mounted || selection == null) return;
+    final targets = roots.isEmpty ? const <String?>[null] : roots;
+    for (final root in targets) {
+      await scope.library.scan(full: selection == 'full', subtree: root);
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label wird aktualisiert.')));
   }
 
   /// Ob dieser Eintrag eine Medienart ist — und damit in den Gruppen steht.
@@ -326,6 +380,14 @@ class _NavigationPaneState extends State<NavigationPane> {
                     ),
                     active: active == source.id && activeType == type.id,
                     onTap: () => scope.showSourceMediaType(source.id, type.id),
+                    onMenu: source.isVault
+                        ? (context) => _showRefreshMenu(
+                            context,
+                            scope,
+                            type.label,
+                            _rootsForType(scope, type),
+                          )
+                        : null,
                   ),
                 ),
           ],
@@ -557,6 +619,26 @@ class _NavigationTile extends StatelessWidget {
                     context,
                   ).textTheme.labelMedium?.copyWith(color: tokens.textFaint),
                 ),
+              if (entry.onMenu != null) ...[
+                const SizedBox(width: FundusSpace.x1),
+                Tooltip(
+                  message: 'Weitere Aktionen',
+                  child: IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 28,
+                      height: 28,
+                    ),
+                    icon: Icon(
+                      FundusIcons.more,
+                      size: FundusIcons.sizeSm,
+                      color: tokens.textFaint,
+                    ),
+                    onPressed: () => entry.onMenu!(context),
+                  ),
+                ),
+              ],
             ],
           ],
         ),
