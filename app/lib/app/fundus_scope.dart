@@ -263,6 +263,19 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       final conflicts = List<MetadataImportConflict>.of(
         library.metadataConflicts,
       );
+      if (conflicts.length <= 3) {
+        for (final conflict in conflicts) {
+          if (!mounted) return;
+          final selected = await showMetadataImportConflictDialog(
+            context,
+            conflict,
+          );
+          if (!mounted) return;
+          await library.resolveMetadataConflict(conflict, selected ?? const {});
+        }
+        _metadataConflictOpen = false;
+        return;
+      }
       final selected = await showMetadataImportConflictInboxDialog(
         context,
         conflicts,
