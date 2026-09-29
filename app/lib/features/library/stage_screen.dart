@@ -319,6 +319,9 @@ class _PosterGrid extends StatelessWidget {
             .floor(),
       );
       final width = (available - stage.railGap * (columns - 1)) / columns;
+      final squareArtwork =
+          works.isNotEmpty &&
+          works.every((work) => work.mediaType?.id == 'audiobook');
       return SliverGrid(
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,
@@ -327,6 +330,7 @@ class _PosterGrid extends StatelessWidget {
           mainAxisExtent: workPosterExtent(
             width: width,
             textScaler: MediaQuery.textScalerOf(context),
+            squareArtwork: squareArtwork,
           ),
         ),
         delegate: SliverChildBuilderDelegate(

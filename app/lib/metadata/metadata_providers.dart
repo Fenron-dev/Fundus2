@@ -2055,7 +2055,8 @@ final class AudibleProvider implements MetadataProvider {
           'num_results': '${limit.clamp(1, 50)}',
           'products_sort_by': 'Relevance',
           'response_groups':
-              'contributors,product_desc,product_attrs,media,series',
+              'contributors,product_desc,product_attrs,media,series,'
+              'category_ladders',
         }),
         headers: const {
           'accept': 'application/json',
@@ -2090,6 +2091,8 @@ final class AudibleProvider implements MetadataProvider {
     if (asin is! String || asin.trim().isEmpty || title == null) return null;
     final subtitle = _firstString([value['subtitle']]);
     final series = _firstSeries(value['series']);
+    final genres = _categories(value['category_ladders']);
+    final tags = _strings(value['tags'] ?? value['keywords']);
     return MetadataCandidate(
       provider: provider,
       providerId: asin.trim(),
@@ -2109,6 +2112,8 @@ final class AudibleProvider implements MetadataProvider {
       language: _firstString([value['language']]) ?? language,
       isAdult: value['is_adult_product'] == true,
       posterUrl: _largestImage(value['product_images']),
+      genres: genres,
+      tags: tags,
       credits: [
         for (final name in _people(value['authors']))
           MetadataPerson(name: name, role: 'Autor'),
@@ -2128,6 +2133,41 @@ final class AudibleProvider implements MetadataProvider {
       if (name != null) names.add(name);
     }
     return names;
+  }
+
+  /// Audible exposes its shelf classification as nested category ladders
+  /// rather than the `genres` field used by other providers. Keep every
+  /// named level so users can filter by both the broad shelf and its detail.
+  static List<String> _categories(Object? value) {
+    final names = <String>{};
+    if (value is! List) return const [];
+    void collect(Object? node) {
+      if (node is Map) {
+        final name = _firstString([node['name'], node['title']]);
+        if (name != null) names.add(name);
+        collect(node['ladder']);
+        collect(node['children']);
+      } else if (node is Iterable) {
+        for (final child in node) {
+          collect(child);
+        }
+      }
+    }
+
+    collect(value);
+    return names.toList(growable: false);
+  }
+
+  static List<String> _strings(Object? value) {
+    if (value is String) return [value.trim()];
+    if (value is! Iterable) return const [];
+    return value
+        .map((entry) => entry is Map ? _firstString([entry['name']]) : entry)
+        .whereType<String>()
+        .map((entry) => entry.trim())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
   }
 
   /// The first series Audible names, with the number inside it.

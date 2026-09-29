@@ -18,8 +18,9 @@ double workPosterExtent({
   required double width,
   required TextScaler textScaler,
   bool withName = true,
+  bool squareArtwork = false,
 }) {
-  final picture = width * 3 / 2;
+  final picture = squareArtwork ? width : width * 3 / 2;
   if (!withName) return picture;
   const lineFactor = 1.35;
   final title = textScaler.scale(FundusType.base) * 1.25 * 2;

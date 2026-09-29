@@ -51,6 +51,9 @@ class WorkGrid extends StatelessWidget {
             .floor()
             .clamp(2, 12);
         final width = (available - stage.railGap * (columns - 1)) / columns;
+        final squareArtwork =
+            works.isNotEmpty &&
+            works.every((work) => work.mediaType?.id == 'audiobook');
 
         // A grid of thousands has to be virtualised; GridView.builder only
         // builds what is on screen.
@@ -63,6 +66,7 @@ class WorkGrid extends StatelessWidget {
             mainAxisExtent: workPosterExtent(
               width: width,
               textScaler: MediaQuery.textScalerOf(context),
+              squareArtwork: squareArtwork,
             ),
           ),
           itemCount: works.length,

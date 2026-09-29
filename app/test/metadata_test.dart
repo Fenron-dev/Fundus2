@@ -747,6 +747,15 @@ void main() {
                 'series': [
                   {'title': 'Die Königsmörder-Chronik', 'sequence': '1'},
                 ],
+                'category_ladders': [
+                  {
+                    'ladder': [
+                      {'name': 'Literatur & Belletristik'},
+                      {'name': 'Fantasy'},
+                    ],
+                  },
+                ],
+                'tags': ['Magie'],
               },
             ],
           }),
@@ -773,6 +782,8 @@ void main() {
       expect(candidate.posterUrl, 'https://bild/1024.jpg');
       expect(candidate.externalIds['asin'], 'B004V3W0KM');
       expect(candidate.workKind, 'audiobook');
+      expect(candidate.genres, ['Literatur & Belletristik', 'Fantasy']);
+      expect(candidate.tags, ['Magie']);
       expect(client.asked.single.host, 'api.audible.de');
       expect(
         client.asked.single.queryParameters['title'],

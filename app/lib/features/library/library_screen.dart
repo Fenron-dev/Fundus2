@@ -184,10 +184,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
             .floor()
             .clamp(2, 12);
         final width = (available - stage.railGap * (columns - 1)) / columns;
-        final extent = workPosterExtent(
-          width: width,
-          textScaler: MediaQuery.textScalerOf(context),
-        );
         return CustomScrollView(
           slivers: [
             for (final group in groups) ...[
@@ -219,7 +215,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       crossAxisCount: columns,
                       mainAxisSpacing: FundusSpace.x6,
                       crossAxisSpacing: stage.railGap,
-                      mainAxisExtent: extent,
+                      mainAxisExtent: workPosterExtent(
+                        width: width,
+                        textScaler: MediaQuery.textScalerOf(context),
+                        squareArtwork:
+                            group.works.isNotEmpty &&
+                            group.works.every(
+                              (work) => work.mediaType?.id == 'audiobook',
+                            ),
+                      ),
                     ),
                   ),
                 )
