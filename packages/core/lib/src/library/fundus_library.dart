@@ -1269,11 +1269,15 @@ final class FundusLibrary {
     String deviceName = '',
     String? operationId,
     bool checkpoint = false,
-  }) => _database.saveProgress(
+  }) => saveMediaProgress(
     workId: workId,
     fileId: fileId,
-    position: position,
-    duration: duration,
+    position: MediaPosition(
+      kind: MediaPositionKind.time,
+      numericValue: position.inMilliseconds / 1000,
+      total: duration == null ? null : duration.inMilliseconds / 1000,
+      fileId: fileId,
+    ),
     finished: finished,
     deviceId: deviceId,
     deviceName: deviceName,
