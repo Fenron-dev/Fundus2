@@ -45,6 +45,11 @@ final class FundusCatalogueMirror {
   /// carry rather than by anything about the works themselves.
   static const _batch = 40;
 
+  // A peer may request hundreds of covers after the first catalogue pass.
+  // Keeping only a few image transfers in flight avoids saturating Wi‑Fi and
+  // prevents a slow network share from turning the whole sync into a timeout.
+  static const _coverConcurrency = 8;
+
   /// Above this share of the catalogue changed, asking for „everything" is
   /// cheaper than naming what to fetch — the ids alone would be most of the
   /// request.
@@ -161,15 +166,16 @@ final class FundusCatalogueMirror {
     ];
     final batchSize = coverLimit < 1 ? 1 : coverLimit;
     final batch = pending.take(batchSize).toList();
-    if (batch.isNotEmpty) {
+    for (var start = 0; start < batch.length; start += _coverConcurrency) {
+      final slice = batch.skip(start).take(_coverConcurrency).toList();
       final fetched = await Future.wait([
-        for (final work in batch) _cover(work.id),
+        for (final work in slice) _cover(work.id),
       ]);
-      for (var index = 0; index < batch.length; index++) {
+      for (var index = 0; index < slice.length; index++) {
         final bytes = fetched[index];
         if (bytes == null) continue;
         await library.cacheGeneratedCover(
-          workId: batch[index].id,
+          workId: slice[index].id,
           bytes: bytes,
           extension: _extensionFor(bytes),
         );
