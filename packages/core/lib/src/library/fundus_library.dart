@@ -1291,17 +1291,42 @@ final class FundusLibrary {
     String? operationId,
     DateTime? updatedAt,
     bool checkpoint = false,
-  }) => _database.saveMediaProgress(
-    workId: workId,
-    fileId: fileId,
-    position: position,
-    finished: finished,
-    deviceId: deviceId,
-    deviceName: deviceName,
-    operationId: operationId ?? FundusId.generate(),
-    updatedAt: updatedAt,
-    checkpoint: checkpoint,
-  );
+  }) {
+    final result = _database.saveMediaProgress(
+      workId: workId,
+      fileId: fileId,
+      position: position,
+      finished: finished,
+      deviceId: deviceId,
+      deviceName: deviceName,
+      operationId: operationId ?? FundusId.generate(),
+      updatedAt: updatedAt,
+      checkpoint: checkpoint,
+    );
+    // Normal playback updates stay in the database. A checkpoint is the
+    // deliberate boundary (close/stop/sync) at which the portable vault
+    // should be touched; otherwise a network vault would receive writes
+    // every few seconds.
+    if (checkpoint && _usesPortableSidecars(workId)) {
+      final sourcePath = _database.workSourcePath(workId);
+      if (sourcePath != null) {
+        final relativePath = playbackTracks(workId)
+            .where((track) => track.fileId == fileId)
+            .map((track) => track.relativePath)
+            .firstOrNull;
+        if (relativePath != null) {
+          final sidecar = File(
+            p.join(_workSidecarDirectory(sourcePath).path, 'progress.json'),
+          );
+          _writeSidecar(
+            sidecar,
+            '${const JsonEncoder.withIndent('  ').convert({'format_version': 1, 'file_path': relativePath, 'position': result.position.toJson(), 'finished': result.finished, 'updated_at': result.updatedAt.toUtc().toIso8601String(), 'device_id': result.deviceId, 'device_name': result.deviceName})}\n',
+          );
+        }
+      }
+    }
+    return result;
+  }
 
   /// Wer an einem Werk beteiligt ist, mit Bild, wo eines da ist.
   List<({String name, String role, String? imagePath})> peopleOf(
@@ -2300,6 +2325,13 @@ final class FundusLibrary {
         indexed.candidate.directory,
         indexed.workId,
       );
+      try {
+        await _importPortableProgressSidecar(indexed.workId);
+      } on FileSystemException {
+        // A stale or unavailable progress sidecar must not hide a work.
+      } on FormatException {
+        // Invalid portable progress is ignored until it is repaired.
+      }
       // Auch Dokumente und Comics legen ihre Kennung neben die Medien. Vorher
       // tat das nur der Hörbuchpfad, und ohne diese Datei gibt es beim
       // nächsten Aufbau nichts zurückzulesen: die Kennung wäre eine neue, und
@@ -2328,6 +2360,13 @@ final class FundusLibrary {
         // A broken sidecar must not make the complete library unavailable.
       } on YamlException {
         // The user can repair malformed portable metadata and scan again.
+      }
+      try {
+        await _importPortableProgressSidecar(indexed.workId);
+      } on FileSystemException {
+        // A stale or unavailable progress sidecar must not hide a work.
+      } on FormatException {
+        // Invalid portable progress is ignored until it is repaired.
       }
       await _importAbsTags(indexed.candidate, indexed.workId);
       await _cacheEmbeddedCover(indexed.candidate, indexed.workId);
@@ -2968,6 +3007,57 @@ final class FundusLibrary {
     } on YamlException {
       return const _PortableWorkIdentity(writable: false);
     }
+  }
+
+  /// Imports the last deliberate checkpoint written beside a work.
+  ///
+  /// The file stores a vault-relative path instead of a local file id. That
+  /// keeps a position valid after an index rebuild or an app reinstall, while
+  /// still allowing the normal device-specific progress conflict handling to
+  /// remain in the database.
+  Future<void> _importPortableProgressSidecar(String workId) async {
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath == null) return;
+    final file = File(
+      p.join(_workSidecarDirectory(sourcePath).path, 'progress.json'),
+    );
+    if (!await file.exists()) return;
+    final decoded = jsonDecode(await file.readAsString());
+    if (decoded is! Map) throw const FormatException('Ungültiger Fortschritt.');
+    if (decoded['format_version'] != 1) {
+      throw const FormatException('Nicht unterstützte Fortschrittsversion.');
+    }
+    final path = decoded['file_path'];
+    final rawPosition = decoded['position'];
+    final updatedAt = DateTime.tryParse(
+      decoded['updated_at']?.toString() ?? '',
+    );
+    if (path is! String ||
+        path.trim().isEmpty ||
+        rawPosition is! Map ||
+        updatedAt == null) {
+      throw const FormatException('Unvollständiger Fortschritt.');
+    }
+    final tracks = playbackTracks(workId);
+    final track = tracks.where((item) => item.relativePath == path).firstOrNull;
+    if (track == null) return;
+    final stored = loadProgress(workId);
+    if (stored != null && !updatedAt.isAfter(stored.updatedAt)) return;
+    final position = MediaPosition.fromJson(
+      Map<String, Object?>.from(rawPosition.cast<Object?, Object?>()),
+    ).withFileId(track.fileId);
+    _database.saveMediaProgress(
+      workId: workId,
+      fileId: track.fileId,
+      position: position,
+      finished: decoded['finished'] == true,
+      deviceId: decoded['device_id']?.toString() ?? 'portable-vault',
+      deviceName: decoded['device_name']?.toString() ?? 'Vault',
+      operationId:
+          'portable:$workId:${updatedAt.toUtc().millisecondsSinceEpoch}',
+      updatedAt: updatedAt,
+      checkpoint: true,
+    );
   }
 
   Future<void> _writeMetadataSidecar(String workId) async {

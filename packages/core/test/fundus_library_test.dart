@@ -121,6 +121,55 @@ void main() {
     expect(resumed.deviceName, 'Mac');
   });
 
+  test('checkpoint progress survives rebuilding the local index', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'fundus-progress-sidecar-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final workDir = Directory('${root.path}/Manga/Rebirth')
+      ..createSync(recursive: true);
+    File(
+      '${workDir.path}/Rebirth - Kapitel 01.cbz',
+    ).writeAsBytesSync([1, 2, 3]);
+
+    final library = await FundusLibrary.create(root);
+    await library.index().drain<void>();
+    final work = library.listWorks().single;
+    final track = library.playbackTracks(work.id).single;
+    library.saveMediaProgress(
+      workId: work.id,
+      fileId: track.fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.imageIndex,
+        numericValue: 7,
+        total: 24,
+        fileId: track.fileId,
+        chapterId: 'chapter-1',
+        scrollOffset: .4,
+      ),
+      deviceId: 'desktop-test',
+      deviceName: 'Test-Mac',
+      checkpoint: true,
+      operationId: 'portable-checkpoint-1',
+    );
+    await library.flushSidecarWrites();
+    expect(
+      await File('${workDir.path}/_fundus/progress.json').exists(),
+      isTrue,
+    );
+    library.close();
+
+    await Directory('${root.path}/.library').delete(recursive: true);
+    final rebuilt = await FundusLibrary.create(root);
+    await rebuilt.index().drain<void>();
+    final restored = rebuilt.loadProgress(rebuilt.listWorks().single.id);
+    rebuilt.close();
+
+    expect(restored?.position.kind, MediaPositionKind.imageIndex);
+    expect(restored?.position.numericValue, 7);
+    expect(restored?.position.scrollOffset, .4);
+  });
+
   test('persists named library views portably', () async {
     final root = await Directory.systemTemp.createTemp('fundus-views-');
     addTearDown(() => root.delete(recursive: true));
