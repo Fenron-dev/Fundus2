@@ -106,14 +106,11 @@ final class FundusCatalogueMirror {
       // Covers are deliberately fetched in small batches.  An unchanged
       // catalogue still needs another pass when earlier runs stopped at the
       // cover limit; otherwise works after the first batch stay blank forever.
-      final needsMoreCovers = library
-          .listWorks(includeMissing: true)
-          .any((work) => work.sourceId == sourceId && work.coverPath == null);
-      if (!needsMoreCovers) {
-        return const RemoteMirrorReport(written: 0, removed: 0);
-      }
-      final works = await client.catalogue(libraryId);
-      await _covers(works);
+      if (library.remoteCoverStateUnknown(sourceId)) return _full(index);
+      await _covers([
+        for (final id in library.missingRemoteCovers(sourceId))
+          RemoteWorkRecord(id: id, kind: '', title: '', hasCover: true),
+      ]);
       return const RemoteMirrorReport(written: 0, removed: 0);
     }
     if (changed.length > index.length * _fetchAllAbove) return _full(index);
@@ -156,16 +153,25 @@ final class FundusCatalogueMirror {
   /// a placeholder, which is a great deal better than a catalogue that
   /// refuses to finish because one image is broken.
   Future<void> _covers(List<RemoteWorkRecord> works) async {
+    if (works.isEmpty) return;
+    final retry = Map<String, String>.of(
+      await library.loadMirrorState('$sourceId-cover-retry'),
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
     final known = {
       for (final work in library.listWorks())
         if (work.coverPath != null) work.id,
     };
     final pending = [
       for (final work in works)
-        if (work.hasCover && !known.contains(work.id)) work,
+        if (work.hasCover &&
+            !known.contains(work.id) &&
+            now >= (int.tryParse(retry[work.id] ?? '') ?? 0))
+          work,
     ];
     final batchSize = coverLimit < 1 ? 1 : coverLimit;
     final batch = pending.take(batchSize).toList();
+    if (batch.isEmpty) return;
     for (var start = 0; start < batch.length; start += _coverConcurrency) {
       final slice = batch.skip(start).take(_coverConcurrency).toList();
       final fetched = await Future.wait([
@@ -173,7 +179,12 @@ final class FundusCatalogueMirror {
       ]);
       for (var index = 0; index < slice.length; index++) {
         final bytes = fetched[index];
-        if (bytes == null) continue;
+        if (bytes == null) {
+          retry[slice[index].id] =
+              '${now + const Duration(hours: 1).inMilliseconds}';
+          continue;
+        }
+        retry.remove(slice[index].id);
         await library.cacheGeneratedCover(
           workId: slice[index].id,
           bytes: bytes,
@@ -181,6 +192,7 @@ final class FundusCatalogueMirror {
         );
       }
     }
+    await library.saveMirrorState('$sourceId-cover-retry', retry);
   }
 
   Future<Uint8List?> _cover(String workId) async {

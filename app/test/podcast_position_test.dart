@@ -39,7 +39,7 @@ void main() {
 
   tearDown(() async {
     controller.dispose();
-    library.close();
+    await library.shutdown();
     await root.delete(recursive: true);
   });
 

@@ -66,6 +66,38 @@ final class WorkPropertyDefinition {
   /// In welcher Reihenfolge die Felder stehen.
   final int position;
 
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'media_kind': mediaKind,
+    'name': name,
+    'value_type': valueType.name,
+    'options': options,
+    'protected': protected,
+    'position': position,
+  };
+
+  static WorkPropertyDefinition? fromJson(Object? value) {
+    if (value is! Map ||
+        value['id'] is! String ||
+        value['name'] is! String ||
+        value['media_kind'] is! String) {
+      return null;
+    }
+    final type = PropertyValueType.byName('${value['value_type']}');
+    if (type == null || (value['name'] as String).trim().isEmpty) return null;
+    return WorkPropertyDefinition(
+      id: value['id'] as String,
+      mediaKind: value['media_kind'] as String,
+      name: value['name'] as String,
+      valueType: type,
+      protected: value['protected'] == true,
+      position: value['position'] is int ? value['position'] as int : 0,
+      options: value['options'] is List
+          ? (value['options'] as List).whereType<String>().toList()
+          : const [],
+    );
+  }
+
   WorkPropertyDefinition copyWith({
     String? name,
     PropertyValueType? valueType,

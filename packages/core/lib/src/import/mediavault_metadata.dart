@@ -205,7 +205,7 @@ final class MediaVaultMetadataReader {
 
   static Map<String, String> _sourceLinks(String? notes, [Object? raw]) {
     final links = <String, String>{};
-    final text = [if (notes != null) notes, ..._flattenText(raw)].join(' ');
+    final text = [?notes, ..._flattenText(raw)].join(' ');
     final urls = RegExp(r'https?://[^\s<>"“”]+', caseSensitive: false)
         .allMatches(text)
         .map((match) => match.group(0)!.replaceFirst(RegExp(r'[.,;]+$'), ''));

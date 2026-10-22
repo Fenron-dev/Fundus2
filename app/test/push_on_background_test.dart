@@ -54,6 +54,7 @@ void main() {
   tearDown(() async {
     reader.dispose();
     sync.dispose();
+    await library.library?.flushSidecarWrites();
     library.dispose();
     await root.delete(recursive: true);
   });
@@ -100,11 +101,14 @@ void main() {
 
     // Zum anderen Gerät wechseln, ohne etwas zu schließen. Der
     // Zustandsautomat lässt keinen Sprung zu: erst inaktiv, dann weg.
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    // Dieser Zeitgeber entsteht in der Testuhr, also wird sie vorgestellt.
-    await tester.pump(const Duration(seconds: 3));
+    await tester.runAsync(() async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await library.library!.flushSidecarWrites();
+      await Future<void>.delayed(const Duration(milliseconds: 2200));
+    });
+    await tester.pump();
 
     expect(sync.pushed, [library.works.first.id]);
   });

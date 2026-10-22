@@ -61,6 +61,7 @@ void main() {
     fullscreen.dispose();
     reader.dispose();
     player.dispose();
+    await library.library?.flushSidecarWrites();
     library.dispose();
     await root.delete(recursive: true);
   });

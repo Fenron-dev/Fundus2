@@ -79,6 +79,7 @@ void main() {
 
   tearDown(() async {
     peers.dispose();
+    await library.library?.flushSidecarWrites();
     library.dispose();
     await socket.close(force: true);
     registry.unregister(theirs.manifest.libraryId);

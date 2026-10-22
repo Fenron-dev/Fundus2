@@ -101,7 +101,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
       title: 'Serverwartung',
       subtitle:
           'Was der Bestand belegt, was gerade läuft und was sich aufräumen '
-          'lässt. Nichts davon ist unersetzlich.',
+          'lässt. Persönliche Daten vor dem Aufräumen sichern.',
       children: [
         _Situation(warnings: loud.length, entries: recent.length),
         _Stock(
@@ -123,6 +123,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
           onRemoveOrphans: _removeOrphans,
           onCompact: _compact,
           onBackup: _backup,
+          onRestore: _restore,
         ),
         _Journal(entries: recent, loud: loud),
       ],
@@ -211,28 +212,55 @@ class _MaintenancePageState extends State<MaintenancePage> {
   Future<void> _backup() async {
     final vault = FundusScope.of(context).library.library;
     if (vault == null) return;
-    final source = File(
-      p.join(
-        vault.root.path,
-        FundusLibrary.metadataDirectoryName,
-        FundusLibrary.databaseFileName,
-      ),
-    );
-    if (!source.existsSync()) return;
     final stamp = DateTime.now().toIso8601String().substring(0, 10);
     final target = await FilePicker.saveFile(
-      dialogTitle: 'Katalog sichern',
-      fileName: 'fundus-katalog-$stamp.db',
+      dialogTitle:
+          'Persönliche Bibliotheksdaten sichern (enthält private Daten)',
+      fileName: 'fundus-sicherung-$stamp.zip',
     );
     if (target == null || !mounted) return;
     setState(() => _working = true);
     try {
-      await source.copy(target);
+      await vault.backupTo(File(target));
       if (!mounted) return;
       setState(() => _message = 'Katalog gesichert: ${p.basename(target)}');
     } on Object catch (error) {
       if (!mounted) return;
       setState(() => _message = 'Ging nicht: $error');
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _restore() async {
+    final picked = await FilePicker.pickFiles(
+      dialogTitle: 'Fundus-Sicherung auswählen',
+    );
+    final file = picked?.files.single.path;
+    if (file == null || !mounted) return;
+    final parent = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Zielordner wählen – es wird ein neuer Unterordner angelegt',
+    );
+    if (parent == null || !mounted) return;
+    setState(() => _working = true);
+    try {
+      final restored = await FundusLibrary.restoreBackup(
+        File(file),
+        Directory(parent),
+      );
+      if (mounted) {
+        setState(
+          () => _message =
+              'Daten geprüft und wiederhergestellt: ${restored.path}. Mediendateien sind nicht Teil der Sicherung: die ursprünglichen Medienordner mit denselben relativen Pfaden hierher kopieren. Bestehende Vaults wurden nicht verändert.',
+        );
+      }
+    } on Object {
+      if (mounted) {
+        setState(
+          () => _message =
+              'Sicherung konnte nicht wiederhergestellt werden. Die bestehenden Bibliotheken sind unverändert.',
+        );
+      }
     } finally {
       if (mounted) setState(() => _working = false);
     }
@@ -627,6 +655,7 @@ class _Tasks extends StatelessWidget {
     required this.onRemoveOrphans,
     required this.onCompact,
     required this.onBackup,
+    required this.onRestore,
   });
 
   final ({int missingFiles, int emptyWorks}) orphans;
@@ -639,6 +668,7 @@ class _Tasks extends StatelessWidget {
   final Future<void> Function() onRemoveOrphans;
   final Future<void> Function() onCompact;
   final Future<void> Function() onBackup;
+  final Future<void> Function() onRestore;
 
   @override
   Widget build(BuildContext context) {
@@ -674,12 +704,20 @@ class _Tasks extends StatelessWidget {
           ),
           _Task(
             icon: FundusIcons.downloads,
-            title: 'Katalog sichern',
+            title: 'Bibliotheksdaten sichern',
             body:
-                'Stände, Notizen, Zuordnungen — ohne die Mediendateien. '
+                'Stände, Notizen, Bewertungen, Personenbilder und eigene Felder – ohne Mediendateien und Zugangsschlüssel. Die Sicherung enthält private Daten. '
                 '${formatBytes(catalogueBytes)}.',
             action: 'Sichern',
             onPressed: working || vault == null ? null : onBackup,
+          ),
+          _Task(
+            icon: FundusIcons.folder,
+            title: 'Sicherung wiederherstellen',
+            body:
+                'Prüft die Sicherung und legt einen neuen Vault-Ordner an. Überschreibt keine bestehenden Daten. Medien anschließend separat zurückkopieren.',
+            action: 'Wiederherstellen',
+            onPressed: working ? null : onRestore,
           ),
           _Task(
             icon: FundusIcons.folder,

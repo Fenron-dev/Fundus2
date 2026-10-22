@@ -158,7 +158,7 @@ void main() {
 
   tearDown(() async {
     controller.dispose();
-    library.close();
+    await library.shutdown();
     await root.delete(recursive: true);
   });
 
@@ -170,6 +170,24 @@ void main() {
     expect(engine.opened, hasLength(1));
     expect(engine.playing, isTrue);
   });
+
+  test(
+    'running playback writes to the recovered vault without losing its position',
+    () async {
+      await controller.open(library, work);
+      final previous = library;
+      library = await FundusLibrary.open(root);
+      await previous.shutdown();
+      controller.rebindLibrary(library);
+      engine.emitDuration(const Duration(minutes: 40));
+      engine.emitPosition(const Duration(minutes: 12));
+      await Future<void>.delayed(Duration.zero);
+      controller.saveProgress(checkpoint: true);
+      await library.flushSidecarWrites();
+      expect(library.loadProgress(work.id)?.position.numericValue, 720);
+      expect(controller.position, const Duration(minutes: 12));
+    },
+  );
 
   test('der Fortschritt landet in der Bibliothek und kommt zurück', () async {
     await controller.open(library, work);

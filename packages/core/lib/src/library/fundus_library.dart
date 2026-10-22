@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
+import 'package:archive/archive_io.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
@@ -98,7 +102,14 @@ final class FundusLibrary {
   /// the first rename moved it away and the second failed with a missing
   /// file, which on a slow machine cost the setting that was just made.
   Future<void> _sidecarWrites = Future.value();
+  // Own the I/O scheduler for the lifetime of the handle. A gesture/test
+  // zone may disappear before a queued checkpoint runs; the queue must not
+  // depend on that UI zone to advance during shutdown.
+  final Zone _ioZone = Zone.current;
   int _sidecarCounter = 0;
+  Object? lastSidecarError;
+  final Set<String> _deletedPropertyDefinitions = {};
+  bool _closed = false;
 
   static const metadataDirectoryName = '.library';
   static const manifestFileName = 'version.json';
@@ -115,6 +126,11 @@ final class FundusLibrary {
   final FundusDatabase _database;
 
   bool get isReadOnly => openMode != LibraryOpenMode.readWrite;
+  int get catalogueRevision => _database.catalogueRevision;
+  List<String> missingRemoteCovers(String sourceId) =>
+      _database.missingRemoteCovers(sourceId);
+  bool remoteCoverStateUnknown(String sourceId) =>
+      _database.remoteCoverStateUnknown(sourceId);
 
   static Future<FundusLibrary> create(
     Directory root, {
@@ -171,6 +187,7 @@ final class FundusLibrary {
     );
     if (compatibility.mode == LibraryOpenMode.readWrite) {
       library._registerAsSource();
+      await library._importPropertyDefinitions();
     }
     return library;
   }
@@ -239,11 +256,15 @@ final class FundusLibrary {
     Set<String>? keepIds,
   }) {
     _ensureWritable();
-    return _database.mirrorRemoteCatalogue(
+    final report = _database.mirrorRemoteCatalogue(
       sourceId: sourceId,
       works: works,
       keepIds: keepIds,
     );
+    for (final work in works) {
+      importWorkProperties(work.id, work.properties);
+    }
+    return report;
   }
 
   /// Consolidates two historical identities of the same remote library.
@@ -303,6 +324,35 @@ final class FundusLibrary {
     } on FileSystemException {
       return const {};
     }
+  }
+
+  Future<List<MetadataImportConflict>> loadPendingMetadataConflicts() async {
+    final file = File(p.join(root.path, '_fundus', 'metadata-conflicts.json'));
+    try {
+      if (!await file.exists()) return const [];
+      final value = jsonDecode(await file.readAsString());
+      if (value is! Map || value['conflicts'] is! List) return const [];
+      return [
+        for (final raw in value['conflicts'] as List)
+          ?MetadataImportConflict.fromJson(raw),
+      ];
+    } on Object catch (error) {
+      lastSidecarError = error;
+      return const [];
+    }
+  }
+
+  Future<void> savePendingMetadataConflicts(
+    List<MetadataImportConflict> conflicts,
+  ) async {
+    if (isReadOnly) return;
+    await _writeSidecar(
+      File(p.join(root.path, '_fundus', 'metadata-conflicts.json')),
+      jsonEncode({
+        'format_version': 1,
+        'conflicts': conflicts.map((c) => c.toJson()).toList(),
+      }),
+    );
   }
 
   Future<void> saveMirrorState(
@@ -733,25 +783,175 @@ final class FundusLibrary {
   /// the file back — waits here rather than guessing at a delay.
   Future<void> flushSidecarWrites() => _sidecarWrites;
 
+  /// All personal/catalogue data and application pictures, but no media and
+  /// no installation secrets. The backup itself contains private information.
+  Future<void> backupTo(File target) async {
+    await flushSidecarWrites();
+    if (p.isWithin(root.path, target.absolute.path)) {
+      throw ArgumentError(
+        'Bitte die Sicherung außerhalb des Vaults speichern.',
+      );
+    }
+    final staging = await Directory.systemTemp.createTemp('fundus-backup-');
+    try {
+      final snapshot = File(p.join(staging.path, 'index.db'));
+      _database.snapshotTo(snapshot.path);
+      final zip = ZipFileEncoder();
+      final packed = File(p.join(staging.path, 'backup.zip'));
+      zip.create(packed.path);
+      try {
+        await zip.addFile(snapshot, '.library/index.db');
+        final roots = <String>{'.library', '_fundus'};
+        for (final work in _database.listWorks(includeMissing: true)) {
+          if (work.sourceId == FundusDatabase.localSourceId) {
+            roots.add(
+              p.relative(
+                _workSidecarDirectory(work.sourcePath).path,
+                from: root.path,
+              ),
+            );
+          }
+        }
+        final added = <String>{'.library/index.db'};
+        for (final relative in roots) {
+          final directory = Directory(p.join(root.path, relative));
+          if (!p.isWithin(root.path, directory.absolute.path) ||
+              !await directory.exists()) {
+            continue;
+          }
+          await for (final entity in directory.list(
+            recursive: true,
+            followLinks: false,
+          )) {
+            if (entity is! File) continue;
+            final name = p
+                .relative(entity.path, from: root.path)
+                .replaceAll('\\', '/');
+            if (!added.add(name) ||
+                name.endsWith('-wal') ||
+                name.endsWith('-shm') ||
+                name.endsWith('.part')) {
+              continue;
+            }
+            await zip.addFile(entity, name);
+          }
+        }
+      } finally {
+        zip.close();
+      }
+      await packed.copy(target.path);
+    } finally {
+      await staging.delete(recursive: true);
+    }
+  }
+
+  /// Restores into a newly created child directory only. Existing vaults and
+  /// media are never overwritten. Move/copy the original media folders into
+  /// this vault afterwards, retaining their relative paths.
+  static Future<Directory> restoreBackup(File backup, Directory parent) async {
+    final restored = await parent.createTemp('fundus-restored-');
+    InputFileStream? input;
+    try {
+      if (await backup.length() > 2 * 1024 * 1024 * 1024) {
+        throw const FormatException('Die Sicherung ist zu groß.');
+      }
+      input = InputFileStream(backup.path);
+      final archive = ZipDecoder().decodeStream(input, verify: true);
+      if (archive.length > 100000) {
+        throw const FormatException('Die Sicherung enthält zu viele Einträge.');
+      }
+      var size = 0;
+      final names = <String>{};
+      for (final entry in archive) {
+        final name = p.posix.normalize(entry.name.replaceAll('\\', '/'));
+        size += entry.size;
+        final allowed =
+            name.startsWith('.library/') ||
+            name.startsWith('_fundus/') ||
+            name.contains('/_fundus/');
+        if (!allowed ||
+            p.posix.isAbsolute(name) ||
+            name.split('/').contains('..') ||
+            name.contains(':') ||
+            entry.isSymbolicLink ||
+            !names.add(name) ||
+            size > 2 * 1024 * 1024 * 1024) {
+          throw const FormatException(
+            'Die Sicherung enthält ungültige Einträge oder ist zu groß.',
+          );
+        }
+        if (!entry.isFile) continue;
+        final target = File(p.join(restored.path, p.fromUri(name)));
+        if (!p.isWithin(restored.path, target.path)) {
+          throw const FormatException('Ungültiger Sicherungspfad.');
+        }
+        await target.parent.create(recursive: true);
+        final output = OutputFileStream(target.path);
+        try {
+          entry.writeContent(output);
+        } finally {
+          output.close();
+        }
+      }
+      final manifest = await LibraryManifest.read(_manifestFile(restored));
+      if (manifest.compatibility().mode == LibraryOpenMode.incompatible) {
+        throw const FormatException(
+          'Die Sicherung benötigt eine neuere Fundus-Version.',
+        );
+      }
+      final db = sqlite.sqlite3.open(
+        _databaseFile(restored).path,
+        mode: sqlite.OpenMode.readOnly,
+      );
+      try {
+        if (db.userVersion > FundusDatabase.schemaVersion ||
+            db.select('PRAGMA integrity_check').single.values.single != 'ok') {
+          throw const FormatException(
+            'Die gesicherte Datenbank ist beschädigt oder zu neu.',
+          );
+        }
+      } finally {
+        db.close();
+      }
+      return restored;
+    } on Object {
+      await restored.delete(recursive: true);
+      rethrow;
+    } finally {
+      input?.close();
+    }
+  }
+
   /// Writes [contents] to [file] so that a reader never sees half of it, and
   /// so that a second writer cannot pull the ground away.
   Future<void> _writeSidecar(File file, String contents) {
-    final operation = _sidecarWrites.then((_) async {
+    return _queueSidecar(() async {
       await file.parent.create(recursive: true);
       // A name of its own per write: a shared one is what let two writers
       // collide in the first place.
-      final partial = File('${file.path}.${_sidecarCounter++}.part');
+      final partial = File(
+        '${file.path}.$pid.${DateTime.now().microsecondsSinceEpoch}.${_sidecarCounter++}.part',
+      );
       try {
         await partial.writeAsString(contents, flush: true);
-        if (await file.exists()) await file.delete();
+        // File.rename replaces an existing file; deleting it first created
+        // a data-loss window if the share disappeared between both calls.
         await partial.rename(file.path);
       } finally {
         if (await partial.exists()) await partial.delete();
       }
     });
+  }
+
+  Future<void> _queueSidecar(Future<void> Function() write) {
+    final operation = _ioZone.run(() => _sidecarWrites.then((_) => write()));
     // The chain must survive a failed write, or one error would block every
     // later setting.
-    _sidecarWrites = operation.catchError((Object _) {});
+    _sidecarWrites = _ioZone.run(
+      () => operation.catchError((Object error) {
+        lastSidecarError = error;
+      }),
+    );
     return operation;
   }
 
@@ -1081,8 +1281,13 @@ final class FundusLibrary {
     required String deviceKey,
     required String readerKind,
     required Map<String, Object?> profile,
-  }) async {
+  }) => _queueSidecar(() async {
     _ensureWritable();
+    if (utf8.encode(jsonEncode(profile)).length > 8192 ||
+        deviceKey.length > 128 ||
+        readerKind.length > 32) {
+      throw const FormatException('Leseprofil ist zu groß.');
+    }
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return;
     final directory = _workSidecarDirectory(sourcePath);
@@ -1107,6 +1312,10 @@ final class FundusLibrary {
     final device = devices[deviceKey] is Map
         ? Map<String, Object?>.from(devices[deviceKey] as Map)
         : <String, Object?>{};
+    if (!devices.containsKey(deviceKey) && devices.length >= 64 ||
+        !device.containsKey(readerKind) && device.length >= 12) {
+      throw const FormatException('Zu viele Leseprofile.');
+    }
     device[readerKind] = profile;
     devices[deviceKey] = device;
     values['devices'] = devices;
@@ -1115,9 +1324,8 @@ final class FundusLibrary {
       '${const JsonEncoder.withIndent('  ').convert(values)}\n',
       flush: true,
     );
-    if (await file.exists()) await file.delete();
     await partial.rename(file.path);
-  }
+  });
 
   LibraryPlaybackProgress? loadProgress(String workId) =>
       _database.loadProgress(workId);
@@ -1324,8 +1532,10 @@ final class FundusLibrary {
           );
           _writeSidecar(
             sidecar,
-            '${const JsonEncoder.withIndent('  ').convert({'format_version': 1, 'file_path': relativePath, 'position': result.position.toJson(), 'finished': result.finished, 'updated_at': result.updatedAt.toUtc().toIso8601String(), 'device_id': result.deviceId, 'device_name': result.deviceName})}\n',
-          );
+            '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'file_path': relativePath, 'work_file_path': p.posix.relative(relativePath, from: sourcePath), 'position': result.position.toJson(), 'finished': result.finished, 'updated_at': result.updatedAt.toUtc().toIso8601String(), 'device_id': result.deviceId, 'device_name': result.deviceName})}\n',
+          ).catchError((Object error) {
+            lastSidecarError = error;
+          });
         }
       }
     }
@@ -1719,7 +1929,7 @@ final class FundusLibrary {
     String? id,
   }) async {
     _ensureWritable();
-    return _database.savePropertyDefinition(
+    final result = _database.savePropertyDefinition(
       mediaKind: mediaKind,
       name: name,
       valueType: valueType,
@@ -1728,11 +1938,15 @@ final class FundusLibrary {
       position: position,
       id: id,
     );
+    await _writePropertyDefinitions();
+    return result;
   }
 
   Future<void> deletePropertyDefinition(String id) async {
     _ensureWritable();
     _database.deletePropertyDefinition(id);
+    _deletedPropertyDefinitions.add(id);
+    await _writePropertyDefinitions();
   }
 
   Map<String, WorkPropertyValue> loadWorkProperties(String workId) =>
@@ -1750,6 +1964,107 @@ final class FundusLibrary {
       definitionId: definitionId,
       value: value,
       source: source,
+    );
+    if (_usesPortableSidecars(workId)) await _writeMetadataSidecar(workId);
+  }
+
+  Future<void> _writePropertyDefinitions() => _writeSidecar(
+    File(p.join(root.path, '_fundus', 'property-definitions.json')),
+    jsonEncode({
+      'format_version': 1,
+      'definitions': [
+        for (final definition in _database.listPropertyDefinitions())
+          definition.toJson(),
+      ],
+      'deleted': _deletedPropertyDefinitions.toList(),
+    }),
+  );
+
+  List<Map<String, Object?>> exportWorkProperties(
+    String workId, {
+    bool includeProtected = false,
+  }) {
+    final values = _database.loadWorkProperties(workId);
+    return [
+      for (final definition in _database.listPropertyDefinitions(
+        includeProtected: includeProtected,
+      ))
+        if (values[definition.id] case final value?)
+          {
+            'definition': definition.toJson(),
+            'value': value.value,
+            'source': value.source,
+            'updated_at': value.updatedAt?.toUtc().toIso8601String(),
+          },
+    ];
+  }
+
+  void importWorkProperties(String workId, Object? encoded) {
+    if (encoded is! List) return;
+    final existing = _database.loadWorkProperties(workId);
+    for (final raw in encoded) {
+      if (raw is! Map) continue;
+      try {
+        final definition = _adoptPropertyDefinition(raw['definition']);
+        final value = raw['value'];
+        if (definition == null ||
+            value == null ||
+            !WorkPropertyValue.fits(definition.valueType, value)) {
+          continue;
+        }
+        if (existing[definition.id] != null) continue;
+        _database.setWorkProperty(
+          workId: workId,
+          definitionId: definition.id,
+          value: value,
+          source: raw['source'] is String ? raw['source'] as String : 'sidecar',
+        );
+      } on Object catch (error) {
+        lastSidecarError = error;
+      }
+    }
+  }
+
+  Future<void> _importPropertyDefinitions() async {
+    final file = File(
+      p.join(root.path, '_fundus', 'property-definitions.json'),
+    );
+    try {
+      if (!await file.exists()) return;
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map || decoded['definitions'] is! List) return;
+      if (decoded['deleted'] is List) {
+        _deletedPropertyDefinitions.addAll(
+          (decoded['deleted'] as List).whereType<String>(),
+        );
+      }
+      for (final raw in decoded['definitions'] as List) {
+        _adoptPropertyDefinition(raw);
+      }
+    } on Object catch (error) {
+      lastSidecarError = error;
+    }
+  }
+
+  WorkPropertyDefinition? _adoptPropertyDefinition(Object? raw) {
+    final definition = WorkPropertyDefinition.fromJson(raw);
+    if (definition == null) return null;
+    if (_deletedPropertyDefinitions.contains(definition.id)) return null;
+    final existing = _database
+        .listPropertyDefinitions()
+        .where((d) => d.id == definition.id)
+        .firstOrNull;
+    // A copied sidecar may not silently change an existing field's type or
+    // remove its protection. Keep its definition and validate the value.
+    if (existing != null) return existing;
+    return _database.savePropertyDefinition(
+      id: definition.id,
+      mediaKind: definition.mediaKind,
+      name: definition.name,
+      valueType: definition.valueType,
+      options: definition.options,
+      protected: definition.protected,
+      position: definition.position,
     );
   }
 
@@ -1924,7 +2239,7 @@ final class FundusLibrary {
     String bookmarkId,
   ) async {
     _ensureWritable();
-    _database.deleteBookmark(bookmarkId);
+    _database.deleteBookmark(workId, bookmarkId);
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
@@ -1960,7 +2275,7 @@ final class FundusLibrary {
     String highlightId,
   ) async {
     _ensureWritable();
-    _database.deleteHighlight(highlightId);
+    _database.deleteHighlight(workId, highlightId);
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
@@ -2022,6 +2337,7 @@ final class FundusLibrary {
       throw StateError('Die Bibliothek ist schreibgeschützt.');
     }
     final delta = !full && !await _folderAssignmentChanged();
+    await _importPropertyDefinitions();
     final scope = subtree == null || subtree.trim().isEmpty
         ? null
         : p.posix.joinAll(MediaAreaMap.splitPath(subtree));
@@ -2776,7 +3092,17 @@ final class FundusLibrary {
   /// Ob der Katalog dieser Bibliothek noch antwortet.
   bool get isUsable => _database.isUsable;
 
-  void close() => _database.close();
+  /// Used by application lifecycle transitions before releasing a vault.
+  Future<void> shutdown() async {
+    await flushSidecarWrites();
+    close();
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _database.close();
+  }
 
   void _ensureWritable() {
     if (isReadOnly) {
@@ -3028,7 +3354,7 @@ final class FundusLibrary {
     if (!await file.exists()) return;
     final decoded = jsonDecode(await file.readAsString());
     if (decoded is! Map) throw const FormatException('Ungültiger Fortschritt.');
-    if (decoded['format_version'] != 1) {
+    if (decoded['format_version'] != 1 && decoded['format_version'] != 2) {
       throw const FormatException('Nicht unterstützte Fortschrittsversion.');
     }
     final path = decoded['file_path'];
@@ -3042,8 +3368,32 @@ final class FundusLibrary {
         updatedAt == null) {
       throw const FormatException('Unvollständiger Fortschritt.');
     }
+    if (updatedAt.isAfter(
+      DateTime.now().toUtc().add(const Duration(minutes: 1)),
+    )) {
+      return;
+    }
     final tracks = playbackTracks(workId);
-    final track = tracks.where((item) => item.relativePath == path).firstOrNull;
+    final workFile = decoded['work_file_path'];
+    final track =
+        tracks
+            .where(
+              (item) =>
+                  item.relativePath == path ||
+                  workFile is String &&
+                      p.posix.relative(item.relativePath, from: sourcePath) ==
+                          workFile,
+            )
+            .firstOrNull ??
+        (decoded['format_version'] == 1
+            ? tracks
+                  .where(
+                    (item) =>
+                        p.posix.basename(item.relativePath) ==
+                        p.posix.basename(path),
+                  )
+                  .singleOrNull
+            : null);
     if (track == null) return;
     final stored = loadProgress(workId);
     if (stored != null && !updatedAt.isAfter(stored.updatedAt)) return;
@@ -3065,10 +3415,10 @@ final class FundusLibrary {
   }
 
   Future<void> _writeMetadataSidecar(String workId) async {
+    if (!_usesPortableSidecars(workId)) return;
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return;
     final directory = _workSidecarDirectory(sourcePath);
-    await directory.create(recursive: true);
     final annotations = loadAnnotations(workId);
     // Ein einzelnes Werk, nicht der ganze Katalog: dieser Schreiber läuft
     // während des Scans einmal je indexiertem Werk, und `listWorks()` las
@@ -3077,7 +3427,8 @@ final class FundusLibrary {
     // Metadaten behalten.
     final work = workSummary(workId);
     if (work == null) return;
-    await File(p.join(directory.path, 'meta.yaml')).writeAsString(
+    await _writeSidecar(
+      File(p.join(directory.path, 'meta.yaml')),
       '${const JsonEncoder.withIndent('  ').convert({
         'format_version': 4,
         'work_id': workId,
@@ -3109,8 +3460,8 @@ final class FundusLibrary {
           for (final entry in work.metadataOrigins.entries) entry.key: {'source': entry.value.source.name, 'updated_at': entry.value.updatedAt.toUtc().toIso8601String()},
         },
         'tags': annotations.tags,
+        'properties': exportWorkProperties(workId, includeProtected: true),
       })}\n',
-      flush: true,
     );
   }
 
@@ -3145,6 +3496,7 @@ final class FundusLibrary {
     if (await metaFile.exists()) {
       final value = loadYaml(await metaFile.readAsString());
       if (value is Map) {
+        importWorkProperties(workId, value['properties']);
         if (annotations.tags.isEmpty && value['tags'] is List) {
           _database.replaceWorkTags(
             workId,
@@ -3469,7 +3821,8 @@ final class FundusLibrary {
   }
 
   bool _usesPortableSidecars(String workId) =>
-      listWorks(includeMissing: true).any((work) => work.id == workId);
+      !_closed &&
+      _database.workSummary(workId)?.sourceId == FundusDatabase.localSourceId;
 
   static File _manifestFile(Directory root) =>
       File('${root.path}/$metadataDirectoryName/$manifestFileName');

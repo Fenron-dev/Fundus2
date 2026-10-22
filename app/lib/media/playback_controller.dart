@@ -215,6 +215,14 @@ class PlaybackController extends ChangeNotifier {
 
   WorkView? get work => _work;
 
+  /// A host can recover the same vault while media remains open. Retain the
+  /// live reading/playback position, but stop writing to the old DB handle.
+  void rebindLibrary(FundusLibrary library) {
+    if (_library?.manifest.libraryId == library.manifest.libraryId) {
+      _library = library;
+    }
+  }
+
   /// Der Name der laufenden Liste, wo eine läuft.
   String? get queueName => _queueName;
 

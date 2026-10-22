@@ -549,11 +549,23 @@ final class FundusRemoteClient {
       series: value['series'] is String ? value['series'] as String : null,
       seriesSequence: (value['series_sequence'] as num?)?.toDouble(),
       hasCover: value['has_cover'] == true,
+      properties: value['properties'] is List
+          ? (value['properties'] as List).cast<Object?>()
+          : const [],
       tags: [
         if (value['tags'] case final List tags)
           for (final tag in tags) '$tag',
       ],
       metadata: {
+        for (final key in [
+          'authors',
+          'alternate_titles',
+          'external_ids',
+          'publication_status',
+          'personal_status',
+          'content_style',
+        ])
+          if (value[key] != null) key: value[key],
         if (value['language'] != null) 'language': value['language'],
         if (value['description'] != null) 'description': value['description'],
         if (value['publisher'] != null) 'publisher': value['publisher'],

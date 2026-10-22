@@ -157,6 +157,7 @@ void main() {
 
     tearDown(() async {
       reader.dispose();
+      await library.library?.flushSidecarWrites();
       library.dispose();
       await root.delete(recursive: true);
     });

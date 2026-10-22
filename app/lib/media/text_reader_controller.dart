@@ -178,6 +178,15 @@ class TextReaderController extends ChangeNotifier {
   String? _failure;
 
   WorkView? get work => _work;
+
+  /// A host can recover the same vault while media remains open. Retain the
+  /// live reading/playback position, but stop writing to the old DB handle.
+  void rebindLibrary(FundusLibrary library) {
+    if (_library?.manifest.libraryId == library.manifest.libraryId) {
+      _library = library;
+    }
+  }
+
   List<LibraryPlaybackTrack> get volumes => _volumes;
   int get volumeIndex => _volumeIndex;
   LibraryPlaybackTrack? get currentVolume =>

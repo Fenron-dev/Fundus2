@@ -163,8 +163,12 @@ final class FundusPairingAuthority {
       cancel();
       throw const FundusPairingException(FundusPairingFailure.locked);
     }
-    if (!_constantTimeEquals(nonce, session.nonce) ||
-        !_constantTimeEquals(pin, session.pin)) {
+    // The nonce identifies the pending invitation. Unrelated LAN requests
+    // must not consume its PIN attempts and cancel another person's pairing.
+    if (!_constantTimeEquals(nonce, session.nonce)) {
+      throw const FundusPairingException(FundusPairingFailure.invalid);
+    }
+    if (!_constantTimeEquals(pin, session.pin)) {
       _failedAttempts++;
       if (_failedAttempts >= 5) _session = null;
       throw FundusPairingException(

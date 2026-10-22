@@ -8,6 +8,8 @@ import 'package:fundus/metadata/metadata_providers.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 
+const _testJpeg = <int>[0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0];
+
 /// Ein Dienst, der antwortet, was der Test ihm sagt — und mitschreibt, was
 /// gefragt wurde.
 final class FakeHttp extends http.BaseClient {
@@ -330,9 +332,7 @@ void main() {
     });
 
     test('Titel, Jahr und Bild landen am Werk', () async {
-      final client = FakeHttp(
-        (_) => http.Response.bytes(List.filled(32, 7), 200),
-      );
+      final client = FakeHttp((_) => http.Response.bytes(_testJpeg, 200));
 
       final result = await applyMetadata(
         library: library,
@@ -413,9 +413,7 @@ void main() {
     );
 
     test('ein Breitbild wird neben dem Titelbild abgelegt', () async {
-      final client = FakeHttp(
-        (_) => http.Response.bytes(List.filled(32, 9), 200),
-      );
+      final client = FakeHttp((_) => http.Response.bytes(_testJpeg, 200));
 
       final result = await applyMetadata(
         library: library,
@@ -447,9 +445,7 @@ void main() {
       final withCover = WorkView.fromSummary(
         library.listWorks().firstWhere((entry) => entry.title == 'Mit Bild'),
       );
-      final client = FakeHttp(
-        (_) => http.Response.bytes(List.filled(32, 7), 200),
-      );
+      final client = FakeHttp((_) => http.Response.bytes(_testJpeg, 200));
 
       final result = await applyMetadata(
         library: library,
@@ -468,9 +464,7 @@ void main() {
     });
 
     test('ein geholtes Bild darf ein besseres bekommen', () async {
-      final client = FakeHttp(
-        (_) => http.Response.bytes(List.filled(32, 7), 200),
-      );
+      final client = FakeHttp((_) => http.Response.bytes(_testJpeg, 200));
       const candidate = MetadataCandidate(
         provider: 'anilist',
         providerId: '1',
@@ -615,7 +609,7 @@ void main() {
                     'content-type': 'application/rss+xml; charset=utf-8',
                   },
                 )
-              : http.Response.bytes(List.filled(32, 7), 200),
+              : http.Response.bytes(_testJpeg, 200),
         );
 
         final result = await applyMetadata(
@@ -678,7 +672,7 @@ void main() {
                 200,
                 headers: {'content-type': 'application/rss+xml; charset=utf-8'},
               )
-            : http.Response.bytes(List.filled(32, 7), 200),
+            : http.Response.bytes(_testJpeg, 200),
       );
 
       final workId = library.listWorks().single.id;

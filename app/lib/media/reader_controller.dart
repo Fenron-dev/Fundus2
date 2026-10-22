@@ -69,6 +69,8 @@ class ReaderController extends ChangeNotifier {
 
   /// Pages whose unpacking is under way, so a scroll does not ask twice.
   final Set<String> _pending = {};
+  bool _disposed = false;
+  int _sourceEpoch = 0;
 
   PublicationReaderProfile _profile = const PublicationReaderProfile();
   List<LibraryBookmark> _bookmarks = const [];
@@ -80,6 +82,15 @@ class ReaderController extends ChangeNotifier {
   String? _failure;
 
   WorkView? get work => _work;
+
+  /// A host can recover the same vault while media remains open. Retain the
+  /// live reading/playback position, but stop writing to the old DB handle.
+  void rebindLibrary(FundusLibrary library) {
+    if (_library?.manifest.libraryId == library.manifest.libraryId) {
+      _library = library;
+    }
+  }
+
   List<LibraryPlaybackTrack> get volumes => _volumes;
   int get volumeIndex => _volumeIndex;
   LibraryPlaybackTrack? get currentVolume =>
@@ -339,6 +350,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> _openVolume(int index, {int page = 0}) async {
+    final epoch = ++_sourceEpoch;
     _busy = true;
     _failure = null;
     _pages = const [];
@@ -353,8 +365,15 @@ class ReaderController extends ChangeNotifier {
       _files.clear();
       _pending.clear();
       final volume = _volumes[index];
-      _source = await _openVolumeSource(volume);
-      _pages = await _source!.pages();
+      final source = await _openVolumeSource(volume);
+      if (_disposed || !_open || epoch != _sourceEpoch) {
+        await source.dispose();
+        return;
+      }
+      _source = source;
+      final pages = await source.pages();
+      if (_disposed || !_open || epoch != _sourceEpoch) return;
+      _pages = pages;
       span.done({'pages': _pages.length});
       _volumeIndex = index;
       if (_pages.isEmpty) {
@@ -366,6 +385,7 @@ class ReaderController extends ChangeNotifier {
       _pageIndex = page.clamp(0, _pages.length - 1);
       await _ensurePagesAround(_pageIndex);
     } on Object catch (error) {
+      if (_disposed || epoch != _sourceEpoch) return;
       _failure = error.toString();
       _pages = const [];
     }
@@ -391,13 +411,18 @@ class ReaderController extends ChangeNotifier {
     if (wanted.isEmpty) return;
     _pending.addAll(wanted.map((page) => page.id));
     try {
-      _files.addAll(await source.materialize(wanted));
+      final files = await source.materialize(wanted);
+      if (_disposed || !identical(source, _source)) return;
+      _files.addAll(files);
     } on Object catch (error) {
+      if (_disposed || !identical(source, _source)) return;
       _failure = error.toString();
     } finally {
-      _pending.removeAll(wanted.map((page) => page.id));
+      if (identical(source, _source)) {
+        _pending.removeAll(wanted.map((page) => page.id));
+      }
     }
-    notifyListeners();
+    if (!_disposed && identical(source, _source)) notifyListeners();
   }
 
   /// Asks for a page that scrolled into view. Continuous layouts reach far
@@ -638,13 +663,21 @@ class ReaderController extends ChangeNotifier {
   /// Leaves the reader, keeping the work so the shell can show where it was.
   void close() {
     saveProgress(checkpoint: true);
+    _sourceEpoch++;
     _open = false;
+    final source = _source;
+    _source = null;
+    _files.clear();
+    _pending.clear();
+    unawaited(source?.dispose());
     notifyListeners();
   }
 
   @override
   void dispose() {
     saveProgress(checkpoint: true);
+    _disposed = true;
+    _sourceEpoch++;
     unawaited(_source?.dispose());
     super.dispose();
   }

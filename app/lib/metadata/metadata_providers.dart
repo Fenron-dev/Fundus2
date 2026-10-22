@@ -35,7 +35,10 @@ String _networkMessage(Object error) {
       text.contains('HandshakeException')) {
     return 'TLS-Zertifikat konnte nicht geprüft werden. Fundus akzeptiert keine unsicheren Zertifikate.';
   }
-  return 'Netzwerk: $error';
+  final host = error is http.ClientException ? error.uri?.host : null;
+  return host == null || host.isEmpty
+      ? 'Netzwerk: Die Metadatenquelle ist nicht erreichbar (${error.runtimeType}).'
+      : 'Netzwerk: $host ist nicht erreichbar.';
 }
 
 /// What a media area should be asked about, and where.

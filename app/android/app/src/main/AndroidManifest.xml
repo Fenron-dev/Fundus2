@@ -21,6 +21,9 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/fundus_backup_rules"
+        android:dataExtractionRules="@xml/fundus_data_extraction_rules"
         android:requestLegacyExternalStorage="true">
         <activity
             android:name=".MainActivity"
@@ -47,15 +50,6 @@
         <!-- Der Medien-Vordergrunddienst kehrt mit der
              Hintergrundwiedergabe zurück; ein Dienst, dessen Klasse nicht im
              Paket liegt, stürzt beim Start ab. -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/fundus_file_paths" />
-        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

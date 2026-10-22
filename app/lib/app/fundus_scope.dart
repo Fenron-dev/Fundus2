@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -208,6 +210,12 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     photos.addListener(_bump);
     protection.addListener(_applyProtection);
     library.hides = _hidesFromLists;
+    library.includeProtectedTags = protection.isUnlocked;
+    library.onHandleRecovered = (vault) {
+      player.rebindLibrary(vault);
+      reader.rebindLibrary(vault);
+      textReader.rebindLibrary(vault);
+    };
     peerLibraries.addListener(_wireSources);
     player.addListener(_syncWhenClosed);
     reader.addListener(_syncWhenClosed);
@@ -247,11 +255,19 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   Timer? _catchUp;
   Timer? _libraryScanTimer;
   bool _metadataConflictOpen = false;
+  final Set<String> _offeredMetadataConflicts = {};
+  String _conflictKey(MetadataImportConflict conflict) =>
+      jsonEncode(conflict.toJson());
 
   void _offerMetadataConflict() {
     if (!mounted ||
+        !settings.automaticMetadataReview ||
         _metadataConflictOpen ||
-        library.metadataConflicts.isEmpty) {
+        !library.metadataConflicts.any(
+          (conflict) =>
+              library.workById(conflict.workId) != null &&
+              !_offeredMetadataConflicts.contains(_conflictKey(conflict)),
+        )) {
       return;
     }
     _metadataConflictOpen = true;
@@ -260,9 +276,18 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         _metadataConflictOpen = false;
         return;
       }
-      final conflicts = List<MetadataImportConflict>.of(
-        library.metadataConflicts,
-      );
+      final conflicts = library.metadataConflicts
+          .where(
+            (conflict) =>
+                library.workById(conflict.workId) != null &&
+                !_offeredMetadataConflicts.contains(_conflictKey(conflict)),
+          )
+          .toList();
+      if (conflicts.isEmpty) {
+        _metadataConflictOpen = false;
+        return;
+      }
+      _offeredMetadataConflicts.addAll(conflicts.map(_conflictKey));
       if (conflicts.length <= 3) {
         for (final conflict in conflicts) {
           if (!mounted) return;
@@ -271,7 +296,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
             conflict,
           );
           if (!mounted) return;
-          await library.resolveMetadataConflict(conflict, selected ?? const {});
+          if (selected != null) {
+            await library.resolveMetadataConflict(conflict, selected);
+          }
         }
         _metadataConflictOpen = false;
         return;
@@ -294,7 +321,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         // Einstellungen > Benachrichtigungen.
         if (selected.isEmpty) {
           for (final conflict in conflicts) {
-            library.dismissMetadataConflict(conflict);
+            await library.dismissMetadataConflict(conflict);
           }
         }
       }
@@ -378,6 +405,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // wechselt — und ein Stand, der erst beim Schließen loszieht, ist
       // genau dann nie losgezogen. Deshalb geht er hier.
       _pushOpenWork();
+      player.saveProgress(checkpoint: true);
+      if (reader.isOpen) reader.saveProgress(checkpoint: true);
+      if (textReader.isOpen) textReader.saveProgress(checkpoint: true);
+      unawaited(library.library?.flushSidecarWrites());
       return;
     }
     // Zurück in der App: erst die Stände der anderen Geräte — das ist
@@ -386,6 +417,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     _startCatchingUp();
     _startLibraryScanTimer();
     peerLibraries.setForeground(true);
+    unawaited(host.checkHealth());
     unawaited(catchUpWithPeers());
     if (settings.libraryScanIntervalMinutes > 0) {
       unawaited(library.checkForChanges());
@@ -393,6 +425,42 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   }
 
   /// Sends out where the work that is open right now stands.
+  @override
+  Future<AppExitResponse> didRequestAppExit() async {
+    player.saveProgress(checkpoint: true);
+    if (reader.isOpen) reader.saveProgress(checkpoint: true);
+    if (textReader.isOpen) textReader.saveProgress(checkpoint: true);
+    final vault = library.library;
+    var failed = false;
+    try {
+      await vault?.flushSidecarWrites().timeout(const Duration(seconds: 10));
+      failed = vault?.lastSidecarError != null;
+    } on Object {
+      failed = true;
+    }
+    if (!failed || !mounted) return AppExitResponse.exit;
+    final exit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Portable Sicherung noch nicht bestätigt'),
+        content: const Text(
+          'Der Vault hat einen Schreibfehler gemeldet oder antwortet nicht. Die zuletzt erfolgreich gespeicherten Daten bleiben erhalten. Bitte die Verbindung prüfen; ein erzwungenes Beenden kann noch ausstehende Änderungen verlieren.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Zurück'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Trotzdem beenden'),
+          ),
+        ],
+      ),
+    );
+    return exit == true ? AppExitResponse.exit : AppExitResponse.cancel;
+  }
+
   void _pushOpenWork() {
     final open =
         player.work?.id ??
@@ -489,6 +557,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     settings.removeListener(_restartLibraryScanTimer);
     library.removeListener(_bump);
     library.removeListener(_offerMetadataConflict);
+    library.onHandleRecovered = null;
     player.removeListener(_bump);
     reader.removeListener(_bump);
     textReader.removeListener(_bump);
@@ -527,7 +596,17 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// until something else happened to trigger a reload.
   void _applyProtection() {
     library.hides = _hidesFromLists;
+    library.includeProtectedTags = protection.isUnlocked;
+    if (reader.work case final work? when _hidesFromLists(work)) reader.close();
+    if (textReader.work case final work? when _hidesFromLists(work)) {
+      textReader.close();
+    }
+    if (player.work case final work? when _hidesFromLists(work)) {
+      unawaited(player.close());
+    }
+    if (photos.work case final work? when _hidesFromLists(work)) photos.close();
     library.refresh();
+    _offerMetadataConflict();
     _bump();
   }
 
@@ -915,7 +994,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// Kapitelmarke etwa. Ohne sie entscheidet der gespeicherte Stand.
   Future<void> play(WorkView work, {String? startAt, Duration? at}) async {
     final vault = library.library;
-    if (vault == null) return;
+    if (vault == null || _hidesFromLists(work)) return;
     final span = FundusLog.instance.start('open', {
       'work': work.title,
       'kind': work.kind,

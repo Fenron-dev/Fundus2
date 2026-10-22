@@ -256,8 +256,8 @@ final class WorkFilter {
         ...work.summary.alternateTitles,
         ...work.summary.genres,
         ...work.summary.tags,
-        if (work.summary.series case final series?) series,
-        if (work.summary.publisher case final publisher?) publisher,
+        ?work.summary.series,
+        ?work.summary.publisher,
       ];
       return searchable.any((value) => value.toLowerCase().contains(needle));
     }).toList();

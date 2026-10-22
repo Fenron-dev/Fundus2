@@ -383,22 +383,63 @@ Future<_CoverDownload> _fetchCover(String url, {http.Client? client}) async {
   final own = client == null;
   final fetcher = client ?? createMetadataHttpClient();
   try {
+    final uri = Uri.parse(url);
+    if (uri.scheme != 'https' &&
+        !(uri.scheme == 'http' &&
+            ['localhost', '127.0.0.1', '::1'].contains(uri.host))) {
+      return _coverFailure(url, 'Unsichere Bildadresse');
+    }
+    final request = http.Request('GET', uri)
+      ..headers.addAll({
+        'accept': 'image/avif,image/webp,image/jpeg,image/png,*/*',
+        'user-agent': metadataUserAgent,
+      });
     final response = await fetcher
-        .get(
-          Uri.parse(url),
-          headers: const {
-            'accept': 'image/avif,image/webp,image/jpeg,image/png,*/*',
-            'user-agent': 'Fundus/2',
-          },
-        )
+        .send(request)
         .timeout(const Duration(seconds: 15));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       return _coverFailure(url, 'HTTP ${response.statusCode}');
     }
-    if (response.bodyBytes.isEmpty) {
+    const maxBytes = 20 * 1024 * 1024;
+    if ((response.contentLength ?? 0) > maxBytes) {
+      return _coverFailure(url, 'Bild überschreitet 20 MiB');
+    }
+    final buffer = BytesBuilder(copy: false);
+    await for (final bytes in response.stream.timeout(
+      const Duration(seconds: 15),
+    )) {
+      if (buffer.length + bytes.length > maxBytes) {
+        return _coverFailure(url, 'Bild überschreitet 20 MiB');
+      }
+      buffer.add(bytes);
+    }
+    final bytes = buffer.takeBytes();
+    if (bytes.isEmpty) {
       return _coverFailure(url, 'leere Antwort');
     }
-    return _CoverDownload(bytes: response.bodyBytes);
+    final isImage =
+        bytes.length >= 3 &&
+            bytes[0] == 0xff &&
+            bytes[1] == 0xd8 &&
+            bytes[2] == 0xff ||
+        bytes.length >= 4 &&
+            bytes[0] == 0x89 &&
+            String.fromCharCodes(bytes.sublist(1, 4)) == 'PNG' ||
+        bytes.length >= 6 &&
+            String.fromCharCodes(bytes.sublist(0, 3)) == 'GIF' ||
+        bytes.length >= 12 &&
+            String.fromCharCodes(bytes.sublist(0, 4)) == 'RIFF' &&
+            String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP' ||
+        bytes.length >= 12 &&
+            String.fromCharCodes(bytes.sublist(4, 8)) == 'ftyp' &&
+            [
+              'avif',
+              'avis',
+            ].contains(String.fromCharCodes(bytes.sublist(8, 12)));
+    if (!isImage) {
+      return _coverFailure(url, 'Antwort enthält kein unterstütztes Bild');
+    }
+    return _CoverDownload(bytes: bytes);
   } on WindowsMetadataException catch (error) {
     return _coverFailure(url, error.toString());
   } on HandshakeException {

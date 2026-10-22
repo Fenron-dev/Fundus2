@@ -51,6 +51,8 @@ final class ArchiveComicPageSource implements ComicPageSource {
   final String? _name;
   final ComicArchiveService service;
   final Map<String, ComicArchiveEntry> _entries = {};
+  final Set<String> _temporaryDirectories = {};
+  bool _disposed = false;
 
   @override
   String get name => _name ?? p.basename(archivePath);
@@ -83,11 +85,31 @@ final class ArchiveComicPageSource implements ComicPageSource {
       }
       entries.add(entry);
     }
-    return service.extract(archivePath, entries);
+    final result = await service.extract(archivePath, entries);
+    for (final path in result.values) {
+      _temporaryDirectories.add(p.dirname(path));
+    }
+    if (_disposed) {
+      await dispose();
+      return const {};
+    }
+    return result;
   }
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    _disposed = true;
+    final directories = _temporaryDirectories.toList();
+    _temporaryDirectories.clear();
+    for (final path in directories) {
+      try {
+        final folder = Directory(path);
+        if (await folder.exists()) await folder.delete(recursive: true);
+      } on FileSystemException {
+        /* In-flight image handles may still be closing. */
+      }
+    }
+  }
 }
 
 /// A file inside an archive, with its name already checked.

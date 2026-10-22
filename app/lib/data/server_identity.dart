@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:basic_utils/basic_utils.dart';
 import 'package:crypto/crypto.dart';
 import 'package:fundus_server/fundus_server.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -36,11 +37,16 @@ final class ServerIdentity {
 /// reinstall is the right price — a new key means a new pairing, which is
 /// exactly what should happen when the machine is no longer the same one.
 final class ServerIdentityStore {
-  ServerIdentityStore(this.directory);
+  ServerIdentityStore(this.directory, {this.secureStorage});
+
+  final FlutterSecureStorage? secureStorage;
 
   static Future<ServerIdentityStore> platformDefault() async {
     final base = await getApplicationSupportDirectory();
-    return ServerIdentityStore(Directory(p.join(base.path, 'peer-server')));
+    return ServerIdentityStore(
+      Directory(p.join(base.path, 'peer-server')),
+      secureStorage: const FlutterSecureStorage(),
+    );
   }
 
   final Directory directory;
@@ -60,7 +66,23 @@ final class ServerIdentityStore {
     await directory.create(recursive: true);
     final serverId = await _serverId() ?? 'fundus-${_randomValue(12)}';
     var certificate = await _read(_certificateFile);
-    var privateKey = await _read(_privateKeyFile);
+    final storage = secureStorage;
+    var privateKey = storage == null
+        ? await _read(_privateKeyFile)
+        : await storage.read(key: 'fundus_server_private_key');
+    final legacyKey = await _read(_privateKeyFile);
+    if (storage != null && privateKey == null && legacyKey != null) {
+      await storage.write(key: 'fundus_server_private_key', value: legacyKey);
+      privateKey = await storage.read(key: 'fundus_server_private_key');
+      if (privateKey != legacyKey) {
+        throw StateError(
+          'Der sichere Schlüsselspeicher hat die Migration nicht bestätigt. Die bisherige Identität bleibt erhalten.',
+        );
+      }
+    }
+    if (storage != null && legacyKey != null && privateKey == legacyKey) {
+      await _privateKeyFile.delete();
+    }
     if (certificate == null || privateKey == null) {
       final pair = CryptoUtils.generateRSAKeyPair(keySize: 2048);
       final private = pair.privateKey as RSAPrivateKey;
@@ -81,8 +103,17 @@ final class ServerIdentityStore {
       );
       privateKey = CryptoUtils.encodeRSAPrivateKeyToPem(private);
       await _certificateFile.writeAsString(certificate, flush: true);
-      await _privateKeyFile.writeAsString(privateKey, flush: true);
-      await _restrict(_privateKeyFile);
+      if (storage != null) {
+        await storage.write(
+          key: 'fundus_server_private_key',
+          value: privateKey,
+        );
+      } else {
+        // Explicit filesystem stores are used by tests/headless integrations;
+        // the desktop/mobile installation always uses the platform keychain.
+        await _privateKeyFile.writeAsString(privateKey, flush: true);
+        await _restrict(_privateKeyFile);
+      }
     }
     await _identityFile.writeAsString(
       jsonEncode({'server_id': serverId}),

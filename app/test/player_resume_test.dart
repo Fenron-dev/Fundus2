@@ -37,7 +37,7 @@ void main() {
 
   tearDown(() async {
     player.dispose();
-    library.close();
+    await library.shutdown();
     await root.delete(recursive: true);
   });
 

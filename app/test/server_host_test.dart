@@ -73,6 +73,25 @@ void main() {
     expect(again.certificateFingerprint, matches(RegExp(r'^[0-9a-f]{64}$')));
   });
 
+  test(
+    'health check repairs a closed active vault without restarting the host',
+    () async {
+      await host.start(remember: false);
+      final port = host.address?.port;
+      final identity = host.serverId;
+      final previous = library.library!;
+      previous.close();
+      await host.checkHealth();
+      expect(host.isRunning, isTrue);
+      expect(host.serverId, identity);
+      expect(host.address?.port, port);
+      expect(library.library, isNot(same(previous)));
+      expect(library.library!.isUsable, isTrue);
+      expect(library.works.single.id, workId);
+      expect(host.libraries.where((entry) => entry.available), isNotEmpty);
+    },
+  );
+
   test('ohne geöffnete Bibliothek gibt es nichts freizugeben', () async {
     final empty = ServerHostController(
       settings: settings,

@@ -208,6 +208,17 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
     final theme = Theme.of(context);
     final stage = FundusStageSize.of(context);
     final title = _detail?.title ?? track.title;
+    final extension = track.title.split('.').last.toLowerCase();
+    final needsExternalReader = {
+      'cbr',
+      'cb7',
+      '7z',
+      'rar',
+      'mobi',
+      'azw',
+      'azw3',
+      'kfx',
+    }.contains(extension);
     final episode = episodeNumberOf(track.relativePath);
 
     return ListView(
@@ -223,6 +234,15 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title, style: theme.textTheme.displaySmall),
+                  if (needsExternalReader) ...[
+                    const SizedBox(height: FundusSpace.x3),
+                    Text(
+                      'Format ${extension.toUpperCase()}: Der interne Reader unterstützt diese Datei noch nicht. Bitte über „Speicherort“ am Werk mit einer passenden externen Anwendung öffnen. Die Datei und ihre Metadaten bleiben unverändert.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: tokens.textMuted,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: FundusSpace.x2),
                   Text(
                     [

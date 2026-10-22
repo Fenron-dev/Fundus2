@@ -17,6 +17,7 @@ final class RemoteWorkRecord {
     this.tags = const [],
     this.metadata = const {},
     this.files = const [],
+    this.properties = const [],
   });
 
   final String id;
@@ -32,6 +33,7 @@ final class RemoteWorkRecord {
   final List<String> tags;
   final Map<String, Object?> metadata;
   final List<RemoteFileRecord> files;
+  final List<Object?> properties;
 }
 
 /// One file of a remote work.

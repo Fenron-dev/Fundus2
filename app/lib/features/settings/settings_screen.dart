@@ -14,6 +14,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/app_navigation.dart';
 import '../../app/app_settings.dart';
+import '../../app/build_info.dart';
 import '../../app/fundus_log.dart';
 import '../../app/fundus_scope.dart';
 import '../../app/pairing_scanner.dart';
@@ -345,7 +346,9 @@ class _Notifications extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scope = FundusScope.of(context);
-    final conflicts = scope.library.metadataConflicts;
+    final conflicts = scope.library.metadataConflicts
+        .where((conflict) => scope.library.workById(conflict.workId) != null)
+        .toList();
     final theme = Theme.of(context);
     final tokens = context.fundus;
     return SettingsPage(
@@ -354,6 +357,17 @@ class _Notifications extends StatelessWidget {
           'Metadatenänderungen werden gesammelt, damit ein großer Fero- oder '
           'Audiobookshelf-Abgleich nicht hunderte Dialoge öffnet.',
       children: [
+        SettingsCard(
+          child: SwitchListTile(
+            title: const Text('Metadatenänderungen automatisch anbieten'),
+            subtitle: const Text(
+              'Ausgeschaltet: nur hier im Posteingang prüfen. „Später“ zeigt dieselbe Änderung in dieser Sitzung nicht erneut.',
+            ),
+            value: scope.settings.automaticMetadataReview,
+            onChanged: (value) =>
+                unawaited(scope.settings.setAutomaticMetadataReview(value)),
+          ),
+        ),
         SettingsCard(
           child: Row(
             children: [
@@ -384,7 +398,7 @@ class _Notifications extends StatelessWidget {
                     }
                     if (selected.isEmpty) {
                       for (final conflict in snapshot) {
-                        scope.library.dismissMetadataConflict(conflict);
+                        await scope.library.dismissMetadataConflict(conflict);
                       }
                     }
                   },
@@ -1010,6 +1024,19 @@ class _Diagnostics extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SettingsFact('Bibliothek', library?.root.path ?? '—'),
+              SettingsFact('App-Version', BuildInfo.label),
+              SettingsFact(
+                'Sicherer Speicher',
+                scope.settings.secureStorageAvailable
+                    ? 'verfügbar'
+                    : 'Nicht verfügbar – neue Zugangsdaten bleiben nur für diese Sitzung erhalten. Bitte den Betriebssystem-Schlüsselspeicher prüfen.',
+              ),
+              SettingsFact(
+                'Portable Sicherung',
+                library?.lastSidecarError == null
+                    ? 'Kein Schreibfehler gemeldet'
+                    : 'Schreiben fehlgeschlagen. Bitte Vault-Verbindung prüfen und vor dem Schließen erneut speichern.',
+              ),
               SettingsFact(
                 'Formatversion',
                 '${library?.manifest.formatVersion ?? '—'}',
@@ -3649,7 +3676,9 @@ class _JournalState extends State<_Journal> {
     final scope = FundusScope.of(context);
     final theme = Theme.of(context);
     final tokens = context.fundus;
-    final all = _entries ?? const <SyncEntry>[];
+    final all = (_entries ?? const <SyncEntry>[])
+        .where((entry) => scope.library.workById(entry.workId) != null)
+        .toList();
     final conflicts = all.where((entry) => entry.isConflict).toList();
     final shown = _showAll
         ? all.take(30).toList()

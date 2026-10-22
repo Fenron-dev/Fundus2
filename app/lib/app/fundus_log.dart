@@ -76,6 +76,8 @@ class FundusLog extends ChangeNotifier {
   File? _file;
   Future<void> _writing = Future.value();
   bool _enabled = true;
+  int _pendingWrites = 0;
+  int _writesSinceSizeCheck = 0;
 
   List<LogEntry> get entries => List.unmodifiable(_entries);
   bool get isEnabled => _enabled;
@@ -114,7 +116,7 @@ class FundusLog extends ChangeNotifier {
       at: DateTime.now(),
       level: level,
       event: event,
-      data: data,
+      data: _safeData(data),
       took: took,
     );
     _entries.addLast(entry);
@@ -184,11 +186,52 @@ class FundusLog extends ChangeNotifier {
     return '…/${parts.sublist(parts.length - 2).join('/')}';
   }
 
+  static Map<String, Object?> _safeData(Map<String, Object?> data) => {
+    for (final entry in data.entries)
+      entry.key: switch (entry.key.toLowerCase()) {
+        'work' ||
+        'file' ||
+        'volume' ||
+        'chapter' ||
+        'path' ||
+        'title' ||
+        'werk' ||
+        'name' ||
+        'library' => '[ausgeblendet]',
+        'error' || 'failure' || 'ursache' || 'cause' => _safeError(entry.value),
+        _ => entry.value,
+      },
+  };
+
+  static String _safeError(Object? error) {
+    // Error codes/types are useful; raw exception strings may contain media
+    // paths, titles, request queries and API credentials.
+    final text = '$error';
+    final code = RegExp(
+      r'(?:code|errno|HTTP)\s*[=:]?\s*(-?\d+)',
+    ).firstMatch(text);
+    final type = RegExp(
+      r'^[A-Za-z]+(?:Exception|Error)',
+    ).firstMatch(text)?.group(0);
+    return [
+      type ?? 'Fehler',
+      if (code != null) 'Code ${code.group(1)}',
+    ].join(' ');
+  }
+
   void _append(LogEntry entry) {
     final target = _file;
-    if (target == null) return;
+    if (target == null || _pendingWrites >= capacity) return;
+    _pendingWrites++;
     _writing = _writing.then((_) async {
       try {
+        if (++_writesSinceSizeCheck >= 64) {
+          _writesSinceSizeCheck = 0;
+          if (await target.exists() &&
+              await target.length() > 2 * 1024 * 1024) {
+            await target.writeAsString('');
+          }
+        }
         await target.writeAsString(
           '${jsonEncode(entry.toJson())}\n',
           mode: FileMode.append,
@@ -196,6 +239,8 @@ class FundusLog extends ChangeNotifier {
         );
       } on Object {
         // The in-memory log is the one that matters; the file is a copy.
+      } finally {
+        _pendingWrites--;
       }
     });
   }

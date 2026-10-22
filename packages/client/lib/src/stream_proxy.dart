@@ -101,14 +101,23 @@ final class FundusStreamProxy {
       final upstream = baseUri.resolve(
         '/v1/libraries/$libraryId/files/$fileId/content',
       );
-      final outgoing = await _client.openUrl(request.method, upstream);
+      final outgoing = await _client
+          .openUrl(request.method, upstream)
+          .timeout(const Duration(seconds: 20));
       outgoing.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       // Seeking is the whole reason this forwards rather than downloads: the
       // engine asks for the stretch it needs, and the answer says which
       // stretch it got.
       final range = request.headers.value(HttpHeaders.rangeHeader);
       if (range != null) outgoing.headers.set(HttpHeaders.rangeHeader, range);
-      remote = await outgoing.close();
+      for (final header in [
+        HttpHeaders.ifNoneMatchHeader,
+        HttpHeaders.ifModifiedSinceHeader,
+      ]) {
+        final value = request.headers.value(header);
+        if (value != null) outgoing.headers.set(header, value);
+      }
+      remote = await outgoing.close().timeout(const Duration(seconds: 20));
 
       response.statusCode = remote.statusCode;
       for (final name in const [
@@ -124,10 +133,10 @@ final class FundusStreamProxy {
       }
       forwarding = true;
       if (request.method == 'HEAD') {
-        await remote.drain<void>();
+        await remote.timeout(const Duration(seconds: 30)).drain<void>();
         await response.close();
       } else {
-        await remote.pipe(response);
+        await remote.timeout(const Duration(seconds: 30)).pipe(response);
       }
     } on Object {
       if (!forwarding) {

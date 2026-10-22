@@ -66,6 +66,9 @@ class ServerHostController extends ChangeNotifier {
 
   final AppSettings settings;
   final LibraryController library;
+  bool _disposed = false;
+  bool _checkingHealth = false;
+  final Map<String, DateTime> _recoveryAfter = {};
 
   ServerIdentityStore? _identityStore;
   ServerIdentity? _identity;
@@ -253,11 +256,11 @@ class ServerHostController extends ChangeNotifier {
       if (remember) await _identityStore!.saveSharing(true);
       _presenceTick ??= Timer.periodic(
         const Duration(seconds: 15),
-        (_) => notifyListeners(),
+        (_) => unawaited(checkHealth()),
       );
     } on Object catch (error) {
       await _closeSocket();
-      _releaseRegistry();
+      await _releaseRegistry();
       _failure = _describe(error);
       _state = ServerHostState.failed;
     }
@@ -480,7 +483,7 @@ class ServerHostController extends ChangeNotifier {
   Future<void> _restartAfterLibraryChange() async {
     if (!isRunning) return;
     await _closeSocket();
-    _releaseRegistry();
+    await _releaseRegistry();
     _pairing?.cancel();
     _state = ServerHostState.stopped;
     _addresses = const [];
@@ -494,7 +497,7 @@ class ServerHostController extends ChangeNotifier {
     _presenceTick?.cancel();
     _presenceTick = null;
     await _closeSocket();
-    _releaseRegistry();
+    await _releaseRegistry();
     _pairing?.cancel();
     _addresses = const [];
     _address = null;
@@ -551,6 +554,7 @@ class ServerHostController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     library.removeListener(_followLibrary);
     _presenceTick?.cancel();
     final socket = _socket;
@@ -559,7 +563,7 @@ class ServerHostController extends ChangeNotifier {
     // dem nichts mehr ist.
     unawaited(_announcement.withdraw());
     if (socket != null) unawaited(socket.close(force: true));
-    _releaseRegistry();
+    unawaited(_releaseRegistry());
     super.dispose();
   }
 
@@ -575,9 +579,8 @@ class ServerHostController extends ChangeNotifier {
       // Dieselbe Bibliothek, aber ihr Inhalt ändert sich: ein Scan, eine
       // geänderte Angabe, ein neues Werk. Der Abzug, den die Freigabe hält,
       // gilt damit nicht mehr — gelesen wird er erst, wenn jemand fragt.
-      for (final shared in _registry?.libraries ?? const []) {
-        shared.invalidate();
-      }
+      // The registry observes the database's catalogue revision. Progress,
+      // scan counters and unrelated UI notifications do not invalidate it.
       return;
     }
     if (_state == ServerHostState.running) {
@@ -612,7 +615,7 @@ class ServerHostController extends ChangeNotifier {
         _shared = null;
         final activePath = library.library?.root.absolute.path;
         if (activePath != null) {
-          _ownedLibraries.remove(activePath)?.close();
+          await _ownedLibraries.remove(activePath)?.shutdown();
         }
         _libraries = await _registerLibraries(registry);
         if (registry.libraries.isEmpty) {
@@ -660,58 +663,87 @@ class ServerHostController extends ChangeNotifier {
   /// Geöffnet wird nur, was dieser Host selbst geöffnet hat. Die aktive
   /// Bibliothek gehört der Oberfläche; sie wieder aufzumachen ist deren Sache,
   /// und ein zweites Handle darauf wäre eine zweite Wahrheit.
-  void _reopenLibrary(String libraryId) {
-    if (_reopening.contains(libraryId)) return;
+  Future<void> _reopenLibrary(String libraryId) async {
+    if (_disposed ||
+        _reopening.contains(libraryId) ||
+        DateTime.now().isBefore(_recoveryAfter[libraryId] ?? DateTime(1970))) {
+      return;
+    }
     _reopening.add(libraryId);
-    unawaited(() async {
-      try {
-        final registry = _registry;
-        if (registry == null) return;
-        final entry = registry.lookup(libraryId);
-        if (entry == null || entry.isUsable) return;
+    try {
+      final registry = _registry;
+      if (registry == null) return;
+      final entry = registry.lookup(libraryId);
+      if (entry == null || entry.isUsable) return;
 
-        final path = _ownedLibraries.entries
-            .where((owned) => owned.value.manifest.libraryId == libraryId)
-            .map((owned) => owned.key)
-            .firstOrNull;
-        if (path == null) {
-          // Die aktive Bibliothek der Oberfläche. Aus dem Register nehmen ist
-          // trotzdem richtig: „gibt es hier nicht" ist eine ehrlichere
-          // Auskunft als ein Fehler bei jeder Anfrage.
-          registry.unregister(libraryId);
-          _shared = null;
-          FundusLog.instance.warn('server.library', {
-            'id': libraryId,
-            'action': 'unregistered_unusable',
-          });
-          notifyListeners();
-          return;
+      final path = _ownedLibraries.entries
+          .where((owned) => owned.value.manifest.libraryId == libraryId)
+          .map((owned) => owned.key)
+          .firstOrNull;
+      if (path == null) {
+        if (await library.recover(force: true) &&
+            !_disposed &&
+            _registry == registry) {
+          final active = library.library;
+          if (active != null) {
+            registry.register(active, name: entry.name);
+            _shared = active;
+            _failure = null;
+            notifyListeners();
+          }
+        } else {
+          _recoveryAfter[libraryId] = DateTime.now().add(
+            const Duration(seconds: 30),
+          );
         }
-
-        final name = entry.name;
-        registry.unregister(libraryId);
-        _ownedLibraries.remove(path)?.close();
-        if (unlockPath != null) await unlockPath!(path);
-        final reopened = await FundusLibrary.open(
-          Directory(path),
-        ).timeout(LibraryController.reachTimeout);
-        _ownedLibraries[path] = reopened;
-        registry.register(reopened, name: name);
-        FundusLog.instance.info('server.library', {
-          'id': libraryId,
-          'action': 'reopened',
-        });
-        notifyListeners();
-      } on Object catch (error) {
-        FundusLog.instance.warn('server.library', {
-          'id': libraryId,
-          'action': 'reopen_failed',
-          'error': _libraryError(error),
-        });
-      } finally {
-        _reopening.remove(libraryId);
+        return;
       }
-    }());
+
+      final name = entry.name;
+      if (unlockPath != null) await unlockPath!(path);
+      final reopened = await FundusLibrary.open(
+        Directory(path),
+      ).timeout(LibraryController.reachTimeout);
+      if (_disposed || _registry != registry) {
+        await reopened.shutdown();
+        return;
+      }
+      await _ownedLibraries.remove(path)?.shutdown();
+      _ownedLibraries[path] = reopened;
+      registry.register(reopened, name: name);
+      FundusLog.instance.info('server.library', {
+        'id': libraryId,
+        'action': 'reopened',
+      });
+      notifyListeners();
+    } on Object catch (error) {
+      _recoveryAfter[libraryId] = DateTime.now().add(
+        const Duration(seconds: 30),
+      );
+      FundusLog.instance.warn('server.library', {
+        'id': libraryId,
+        'action': 'reopen_failed',
+        'error': _libraryError(error),
+      });
+    } finally {
+      _reopening.remove(libraryId);
+    }
+  }
+
+  /// Also runs without a phone making requests, so stale borrowed handles
+  /// recover after a network interruption instead of staying lost overnight.
+  Future<void> checkHealth() async {
+    if (_disposed || _checkingHealth || !isRunning) return;
+    _checkingHealth = true;
+    try {
+      for (final entry in List<SharedFundusLibrary>.of(
+        _registry?.libraries ?? const [],
+      )) {
+        if (!entry.isUsable) await _reopenLibrary(entry.id);
+      }
+    } finally {
+      _checkingHealth = false;
+    }
   }
 
   /// Was ein gekoppeltes Gerät hierher geschrieben hat, steht danach auch auf
@@ -735,7 +767,7 @@ class ServerHostController extends ChangeNotifier {
   /// right when the registry opened them. Here it did not: this is the vault
   /// the person has open, and switching sharing off must not take their
   /// library down with it.
-  void _releaseRegistry() {
+  Future<void> _releaseRegistry() async {
     _shared = null;
     final registry = _registry;
     _registry = null;
@@ -744,10 +776,11 @@ class ServerHostController extends ChangeNotifier {
         registry.unregister(shared.id);
       }
     }
-    for (final owned in _ownedLibraries.values) {
-      owned.close();
-    }
+    final ownedLibraries = _ownedLibraries.values.toList();
     _ownedLibraries.clear();
+    for (final owned in ownedLibraries) {
+      await owned.shutdown();
+    }
   }
 
   Future<ServerIdentity> _ensureIdentity() async {

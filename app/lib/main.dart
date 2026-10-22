@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 import 'app/app_settings.dart';
+import 'app/build_info.dart';
 import 'app/fundus_app.dart';
 import 'app/fundus_log.dart';
 import 'data/library_controller.dart';
@@ -13,6 +14,7 @@ import 'media/playback_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FundusLog.instance.info('app.version', {'version': BuildInfo.label});
   if (Platform.isWindows) {
     FundusLog.instance.info('metadata.transport', {
       'backend': 'WinHTTP',

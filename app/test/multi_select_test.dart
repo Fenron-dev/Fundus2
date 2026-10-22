@@ -31,6 +31,7 @@ void main() {
   });
 
   tearDown(() async {
+    await library.library?.flushSidecarWrites();
     library.dispose();
     await root.delete(recursive: true);
   });
@@ -103,9 +104,19 @@ void main() {
     );
     await tester.runAsync(() async {
       await tester.tap(find.text('Auf 3 Werke schreiben'));
-      await Future<void>.delayed(const Duration(milliseconds: 600));
     });
+    // Portable writes are real I/O and can be queued behind a UI-originated
+    // profile write. Drive both clocks until the completed dialog disappears,
+    // not a guessed 600 ms that races on loaded CI runners.
+    for (var attempt = 0; attempt < 150; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      if (find.byType(AlertDialog).evaluate().isEmpty) break;
+    }
     await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
 
     final works = scope.library.library!.listWorks();
     expect(works, hasLength(3));

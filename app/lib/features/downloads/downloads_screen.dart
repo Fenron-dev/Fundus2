@@ -44,7 +44,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final tokens = context.fundus;
     final gutter = FundusStageSize.of(context).gutter;
     final running = scope.downloads.jobs
-        .where((job) => job.state != DownloadState.done)
+        .where(
+          (job) =>
+              job.state != DownloadState.done &&
+              scope.library.workById(job.workId) != null,
+        )
         .toList(growable: false);
     final offline = scope.library.works
         .where((work) => work.origin == FundusOrigin.offline)
@@ -57,7 +61,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         )
         .toList(growable: false);
     final history = scope.downloads.jobs
-        .where((job) => job.state == DownloadState.done)
+        .where(
+          (job) =>
+              job.state == DownloadState.done &&
+              scope.library.workById(job.workId) != null,
+        )
         .toList(growable: false);
 
     if (running.isEmpty &&

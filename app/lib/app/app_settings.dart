@@ -78,6 +78,10 @@ class AppSettings extends ChangeNotifier {
   /// leave files behind.
   final bool _ephemeral;
   final FlutterSecureStorage? _secureStorage;
+  Future<void> _persistQueue = Future<void>.value();
+  bool _secureStorageAvailable = true;
+  final Map<String, String> _storedSensitiveValues = {};
+  bool get secureStorageAvailable => _secureStorageAvailable;
   Map<String, Object?> _values;
 
   static const _sensitiveKeys = {
@@ -88,9 +92,13 @@ class AppSettings extends ChangeNotifier {
     'protection_pin',
   };
 
-  static Future<AppSettings> load() async {
-    final directory = await getApplicationSupportDirectory();
-    final file = File(p.join(directory.path, fileName));
+  static Future<AppSettings> load({
+    File? settingsFile,
+    FlutterSecureStorage? storage,
+  }) async {
+    final file =
+        settingsFile ??
+        File(p.join((await getApplicationSupportDirectory()).path, fileName));
     var values = <String, Object?>{};
     if (await file.exists()) {
       try {
@@ -104,22 +112,28 @@ class AppSettings extends ChangeNotifier {
         // Same.
       }
     }
-    final secureStorage = const FlutterSecureStorage();
+    final secureStorage = storage ?? const FlutterSecureStorage();
     var hadPlainSensitiveValues = false;
+    var secureReadsSucceeded = true;
+    final secured = <String, String>{};
     for (final key in _sensitiveKeys) {
       try {
         final encoded = await secureStorage.read(key: key);
         if (encoded != null) {
           values[key] = jsonDecode(encoded);
+          secured[key] = encoded;
         } else if (values.containsKey(key)) {
           hadPlainSensitiveValues = true;
         }
       } on Object {
-        // A platform without a registered backend keeps legacy settings
-        // usable; the JSON file remains protected by app storage and chmod.
+        // Do not replace unreadable credentials with empty values, nor fall
+        // back to plaintext. A later successful secure write can retry.
+        secureReadsSucceeded = false;
       }
     }
     final settings = AppSettings._(file, values, secureStorage: secureStorage);
+    settings._secureStorageAvailable = secureReadsSucceeded;
+    settings._storedSensitiveValues.addAll(secured);
     if (hadPlainSensitiveValues) await settings._persist();
     if (settings.deviceKey.isEmpty) {
       settings._values['device_key'] = _generateKey();
@@ -220,6 +234,10 @@ class AppSettings extends ChangeNotifier {
   /// Which language metadata is asked for.
   String get metadataLanguage =>
       _values['metadata_language'] as String? ?? 'de-DE';
+  bool get automaticMetadataReview =>
+      _values['automatic_metadata_review'] != false;
+  Future<void> setAutomaticMetadataReview(bool value) =>
+      _set('automatic_metadata_review', value);
 
   /// The Fundus installations this device has been paired with.
   ///
@@ -472,7 +490,7 @@ class AppSettings extends ChangeNotifier {
     await _set('watches_library', value);
     if (!value) {
       await _set('library_scan_interval_minutes', 0);
-    } else if (!(_values['library_scan_interval_minutes'] is num) ||
+    } else if (_values['library_scan_interval_minutes'] is! num ||
         libraryScanIntervalMinutes == 0) {
       await _set('library_scan_interval_minutes', 60);
     }
@@ -560,39 +578,55 @@ class AppSettings extends ChangeNotifier {
     await _persist();
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() {
+    if (_ephemeral) return Future<void>.value();
+    final snapshot = Map<String, Object?>.from(_values);
+    final operation = _persistQueue.then((_) => _persistValues(snapshot));
+    _persistQueue = operation.catchError((Object _) {});
+    return operation;
+  }
+
+  Future<void> _persistValues(Map<String, Object?> snapshot) async {
     if (_ephemeral) return;
     try {
       var storedSecurely = _secureStorage != null;
       if (storedSecurely) {
         try {
           for (final key in _sensitiveKeys) {
-            await _secureStorage.write(
-              key: key,
-              value: _values.containsKey(key) ? jsonEncode(_values[key]) : null,
-            );
+            if (!snapshot.containsKey(key)) continue;
+            final encoded = jsonEncode(snapshot[key]);
+            if (_storedSensitiveValues[key] == encoded) continue;
+            await _secureStorage.write(key: key, value: encoded);
+            if (await _secureStorage.read(key: key) != encoded) {
+              throw StateError('Sichere Speicherung wurde nicht bestätigt.');
+            }
+            _storedSensitiveValues[key] = encoded;
           }
         } on Object {
-          // Keep the value usable if a platform has no working keychain. The
-          // fallback is still protected by app storage and Unix file mode.
+          // Keep credentials in memory for this session; do not fall back to plaintext.
           storedSecurely = false;
         }
       }
+      if (_secureStorageAvailable != storedSecurely) {
+        _secureStorageAvailable = storedSecurely;
+        notifyListeners();
+      }
+      // Keep legacy files until successful migration; never erase pairings
+      // merely because the keychain is temporarily unavailable.
+      if (!storedSecurely) return;
       await _file.parent.create(recursive: true);
       final partial = File('${_file.path}.part');
-      final persisted = Map<String, Object?>.from(_values);
+      final persisted = Map<String, Object?>.from(snapshot);
       if (storedSecurely) {
         for (final key in _sensitiveKeys) {
           persisted.remove(key);
         }
       }
       await partial.writeAsString(jsonEncode(persisted), flush: true);
-      if (await _file.exists()) await _file.delete();
       await partial.rename(_file.path);
       if (!Platform.isWindows) {
-        // device.json contains bearer tokens, the protection verifier and
-        // optional provider credentials. Keep it private on Unix desktops;
-        // Android's application sandbox remains the primary boundary there.
+        // Preferences still reveal paths and device names. Credentials live
+        // exclusively in the platform store after successful migration.
         try {
           await Process.run('chmod', ['600', _file.path]);
         } on ProcessException {

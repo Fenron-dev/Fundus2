@@ -21,7 +21,7 @@ final class LibraryRating {
   final String userId;
   final DateTime updatedAt;
 
-  String get fingerprint => '${workId}|${fileId ?? ''}|$userId';
+  String get fingerprint => '$workId|${fileId ?? ''}|$userId';
 }
 
 final class LibraryBookmark {

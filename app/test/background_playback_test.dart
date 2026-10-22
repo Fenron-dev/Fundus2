@@ -35,6 +35,7 @@ void main() {
   tearDown(() async {
     handler.detach();
     player.dispose();
+    await library.library?.flushSidecarWrites();
     library.dispose();
     await root.delete(recursive: true);
   });

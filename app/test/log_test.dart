@@ -66,6 +66,21 @@ void main() {
     expect(FundusLog.instance.entries.last.line, contains('nummer=649'));
   });
 
+  test('media titles, paths and credential queries are redacted centrally', () {
+    FundusLog.instance.warn('private', {
+      'work': 'Protected novel',
+      'file': '/private/media/secret.cbz',
+      'error':
+          'ClientException: failed https://example.test/?api_key=secret-key',
+      'status': 500,
+    });
+    final line = FundusLog.instance.entries.single.line;
+    expect(line, isNot(contains('Protected novel')));
+    expect(line, isNot(contains('secret.cbz')));
+    expect(line, isNot(contains('secret-key')));
+    expect(line, contains('500'));
+  });
+
   test('abgeschaltet wird nichts aufgezeichnet', () {
     FundusLog.instance.setEnabled(false);
     addTearDown(() => FundusLog.instance.setEnabled(true));

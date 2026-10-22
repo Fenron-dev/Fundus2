@@ -23,6 +23,8 @@ class LibraryController extends ChangeNotifier {
 
   LibraryStatus _status = LibraryStatus.idle;
   Future<void> _openQueue = Future<void>.value();
+  bool _recovering = false;
+  bool _disposed = false;
   int _openGeneration = 0;
   String? _error;
   List<WorkView> _works = const [];
@@ -46,6 +48,8 @@ class LibraryController extends ChangeNotifier {
   /// „Fortsetzen" comes through — a rule applied in twelve places is a rule
   /// that will be forgotten in one of them.
   bool Function(WorkView work)? hides;
+  bool includeProtectedTags = true;
+  void Function(FundusLibrary replacement)? onHandleRecovered;
 
   LibraryStatus get status => _status;
   String? get error => _error;
@@ -189,7 +193,10 @@ class LibraryController extends ChangeNotifier {
       // Re-opening the same vault is a no-op. In particular, tapping a peer
       // twice must not close the live database just to create an identical
       // second handle.
-      if (_library != null && _library!.root.path == root.path) {
+      if (_library != null &&
+          _library!.root.path == root.path &&
+          _library!.isUsable) {
+        _metadataConflicts = await _library!.loadPendingMetadataConflicts();
         _reload();
         _status = LibraryStatus.ready;
         notifyListeners();
@@ -203,12 +210,13 @@ class LibraryController extends ChangeNotifier {
       // `close()` may have been requested while the filesystem was opening.
       // Do not install a handle after that request; close only the newly
       // opened instance and leave the controller empty.
-      if (generation != _openGeneration) {
+      if (_disposed || generation != _openGeneration) {
         opened.close();
         return;
       }
-      _library?.close();
+      await _library?.shutdown();
       _library = opened;
+      _metadataConflicts = await opened.loadPendingMetadataConflicts();
       _reload();
       _status = LibraryStatus.ready;
     } on TimeoutException {
@@ -250,7 +258,7 @@ class LibraryController extends ChangeNotifier {
   void close() {
     _openGeneration++;
     _scanToken?.cancel();
-    _library?.close();
+    unawaited(_library?.shutdown());
     _library = null;
     _works = const [];
     _sources = const [];
@@ -298,7 +306,15 @@ class LibraryController extends ChangeNotifier {
               : null;
           if (event.phase == LibraryIndexPhase.completed &&
               event.metadataConflicts.isNotEmpty) {
-            _metadataConflicts = event.metadataConflicts;
+            final merged = {
+              for (final conflict in _metadataConflicts)
+                '${conflict.workId}:${conflict.sourcePath}': conflict,
+            };
+            for (final conflict in event.metadataConflicts) {
+              merged['${conflict.workId}:${conflict.sourcePath}'] = conflict;
+            }
+            _metadataConflicts = merged.values.toList();
+            await library.savePendingMetadataConflicts(_metadataConflicts);
           }
           _reload();
         }
@@ -377,14 +393,15 @@ class LibraryController extends ChangeNotifier {
       await library.resolveMetadataImportConflict(conflict, importedFields);
       refreshWork(conflict.workId);
     }
-    dismissMetadataConflict(conflict);
+    await dismissMetadataConflict(conflict);
   }
 
-  void dismissMetadataConflict(MetadataImportConflict conflict) {
+  Future<void> dismissMetadataConflict(MetadataImportConflict conflict) async {
     _metadataConflicts = _metadataConflicts
         .where((candidate) => !identical(candidate, conflict))
         .toList(growable: false);
     notifyListeners();
+    await _library?.savePendingMetadataConflicts(_metadataConflicts);
   }
 
   /// Reads the whole catalogue again. For after a scan, and little else.
@@ -413,7 +430,16 @@ class LibraryController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final view = WorkView.fromSummary(summary);
+    final visibleSummary = includeProtectedTags
+        ? summary
+        : summary.withPictures(
+            coverPath: summary.coverPath,
+            backdropPath: summary.backdropPath,
+            tags: summary.tags
+                .where((tag) => !library.isTagProtected(tag))
+                .toList(),
+          );
+    final view = WorkView.fromSummary(visibleSummary);
     if (hides?.call(view) ?? false) {
       if (index < 0) return;
       final rest = [..._works]..removeAt(index);
@@ -440,6 +466,43 @@ class LibraryController extends ChangeNotifier {
     return null;
   }
 
+  /// Reopens a failed active handle without changing the user's selection.
+  /// Retain the old handle until a replacement is actually available.
+  Future<bool> recover({bool force = false}) async {
+    final previous = _library;
+    if (_disposed || _recovering || previous == null || isScanning) {
+      return false;
+    }
+    if (!force && previous.isUsable) return true;
+    _recovering = true;
+    try {
+      if (!await _answers(previous.root)) return false;
+      final opened = await FundusLibrary.open(
+        previous.root,
+      ).timeout(reachTimeout);
+      if (_disposed || !identical(_library, previous)) {
+        await opened.shutdown();
+        return false;
+      }
+      _library = opened;
+      await previous.shutdown();
+      onHandleRecovered?.call(opened);
+      _reload();
+      _status = LibraryStatus.ready;
+      _error = null;
+      FundusLog.instance.info('library.recovered');
+      notifyListeners();
+      return true;
+    } on Object catch (error) {
+      FundusLog.instance.warn('library.recovery', {
+        'error_type': error.runtimeType.toString(),
+      });
+      return false;
+    } finally {
+      _recovering = false;
+    }
+  }
+
   void _reload() {
     final library = _library;
     if (library == null) return;
@@ -447,8 +510,18 @@ class LibraryController extends ChangeNotifier {
     // a row to hide — the origin mark says "nicht erreichbar" and the work
     // keeps its notes, rating and progress.
     final gate = hides;
+    final publicTags = includeProtectedTags ? null : library.listTags().toSet();
     _works = library
         .listWorks(includeMissing: true)
+        .map(
+          (work) => publicTags == null
+              ? work
+              : work.withPictures(
+                  coverPath: work.coverPath,
+                  backdropPath: work.backdropPath,
+                  tags: work.tags.where(publicTags.contains).toList(),
+                ),
+        )
         .map(WorkView.fromSummary)
         .where((work) => gate == null || !gate(work))
         .toList(growable: false);
@@ -498,8 +571,9 @@ class LibraryController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _scanToken?.cancel();
-    _library?.close();
+    unawaited(_library?.shutdown());
     super.dispose();
   }
 }

@@ -104,6 +104,30 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> settleSavedProperty(WidgetTester tester, String? shown) async {
+    // The dialog returns before the portable sidecar has finished. Pump the
+    // UI zone as well as real I/O; waiting on a queue before the dialog's
+    // continuation has started is not a completion barrier.
+    for (var attempt = 0; attempt < 100; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      final closed = find.byType(AlertDialog).evaluate().isEmpty;
+      if (closed &&
+          (shown != null && find.text(shown).evaluate().isNotEmpty ||
+              shown == null &&
+                  find.text('Oben links').evaluate().isEmpty &&
+                  library.library!
+                      .loadWorkProperties(library.works.first.id)
+                      .isEmpty)) {
+        return;
+      }
+    }
+    fail('Die Eigenschaft wurde nicht vollständig gespeichert.');
+  }
+
   testWidgets('ein leeres Feld steht trotzdem da', (tester) async {
     // Ein Feld, das man erst sieht, wenn es gefüllt ist, füllt niemand.
     await pump(tester);
@@ -126,7 +150,8 @@ void main() {
 
     await openField(tester, 'Regal');
     await tester.enterText(find.byType(TextField).last, 'Oben links');
-    await tester.tap(find.text('Übernehmen'));
+    await tester.runAsync(() => tester.tap(find.text('Übernehmen')));
+    await settleSavedProperty(tester, 'Oben links');
     await tester.pumpAndSettle();
 
     expect(find.text('Oben links'), findsOneWidget);
@@ -138,7 +163,8 @@ void main() {
     );
 
     await openField(tester, 'Regal');
-    await tester.tap(find.text('Leeren'));
+    await tester.runAsync(() => tester.tap(find.text('Leeren')));
+    await settleSavedProperty(tester, null);
     await tester.pumpAndSettle();
 
     expect(

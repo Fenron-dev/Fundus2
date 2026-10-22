@@ -83,7 +83,24 @@ Stream<ScanBatch> scanInBackground(
   }
 
   receive.listen((message) {
-    if (message is! ScanBatch) return;
+    if (message is! ScanBatch) {
+      // Isolate failures arrive as [error, stack], an unexpected exit as
+      // null. Ignoring either left the scan spinning forever.
+      if (!closed) {
+        controller.add(
+          ScanBatch(
+            files: const [],
+            visited: 0,
+            done: true,
+            error: StateError(
+              'Der Scan-Worker wurde vorzeitig beendet. Bitte erneut aktualisieren.',
+            ),
+          ),
+        );
+        unawaited(finish());
+      }
+      return;
+    }
     if (!controller.isClosed) controller.add(message);
     if (message.done) unawaited(finish());
     if (cancellationToken?.isCancelled ?? false) unawaited(finish());

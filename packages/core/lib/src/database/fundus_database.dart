@@ -156,54 +156,57 @@ final class LibraryWorkSummary {
   /// ones, so exactly one thing changes on the way out. Written here, beside
   /// the fields, because a copy assembled at the call site quietly loses
   /// whatever field is added next.
-  LibraryWorkSummary withPictures({String? coverPath, String? backdropPath}) =>
-      LibraryWorkSummary(
-        id: id,
-        kind: kind,
-        title: title,
-        author: author,
-        authors: authors,
-        fileCount: fileCount,
-        addedAt: addedAt,
-        series: series,
-        seriesSequence: seriesSequence,
-        sourcePath: sourcePath,
-        favourite: favourite,
-        coverPath: coverPath,
-        hasFolderCover: hasFolderCover,
-        backdropPath: backdropPath,
-        language: language,
-        subtitle: subtitle,
-        alternateTitles: alternateTitles,
-        description: description,
-        narrators: narrators,
-        genres: genres,
-        publisher: publisher,
-        publishedYear: publishedYear,
-        isbn: isbn,
-        asin: asin,
-        explicit: explicit,
-        contentSensitivity: contentSensitivity,
-        contentStyle: contentStyle,
-        publicationStatus: publicationStatus,
-        personalStatus: personalStatus,
-        externalIds: externalIds,
-        abridged: abridged,
-        progressPosition: progressPosition,
-        progressDuration: progressDuration,
-        mediaProgress: mediaProgress,
-        progressTrackIndex: progressTrackIndex,
-        progressFinished: progressFinished,
-        status: status,
-        metadataOrigins: metadataOrigins,
-        tags: tags,
-        lastListenedAt: lastListenedAt,
-        offline: offline,
-        sourceServerName: sourceServerName,
-        sourceLibraryName: sourceLibraryName,
-        sourceId: sourceId,
-        availability: availability,
-      );
+  LibraryWorkSummary withPictures({
+    String? coverPath,
+    String? backdropPath,
+    List<String>? tags,
+  }) => LibraryWorkSummary(
+    id: id,
+    kind: kind,
+    title: title,
+    author: author,
+    authors: authors,
+    fileCount: fileCount,
+    addedAt: addedAt,
+    series: series,
+    seriesSequence: seriesSequence,
+    sourcePath: sourcePath,
+    favourite: favourite,
+    coverPath: coverPath,
+    hasFolderCover: hasFolderCover,
+    backdropPath: backdropPath,
+    language: language,
+    subtitle: subtitle,
+    alternateTitles: alternateTitles,
+    description: description,
+    narrators: narrators,
+    genres: genres,
+    publisher: publisher,
+    publishedYear: publishedYear,
+    isbn: isbn,
+    asin: asin,
+    explicit: explicit,
+    contentSensitivity: contentSensitivity,
+    contentStyle: contentStyle,
+    publicationStatus: publicationStatus,
+    personalStatus: personalStatus,
+    externalIds: externalIds,
+    abridged: abridged,
+    progressPosition: progressPosition,
+    progressDuration: progressDuration,
+    mediaProgress: mediaProgress,
+    progressTrackIndex: progressTrackIndex,
+    progressFinished: progressFinished,
+    status: status,
+    metadataOrigins: metadataOrigins,
+    tags: tags ?? this.tags,
+    lastListenedAt: lastListenedAt,
+    offline: offline,
+    sourceServerName: sourceServerName,
+    sourceLibraryName: sourceLibraryName,
+    sourceId: sourceId,
+    availability: availability,
+  );
 }
 
 /// What a feed says about one file: a podcast episode's own text.
@@ -228,7 +231,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 22;
+  static const schemaVersion = 23;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -772,6 +775,10 @@ final class FundusDatabase {
   /// großen Aufräumen ist das spürbar. Der Server bleibt dabei erreichbar,
   /// es ist eine Datei, kein Dienst.
   void compact() => _database.execute('VACUUM');
+
+  /// SQLite creates a consistent snapshot, including committed WAL pages.
+  /// Never copy an open database file directly.
+  void snapshotTo(String path) => _database.execute('VACUUM INTO ?', [path]);
 
   ({int bytes, int? width, int? height, int files}) workStorage(String workId) {
     final rows = _database.select(
@@ -2287,6 +2294,21 @@ final class FundusDatabase {
     return rows.isEmpty ? null : rows.first['source_path'] as String;
   }
 
+  List<String> missingRemoteCovers(String sourceId) => [
+    for (final row in _database.select(
+      "SELECT id FROM works WHERE source_id = ? "
+      r"AND json_extract(metadata_json, '$.remote_has_cover') = 1 "
+      "AND generated_cover_path IS NULL AND status = 'available'",
+      [sourceId],
+    ))
+      row['id'] as String,
+  ];
+
+  bool remoteCoverStateUnknown(String sourceId) => _database.select(
+    r"SELECT 1 FROM works WHERE source_id = ? AND status = 'available' AND json_type(metadata_json, '$.remote_has_cover') IS NULL LIMIT 1",
+    [sourceId],
+  ).isNotEmpty;
+
   String? workLanguage(String workId) {
     final rows = _database.select(
       'SELECT metadata_json FROM works WHERE id = ?',
@@ -2887,8 +2909,11 @@ final class FundusDatabase {
     return bookmark;
   }
 
-  void deleteBookmark(String bookmarkId) =>
-      _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
+  void deleteBookmark(String workId, String bookmarkId) => _database.execute(
+    'DELETE FROM bookmarks WHERE id = ? AND work_id = ? AND user_id = ? '
+    'AND quote IS NULL',
+    [bookmarkId, workId, 'default'],
+  );
 
   LibraryHighlight addTextHighlight({
     String? id,
@@ -2934,7 +2959,11 @@ final class FundusDatabase {
     return highlight;
   }
 
-  void deleteHighlight(String highlightId) => deleteBookmark(highlightId);
+  void deleteHighlight(String workId, String highlightId) => _database.execute(
+    'DELETE FROM bookmarks WHERE id = ? AND work_id = ? AND user_id = ? '
+    'AND quote IS NOT NULL',
+    [highlightId, workId, 'default'],
+  );
 
   /// Size and modification time of every file this vault has indexed.
   ///
@@ -3494,6 +3523,7 @@ final class FundusDatabase {
   void _writeRemoteWork(String sourceId, RemoteWorkRecord work, int now) {
     final metadata = <String, Object?>{
       ...work.metadata,
+      'remote_has_cover': work.hasCover,
       'title': work.title,
       if (work.author != null) 'author': work.author,
       if (work.subtitle != null) 'subtitle': work.subtitle,
@@ -4242,7 +4272,7 @@ final class FundusDatabase {
   /// benennen und beheben kann.
   bool get isUsable {
     try {
-      _database.select('SELECT 1');
+      _database.select('SELECT name FROM sqlite_master LIMIT 1');
       return true;
     } on Object {
       return false;
@@ -4289,7 +4319,65 @@ final class FundusDatabase {
     if (_database.userVersion == 19 && !readOnly) _migrateToVersion20();
     if (_database.userVersion == 20 && !readOnly) _migrateToVersion21();
     if (_database.userVersion == 21 && !readOnly) _migrateToVersion22();
+    if (_database.userVersion == 22 && !readOnly) _migrateToVersion23();
   }
+
+  void _migrateToVersion23() {
+    transaction(() {
+      const indexes = {
+        'work_files': 'file_id',
+        'work_people': 'person_id',
+        'work_tags': 'tag_id',
+        'bookmarks': 'work_id',
+        'notes': 'work_id',
+        'play_events': 'work_id',
+        'playlist_items': 'work_id',
+      };
+      for (final entry in indexes.entries) {
+        if (tableExists(entry.key) && columnExists(entry.key, entry.value)) {
+          _database.execute(
+            'CREATE INDEX IF NOT EXISTS ${entry.key}_${entry.value}_lookup '
+            'ON ${entry.key} (${entry.value})',
+          );
+        }
+      }
+      _database.execute(
+        'CREATE TABLE IF NOT EXISTS catalogue_revision '
+        '(id INTEGER PRIMARY KEY CHECK(id = 1), revision INTEGER NOT NULL)',
+      );
+      _database.execute(
+        'INSERT OR IGNORE INTO catalogue_revision VALUES (1, 0)',
+      );
+      for (final table in [
+        'works',
+        'files',
+        'work_files',
+        'work_tags',
+        'file_details',
+        'work_properties',
+        'property_definitions',
+        'tags',
+        'people',
+        'work_people',
+      ]) {
+        if (!tableExists(table)) continue;
+        for (final event in ['INSERT', 'UPDATE', 'DELETE']) {
+          _database.execute(
+            'CREATE TRIGGER IF NOT EXISTS catalogue_${table}_$event '
+            'AFTER $event ON $table BEGIN UPDATE catalogue_revision SET revision = revision + 1 WHERE id = 1; END',
+          );
+        }
+      }
+      _database.userVersion = 23;
+    });
+  }
+
+  int get catalogueRevision => tableExists('catalogue_revision')
+      ? _database
+                .select('SELECT revision FROM catalogue_revision WHERE id = 1')
+                .first['revision']
+            as int
+      : 0;
 
   void _migrateToVersion1() {
     _database.execute('BEGIN IMMEDIATE');

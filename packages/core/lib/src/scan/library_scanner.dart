@@ -95,6 +95,7 @@ base class LibraryScanner {
     this.ignoredFileNames = const {'.DS_Store', 'Thumbs.db'},
     this.ignoredPaths = const {},
     this.filesAtOnce = 16,
+    this.directoriesAtOnce = 4,
   });
 
   final Set<String> ignoredDirectoryNames;
@@ -111,6 +112,7 @@ base class LibraryScanner {
   /// Minuten, in denen nichts passiert außer Warten. Gleichzeitig gefragt,
   /// wartet man einmal statt sechzehnmal.
   final int filesAtOnce;
+  final int directoriesAtOnce;
 
   /// Walks [root] and reports every file it finds.
   ///
@@ -152,6 +154,14 @@ base class LibraryScanner {
         : Directory(
             p.normalize(p.join(rootPath, p.joinAll(p.posix.split(subtree)))),
           );
+    if (start.path != rootPath && !p.isWithin(rootPath, start.path)) {
+      yield ScanEvent(
+        kind: ScanEventKind.error,
+        visitedFiles: 0,
+        error: ArgumentError('Der Scan-Ordner muss im Vault liegen.'),
+      );
+      return;
+    }
     if (start.path != rootPath && !await start.exists()) {
       yield ScanEvent(kind: ScanEventKind.completed, visitedFiles: visited);
       return;
@@ -165,16 +175,72 @@ base class LibraryScanner {
         return;
       }
 
-      final directory = pending.removeLast();
-      final directoryPath = p.normalize(directory.absolute.path);
-      if (!visitedDirectories.add(directoryPath)) continue;
+      final directories = <Directory>[];
+      final limit = directoriesAtOnce < 1 ? 1 : directoriesAtOnce;
+      while (pending.isNotEmpty && directories.length < limit) {
+        final candidate = pending.removeLast();
+        if (visitedDirectories.add(p.normalize(candidate.absolute.path))) {
+          directories.add(candidate);
+        }
+      }
+      final listings = await Future.wait([
+        for (final directory in directories) _list(directory),
+      ]);
+      for (var index = 0; index < directories.length; index++) {
+        final directory = directories[index];
+        final directoryPath = p.normalize(directory.absolute.path);
+        final listing = listings[index];
+        if (listing.error != null) {
+          yield ScanEvent(
+            kind: ScanEventKind.error,
+            visitedFiles: visited,
+            path: directoryPath,
+            error: listing.error,
+          );
+          continue;
+        }
 
-      // Erst wird die Ablage gelesen, dann werden ihre Dateien gefragt. Vorher
-      // war beides ineinander: jede Datei einzeln, und zwischen zwei Fragen
-      // stand die Freigabe still.
-      final files = <File>[];
-      try {
-        await for (final entity in directory.list(followLinks: false)) {
+        // Erst wird die Ablage gelesen, dann werden ihre Dateien gefragt. Vorher
+        // war beides ineinander: jede Datei einzeln, und zwischen zwei Fragen
+        // stand die Freigabe still.
+        final files = <File>[];
+        try {
+          for (final entity in listing.entries) {
+            if (cancellationToken?.isCancelled ?? false) {
+              yield ScanEvent(
+                kind: ScanEventKind.cancelled,
+                visitedFiles: visited,
+              );
+              return;
+            }
+            final name = p.basename(entity.path);
+            final relative = p.posix.joinAll(
+              p.split(p.relative(entity.absolute.path, from: rootPath)),
+            );
+            if (_isIgnoredPath(relative)) continue;
+            if (entity is Directory) {
+              if (!_isIgnoredDirectory(name)) pending.add(entity);
+              continue;
+            }
+            if (entity is! File ||
+                ignoredFileNames.contains(name) ||
+                name.startsWith('._')) {
+              continue;
+            }
+            files.add(entity);
+          }
+        } catch (error) {
+          yield ScanEvent(
+            kind: ScanEventKind.error,
+            visitedFiles: visited,
+            path: directory.path,
+            error: error,
+          );
+          continue;
+        }
+
+        final batch = filesAtOnce < 1 ? 1 : filesAtOnce;
+        for (var offset = 0; offset < files.length; offset += batch) {
           if (cancellationToken?.isCancelled ?? false) {
             yield ScanEvent(
               kind: ScanEventKind.cancelled,
@@ -182,72 +248,41 @@ base class LibraryScanner {
             );
             return;
           }
-          final name = p.basename(entity.path);
-          final relative = p.posix.joinAll(
-            p.split(p.relative(entity.absolute.path, from: rootPath)),
-          );
-          if (_isIgnoredPath(relative)) continue;
-          if (entity is Directory) {
-            if (!_isIgnoredDirectory(name)) pending.add(entity);
-            continue;
-          }
-          if (entity is! File ||
-              ignoredFileNames.contains(name) ||
-              name.startsWith('._')) {
-            continue;
-          }
-          files.add(entity);
-        }
-      } catch (error) {
-        yield ScanEvent(
-          kind: ScanEventKind.error,
-          visitedFiles: visited,
-          path: directory.path,
-          error: error,
-        );
-        continue;
-      }
-
-      final batch = filesAtOnce < 1 ? 1 : filesAtOnce;
-      for (var offset = 0; offset < files.length; offset += batch) {
-        if (cancellationToken?.isCancelled ?? false) {
-          yield ScanEvent(kind: ScanEventKind.cancelled, visitedFiles: visited);
-          return;
-        }
-        final looked = await Future.wait([
-          for (final entity in files.skip(offset).take(batch))
-            _look(entity, rootPath: rootPath, isUnchanged: isUnchanged),
-        ]);
-        // Gemeldet wird nacheinander und in der Reihenfolge der Ablage: wer
-        // die Ereignisse liest, soll von der Gleichzeitigkeit nichts merken.
-        for (final result in looked) {
-          if (result.error case final failure?) {
+          final looked = await Future.wait([
+            for (final entity in files.skip(offset).take(batch))
+              _look(entity, rootPath: rootPath, isUnchanged: isUnchanged),
+          ]);
+          // Gemeldet wird nacheinander und in der Reihenfolge der Ablage: wer
+          // die Ereignisse liest, soll von der Gleichzeitigkeit nichts merken.
+          for (final result in looked) {
+            if (result.error case final failure?) {
+              yield ScanEvent(
+                kind: ScanEventKind.error,
+                visitedFiles: visited,
+                path: result.path,
+                error: failure,
+              );
+              continue;
+            }
+            final file = result.file;
+            if (file == null) {
+              yield ScanEvent(
+                kind: ScanEventKind.skipped,
+                visitedFiles: visited,
+                path: result.path,
+              );
+              continue;
+            }
+            // SMB providers can return an entry more than once while
+            // generated files are changing during a scan.
+            if (!visitedFiles.add(file.relativePath)) continue;
+            visited++;
             yield ScanEvent(
-              kind: ScanEventKind.error,
+              kind: ScanEventKind.file,
               visitedFiles: visited,
-              path: result.path,
-              error: failure,
+              file: file,
             );
-            continue;
           }
-          final file = result.file;
-          if (file == null) {
-            yield ScanEvent(
-              kind: ScanEventKind.skipped,
-              visitedFiles: visited,
-              path: result.path,
-            );
-            continue;
-          }
-          // SMB providers can return an entry more than once while
-          // generated files are changing during a scan.
-          if (!visitedFiles.add(file.relativePath)) continue;
-          visited++;
-          yield ScanEvent(
-            kind: ScanEventKind.file,
-            visitedFiles: visited,
-            file: file,
-          );
         }
       }
     }
@@ -256,6 +291,19 @@ base class LibraryScanner {
   }
 
   /// Sieht sich eine Datei an, ohne etwas zu melden.
+  Future<({List<FileSystemEntity> entries, Object? error})> _list(
+    Directory directory,
+  ) async {
+    try {
+      return (
+        entries: await directory.list(followLinks: false).toList(),
+        error: null,
+      );
+    } on Object catch (error) {
+      return (entries: <FileSystemEntity>[], error: error);
+    }
+  }
+
   ///
   /// Alles, was hier passiert, kann neben anderen Dateien passieren; gemeldet
   /// wird danach, einzeln und der Reihe nach.

@@ -55,7 +55,7 @@ Lauffähig als Einzelplatz-Bibliothek:
 - Einstellungen mit Thema, Dichte, Bibliotheken, Geräten und Diagnose
 - Hell und Dunkel gleichwertig, Dichteumschaltung komfortabel/kompakt
 
-Datenmodell (Schema 16):
+Datenmodell (Schema 23):
 
 - `sources` — die geöffnete Bibliothek ist selbst eine Quelle
 - `availability` auf Dateien und Werken; der Pfad ist nicht mehr die Identität
@@ -66,6 +66,29 @@ Wiedergabe, Reader, Peer-Server-Anbindung, Katalog-Delta, Sync-Journal,
 Downloads, Metadaten-Abgleich und Schutzmodus sind inzwischen im Workspace
 vorhanden. `legacy/` bleibt als Referenz erhalten und ist kein Bestandteil des
 aktiven Builds.
+
+### Datensicherung und Dauerbetrieb
+
+`Einstellungen → Serverwartung` sichert einen konsistenten SQLite-Schnappschuss
+zusammen mit Fundus-Metadaten und Bildern als ZIP. Enthalten sind auch eigene
+Eigenschaften, Personenprofile, Bewertungen und Teile-Metadaten. Die Sicherung
+enthält private Daten, aber keine Geräte-Schlüssel oder Mediendateien.
+Die Wiederherstellung prüft das Archiv und die Datenbank und legt ausschließlich
+einen **neuen** Vault-Ordner an. Medien anschließend mit denselben relativen
+Pfaden separat zurückkopieren; vorhandene Vaults werden nicht überschrieben.
+`index.db` ist noch kein vollständig entbehrlicher Cache: vor einem Neuaufbau
+die Sicherung benutzen. Ein App-Update nicht durch Deinstallation ersetzen.
+
+Ein aktiver Host prüft seine Bibliothekszugriffe alle 15 Sekunden und versucht
+fehlgeschlagene Handles mit Rücknahmeintervall wiederherzustellen. Kopplungen,
+Zertifikat und Server-Port bleiben dabei unverändert. Mehrere gleichzeitig
+schreibende Desktops auf derselben SMB-SQLite-Datei sind weiterhin nicht
+empfohlen: pro Vault einen schreibenden Host benutzen, weitere Geräte per API.
+Der konkrete Windows-/SMB-Langzeittest bleibt eine Geräteabnahme.
+
+Neue Vorschau-Builds erfordern eine grüne CI; die sichtbare Version samt Commit
+steht unter `Diagnose & Logging`. GitHub hält Vorschau-Artefakte 90 Tage vor.
+Das ist keine dauerhafte Release-Ablage.
 
 ## Entwicklung
 

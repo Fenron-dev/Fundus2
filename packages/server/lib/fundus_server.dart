@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
 export 'src/pairing.dart';
 
@@ -42,11 +43,22 @@ final class SharedFundusLibrary {
   _tracksById = {};
   final Map<String, String> _catalogueHashes = {};
   DateTime? _readAt;
+  int? _revision;
+  Set<String> _publicTags = const {};
+  bool _failed = false;
+  void markUnusable() {
+    _failed = true;
+  }
+
+  Set<String> get publicTags {
+    _ensureFresh();
+    return _publicTags;
+  }
 
   String get id => library.manifest.libraryId;
 
   /// Ob die Bibliothek dahinter noch antwortet.
-  bool get isUsable => library.isUsable;
+  bool get isUsable => !_failed && library.isUsable;
 
   List<LibraryWorkSummary> get works {
     _ensureFresh();
@@ -63,14 +75,19 @@ final class SharedFundusLibrary {
   void invalidate() => _readAt = null;
 
   void _ensureFresh() {
-    final read = _readAt;
-    if (read != null && DateTime.now().difference(read) < freshness) return;
-    _works = library.listWorks();
+    final revision = library.catalogueRevision;
+    if (_readAt != null && revision == _revision) return;
+    _works = library
+        .listWorks()
+        .where((work) => work.sourceId == FundusDatabase.localSourceId)
+        .toList(growable: false);
     _worksById = {for (final work in _works) work.id: work};
+    _publicTags = library.listTags().toSet();
     _tracksByWork.clear();
     _tracksById.clear();
     _catalogueHashes.clear();
     _readAt = DateTime.now();
+    _revision = revision;
   }
 
   List<LibraryPlaybackTrack> tracksFor(String workId) {
@@ -519,7 +536,8 @@ final class FundusServerHandler {
     return _json({
       'library_id': libraryId,
       'works': [
-        for (final work in page) _catalogueEntryAndRemember(entry, work),
+        for (final work in page)
+          _catalogueEntryAndRemember(entry, work, _canViewAdult(request)),
       ],
       if (next < visible.length) 'next_cursor': '$next',
     });
@@ -542,9 +560,11 @@ final class FundusServerHandler {
           if (_canViewWork(request, work))
             {
               'id': work.id,
-              'hash': entry._catalogueHashes[work.id] ??= _hashOf(
-                _catalogueEntry(entry, work),
-              ),
+              'hash':
+                  entry._catalogueHashes['${work.id}:${_canViewAdult(request)}'] ??=
+                      _hashOf(
+                        _catalogueEntry(entry, work, _canViewAdult(request)),
+                      ),
             },
       ],
     });
@@ -553,17 +573,23 @@ final class FundusServerHandler {
   Map<String, Object?> _catalogueEntryAndRemember(
     SharedFundusLibrary entry,
     LibraryWorkSummary work,
+    bool includeProtected,
   ) {
-    final value = _catalogueEntry(entry, work);
-    entry._catalogueHashes[work.id] = _hashOf(value);
+    final value = _catalogueEntry(entry, work, includeProtected);
+    entry._catalogueHashes['${work.id}:$includeProtected'] = _hashOf(value);
     return value;
   }
 
   Map<String, Object?> _catalogueEntry(
     SharedFundusLibrary entry,
     LibraryWorkSummary work,
+    bool includeProtected,
   ) => {
-    ..._workJson(work),
+    ..._workJson(work, visibleTags: includeProtected ? null : entry.publicTags),
+    'properties': entry.library.exportWorkProperties(
+      work.id,
+      includeProtected: includeProtected,
+    ),
     'files': [for (final track in entry.tracksFor(work.id)) _trackJson(track)],
   };
 
@@ -595,7 +621,10 @@ final class FundusServerHandler {
         for (final work in entry.works)
           if (_canViewWork(request, work))
             {
-              ..._workJson(work),
+              ..._workJson(
+                work,
+                visibleTags: _canViewAdult(request) ? null : entry.publicTags,
+              ),
               'cover_url': work.coverPath == null
                   ? null
                   : '/v1/libraries/$libraryId/works/${work.id}/cover',
@@ -618,8 +647,15 @@ final class FundusServerHandler {
         ? await entry.library.playbackChapters(workId)
         : const <LibraryPlaybackChapter>[];
     return _json({
-      ..._workJson(work),
+      ..._workJson(
+        work,
+        visibleTags: _canViewAdult(request) ? null : entry.publicTags,
+      ),
       'files': [for (final track in entry.tracksFor(workId)) _trackJson(track)],
+      'properties': entry.library.exportWorkProperties(
+        workId,
+        includeProtected: _canViewAdult(request),
+      ),
       'chapters': [for (final chapter in chapters) _chapterJson(chapter)],
       'cover_url': work.coverPath == null
           ? null
@@ -822,6 +858,13 @@ final class FundusServerHandler {
     // entstanden ist, soll hier dieselbe Liste sein und nicht eine zweite mit
     // gleichem Namen. Fehlt sie, vergibt die Bibliothek eine.
     final given = decoded['id'];
+    if (given is String &&
+        given.trim().isNotEmpty &&
+        entry.library.loadPlaylist(given.trim()) != null) {
+      return _json({
+        'error': 'playlist_exists',
+      }, statusCode: HttpStatus.conflict);
+    }
     final playlist = entry.library.savePlaylist(
       playlistId: given is String && given.trim().isNotEmpty
           ? given.trim()
@@ -1108,6 +1151,15 @@ final class FundusServerHandler {
         entries.any((item) => entry.findWork(item.workId) == null)) {
       return null;
     }
+    if (entries.any(
+      (item) =>
+          item.fileId != null &&
+          !entry
+              .tracksFor(item.workId)
+              .any((track) => track.fileId == item.fileId),
+    )) {
+      return null;
+    }
     final normalizedMediaType =
         mediaType is String && mediaType.trim().isNotEmpty
         ? mediaType.trim()
@@ -1154,13 +1206,17 @@ final class FundusServerHandler {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
     final raw = request.url.queryParameters['since'];
-    final since = raw == null || raw.trim().isEmpty
-        ? null
-        : DateTime.tryParse(raw) ??
-              DateTime.fromMillisecondsSinceEpoch(
-                int.tryParse(raw) ?? 0,
-                isUtc: true,
-              );
+    DateTime? since;
+    if (raw != null && raw.trim().isNotEmpty) {
+      since = DateTime.tryParse(raw);
+      if (since == null) {
+        final number = int.tryParse(raw);
+        if (number == null || number.abs() > 8640000000000000) {
+          return _badRequest('invalid_since');
+        }
+        since = DateTime.fromMillisecondsSinceEpoch(number, isUtc: true);
+      }
+    }
     final changed = entry.library.progressChangedSince(since);
     return _json({
       'library_id': libraryId,
@@ -1195,7 +1251,9 @@ final class FundusServerHandler {
     if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
-    return _json(_annotationsJson(entry.library.loadAnnotations(workId)));
+    return _json(
+      _annotationsJson(request, entry, entry.library.loadAnnotations(workId)),
+    );
   }
 
   Future<Response> _saveNote(
@@ -1217,7 +1275,7 @@ final class FundusServerHandler {
       return _badRequest('invalid_note');
     }
     final annotations = await entry.library.saveWorkNote(workId, markdown);
-    return _json(_annotationsJson(annotations));
+    return _json(_annotationsJson(request, entry, annotations));
   }
 
   Future<Response> _saveTags(
@@ -1240,9 +1298,18 @@ final class FundusServerHandler {
     }
     final annotations = await entry.library.replaceWorkTags(
       workId,
-      tags.cast<String>(),
+      {
+        ...tags.cast<String>().where(
+          (tag) => _canViewAdult(request) || !entry.library.isTagProtected(tag),
+        ),
+        if (!_canViewAdult(request))
+          ...entry.library
+              .loadAnnotations(workId)
+              .tags
+              .where((tag) => !entry.publicTags.contains(tag)),
+      }.toList(),
     );
-    return _json(_annotationsJson(annotations));
+    return _json(_annotationsJson(request, entry, annotations));
   }
 
   Future<Response> _saveRating(
@@ -1273,7 +1340,7 @@ final class FundusServerHandler {
       fileId: fileId is String ? fileId : null,
       value: value.toInt(),
     );
-    return _json(_annotationsJson(annotations));
+    return _json(_annotationsJson(request, entry, annotations));
   }
 
   Future<Response> _deleteRating(
@@ -1294,7 +1361,7 @@ final class FundusServerHandler {
       workId: workId,
       fileId: fileId is String ? fileId : null,
     );
-    return _json(_annotationsJson(annotations));
+    return _json(_annotationsJson(request, entry, annotations));
   }
 
   Future<Response> _saveBookmark(
@@ -1334,7 +1401,7 @@ final class FundusServerHandler {
       label: decoded?['label'] is String ? decoded!['label'] as String : null,
       note: decoded?['note'] is String ? decoded!['note'] as String : null,
     );
-    return _json(_annotationsJson(annotations));
+    return _json(_annotationsJson(request, entry, annotations));
   }
 
   Future<Response> _saveHighlight(
@@ -1378,7 +1445,7 @@ final class FundusServerHandler {
           : '#FFF176',
       note: decoded?['note'] is String ? decoded!['note'] as String : null,
     );
-    return _json(_annotationsJson(annotations));
+    return _json(_annotationsJson(request, entry, annotations));
   }
 
   Future<Response> _deleteBookmark(
@@ -1397,6 +1464,8 @@ final class FundusServerHandler {
     }
     return _json(
       _annotationsJson(
+        request,
+        entry,
         await entry.library.deleteBookmark(workId, annotationId),
       ),
     );
@@ -1418,13 +1487,22 @@ final class FundusServerHandler {
     }
     return _json(
       _annotationsJson(
+        request,
+        entry,
         await entry.library.deleteHighlight(workId, annotationId),
       ),
     );
   }
 
-  Map<String, Object?> _annotationsJson(WorkAnnotations annotations) => {
-    'tags': annotations.tags,
+  Map<String, Object?> _annotationsJson(
+    Request request,
+    SharedFundusLibrary entry,
+    WorkAnnotations annotations,
+  ) => {
+    'tags': [
+      for (final tag in annotations.tags)
+        if (_canViewAdult(request) || entry.publicTags.contains(tag)) tag,
+    ],
     'notes': [
       for (final note in annotations.notes)
         {
@@ -1507,6 +1585,24 @@ final class FundusServerHandler {
     final profile = decoded?['profile'];
     if (profile is! Map<String, dynamic>) {
       return _badRequest('invalid_reader_profile');
+    }
+    if (deviceKey.length > 128 ||
+        !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(deviceKey) ||
+        !{
+          'comic',
+          'manga',
+          'pdf',
+          'epub',
+          'publication',
+          'reflow',
+          'text',
+        }.contains(readerKind) ||
+        utf8.encode(jsonEncode(profile)).length > 8192) {
+      return _badRequest('invalid_reader_profile');
+    }
+    final caller = request.context['fundus_device_id'];
+    if (caller is String && caller != deviceKey) {
+      return _json({'error': 'device_mismatch'}, statusCode: 403);
     }
     await entry.library.savePortableReaderProfile(
       workId: workId,
@@ -1836,14 +1932,22 @@ final class FundusServerHandler {
           return await inner(request);
         } on Object catch (error) {
           final libraryId = _libraryIdIn(request.url.pathSegments);
+          final entry = libraryId == null ? null : registry.lookup(libraryId);
+          // A schema probe can still hit cached pages while the next work
+          // query fails with SQLITE_IOERR on an interrupted network share.
+          // Remember that failure until the handle has actually been replaced.
+          if (error is SqliteException && {10, 14}.contains(error.resultCode)) {
+            entry?.markUnusable();
+          }
+          if (error is SqliteException && {5, 6}.contains(error.resultCode)) {
+            return _json({'error': 'database_busy'}, statusCode: 503);
+          }
           // Eine Bibliothek, deren Datenbank nicht mehr antwortet, ist kein
           // Programmfehler, sondern ein Zustand — sie wurde geschlossen, oder
           // die Freigabe darunter ist weggebrochen. Wer sie meldet, kann sie
           // auch wieder öffnen; bis dahin ist 503 die ehrlichere Antwort als
           // 500, weil sie „später nochmal" heißt statt „kaputt".
-          final unusable =
-              libraryId != null &&
-              registry.lookup(libraryId)?.isUsable == false;
+          final unusable = libraryId != null && entry?.isUsable == false;
           if (unusable) {
             onLibraryUnusable?.call(libraryId);
           }
@@ -1872,12 +1976,19 @@ final class FundusServerHandler {
     };
   }
 
-  static Map<String, Object?> _workJson(LibraryWorkSummary work) => {
+  static Map<String, Object?> _workJson(
+    LibraryWorkSummary work, {
+    Set<String>? visibleTags,
+  }) => {
     'id': work.id,
     'kind': work.kind,
     'title': work.title,
     'authors': work.authors.isEmpty ? [work.author] : work.authors,
     'subtitle': work.subtitle,
+    'alternate_titles': work.alternateTitles,
+    'external_ids': work.externalIds,
+    'publication_status': work.publicationStatus,
+    'personal_status': work.personalStatus,
     'series': work.series,
     'series_sequence': work.seriesSequence,
     'narrators': work.narrators,
@@ -1888,7 +1999,10 @@ final class FundusServerHandler {
     'genres': work.genres,
     'content_style': work.contentStyle,
     'file_count': work.fileCount,
-    'tags': work.tags,
+    'tags': [
+      for (final tag in work.tags)
+        if (visibleTags == null || visibleTags.contains(tag)) tag,
+    ],
     if (work.contentSensitivity != null)
       'content_sensitivity': work.contentSensitivity,
     'added_at': work.addedAt.toUtc().toIso8601String(),

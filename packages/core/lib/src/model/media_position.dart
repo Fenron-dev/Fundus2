@@ -95,6 +95,19 @@ final class MediaPosition {
     label: label,
   );
 
+  /// A stable complete position for sync comparisons (presentation labels
+  /// and a newly discovered total do not move the reader).
+  String get syncKey => [
+    kind.name,
+    schemaVersion,
+    fileId ?? '',
+    numericValue?.toStringAsFixed(6) ?? '',
+    key ?? '',
+    chapterId ?? '',
+    elementId ?? '',
+    scrollOffset?.toStringAsFixed(6) ?? '',
+  ].join('|');
+
   Map<String, Object?> toJson() => {
     'schema_version': schemaVersion,
     'kind': kind.name,
@@ -109,6 +122,24 @@ final class MediaPosition {
   };
 
   factory MediaPosition.fromJson(Map<String, Object?> json) {
+    if (json['schema_version'] != null && json['schema_version'] is! int ||
+        json['kind'] is! String ||
+        !MediaPositionKind.values.any((kind) => kind.name == json['kind']) ||
+        ['numeric_value', 'total', 'scroll_offset'].any(
+          (key) =>
+              json[key] != null &&
+              (json[key] is! num || !(json[key] as num).isFinite),
+        ) ||
+        [
+          'key',
+          'file_id',
+          'chapter_id',
+          'element_id',
+          'label',
+        ].any((key) => json[key] != null && json[key] is! String) ||
+        json['numeric_value'] == null && json['key'] == null) {
+      throw const FormatException('Ungültige Medienposition.');
+    }
     final version = json['schema_version'] as int? ?? 1;
     if (version < 1 || version > currentSchemaVersion) {
       throw FormatException('Nicht unterstützte Positionsversion: $version.');

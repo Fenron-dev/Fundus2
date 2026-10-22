@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -41,12 +42,47 @@ final class PeerFileCache {
       p.join(directory.path, '${track.fileId}${p.extension(track.title)}'),
     );
 
+    final marker = File('${target.path}.meta');
+    Map<String, dynamic>? stored;
+    try {
+      if (await marker.exists()) {
+        stored =
+            jsonDecode(await marker.readAsString()) as Map<String, dynamic>;
+      }
+    } on Object {
+      stored = null;
+    }
+    final complete =
+        await target.exists() &&
+        stored?['length'] is int &&
+        await target.length() == stored!['length'] &&
+        (stored['length'] as int) > 0;
+
     final client = HttpClient();
     try {
-      final request = await client.getUrl(
-        proxy.uriFor(track.fileId, extension: p.extension(track.title)),
+      final request = await client
+          .getUrl(
+            proxy.uriFor(track.fileId, extension: p.extension(track.title)),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (complete && stored['etag'] is String) {
+        request.headers.set(
+          HttpHeaders.ifNoneMatchHeader,
+          stored['etag'] as String,
+        );
+      } else if (complete && stored['last_modified'] is String) {
+        request.headers.set(
+          HttpHeaders.ifModifiedSinceHeader,
+          stored['last_modified'] as String,
+        );
+      }
+      final response = await request.close().timeout(
+        const Duration(seconds: 20),
       );
-      final response = await request.close();
+      if (response.statusCode == HttpStatus.notModified && complete) {
+        return target.path;
+      }
+      if (response.statusCode >= 500 && complete) return target.path;
       if (response.statusCode >= 400) {
         throw HttpException(
           'Die Datei ließ sich nicht holen (${response.statusCode}).',
@@ -60,16 +96,6 @@ final class PeerFileCache {
       final lastModified = response.headers.value(
         HttpHeaders.lastModifiedHeader,
       );
-      final marker = File('${target.path}.meta');
-      Map<String, dynamic>? stored;
-      if (await marker.exists()) {
-        try {
-          stored =
-              jsonDecode(await marker.readAsString()) as Map<String, dynamic>;
-        } on Object {
-          stored = null;
-        }
-      }
       final identityMatches = etag != null
           ? stored != null && stored['etag'] == etag
           : lastModified != null &&
@@ -79,7 +105,16 @@ final class PeerFileCache {
           identityMatches &&
           await target.exists() &&
           await target.length() == expected) {
-        await response.drain<void>();
+        // Upgrade older markers too, so the verified file is usable offline.
+        await marker.writeAsString(
+          jsonEncode({
+            'length': expected,
+            'etag': ?etag,
+            'last_modified': ?lastModified,
+          }),
+          flush: true,
+        );
+        // Closing the client cancels this unnecessary body immediately.
         return target.path;
       }
 
@@ -89,7 +124,9 @@ final class PeerFileCache {
       final sink = partial.openWrite();
       var received = 0;
       try {
-        await for (final chunk in response) {
+        await for (final chunk in response.timeout(
+          const Duration(seconds: 30),
+        )) {
           sink.add(chunk);
           received += chunk.length;
           onProgress?.call(expected > 0 ? received / expected : null);
@@ -99,16 +136,26 @@ final class PeerFileCache {
       } finally {
         await sink.close();
       }
+      if (expected >= 0 && received != expected) {
+        throw const HttpException('Die Datei kam unvollständig an.');
+      }
       if (await target.exists()) await target.delete();
       await partial.rename(target.path);
       await marker.writeAsString(
         jsonEncode({
+          'length': received,
           ...?(etag == null ? null : {'etag': etag}),
           ...?(lastModified == null ? null : {'last_modified': lastModified}),
         }),
         flush: true,
       );
       return target.path;
+    } on SocketException {
+      if (complete) return target.path;
+      rethrow;
+    } on TimeoutException {
+      if (complete) return target.path;
+      rethrow;
     } finally {
       client.close(force: true);
     }

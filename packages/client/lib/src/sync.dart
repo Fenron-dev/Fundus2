@@ -335,14 +335,10 @@ final class FundusSync {
   /// It has to change whenever the position does and stay identical when it
   /// does not — the whole baseline rests on that.
   static String _markOf(LibraryPlaybackProgress value) =>
-      '${value.fileId ?? ''}|'
-      '${(value.position.numericValue ?? 0).toStringAsFixed(3)}|'
-      '${value.position.elementId ?? ''}|${value.finished}';
+      '${value.position.withFileId(value.fileId).syncKey}|${value.finished}';
 
   static String _markOfRemote(RemoteProgress value) =>
-      '${value.fileId ?? ''}|'
-      '${(value.position.numericValue ?? 0).toStringAsFixed(3)}|'
-      '${value.position.elementId ?? ''}|${value.finished}';
+      '${value.position.withFileId(value.fileId).syncKey}|${value.finished}';
 
   void _remember(String workId, LibraryPlaybackProgress value) =>
       _agreed[workId] = _markOf(value);
@@ -410,11 +406,7 @@ final class FundusSync {
   }
 
   static bool _samePlace(LibraryPlaybackProgress mine, RemoteProgress theirs) =>
-      mine.fileId == theirs.fileId &&
-      mine.finished == theirs.finished &&
-      (mine.position.numericValue ?? 0) ==
-          (theirs.position.numericValue ?? 0) &&
-      mine.position.elementId == theirs.position.elementId;
+      _markOf(mine) == _markOfRemote(theirs);
 
   void _pull(String workId, RemoteProgress theirs) {
     if (library.isReadOnly) return;
