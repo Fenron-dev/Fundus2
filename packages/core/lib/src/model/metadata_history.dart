@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:async';
 
 import 'fundus_id.dart';
+import 'metadata_history_policy.dart';
+import 'metadata_image.dart';
 
 /// A logical edit may await images/sidecars without holding a SQLite
 /// transaction open. Each committed metadata step shares this identity.
@@ -260,8 +262,10 @@ final class MetadataChangeBatch {
 }
 
 final class MetadataHistory {
-  MetadataHistory({Iterable<MetadataChangeBatch> batches = const []})
-    : batches = List.unmodifiable(batches) {
+  MetadataHistory({
+    Iterable<MetadataChangeBatch> batches = const [],
+    this.policy = const MetadataHistoryPolicy(),
+  }) : batches = List.unmodifiable(batches) {
     if (this.batches.length > maxBatches ||
         this.batches.map((batch) => batch.id).toSet().length !=
             this.batches.length) {
@@ -271,13 +275,36 @@ final class MetadataHistory {
   static const maxBytes = 32 * 1024 * 1024;
   static const maxBatches = 1000;
   final List<MetadataChangeBatch> batches;
+  final MetadataHistoryPolicy policy;
+
+  Map<String, MetadataImageVersion> get referencedImages {
+    final result = <String, MetadataImageVersion>{};
+    for (final batch in batches) {
+      for (final change in batch.changes.where(
+        (change) => change.field == 'cover' || change.field == 'backdrop',
+      )) {
+        for (final state in [change.before, change.after]) {
+          final image = MetadataImageVersion.inState(state.value);
+          if (image == null) continue;
+          if (result[image.path] case final previous?
+              when previous.bytes != image.bytes) {
+            throw const FormatException('Widersprüchliche Bildversionsbelege.');
+          }
+          result[image.path] = image;
+        }
+      }
+    }
+    return Map.unmodifiable(result);
+  }
 
   /// Idempotent retries are safe. Reusing an id for different changes is not.
   MetadataHistory append(
     MetadataChangeBatch batch, {
-    int retainBatches = 100,
-    int byteBudget = 16 * 1024 * 1024,
+    int? retainBatches,
+    int? byteBudget,
   }) {
+    retainBatches ??= policy.retainBatches;
+    byteBudget ??= policy.byteBudget;
     if (retainBatches < 1 ||
         retainBatches > maxBatches ||
         byteBudget < 1 ||
@@ -302,7 +329,9 @@ final class MetadataHistory {
       for (final value in kept) utf8.encode(jsonEncode(value.toJson())).length,
     ];
     var bytes =
-        utf8.encode(MetadataHistory().encode()).length + kept.length - 1;
+        utf8.encode(MetadataHistory(policy: policy).encode()).length +
+        kept.length -
+        1;
     for (final size in sizes) {
       bytes += size;
     }
@@ -315,11 +344,12 @@ final class MetadataHistory {
         'Diese Massenänderung überschreitet das Verlaufsbudget.',
       );
     }
-    return MetadataHistory(batches: kept.skip(start));
+    return MetadataHistory(batches: kept.skip(start), policy: policy);
   }
 
   String encode() => jsonEncode({
-    'format_version': 2,
+    'format_version': 3,
+    'policy': policy.toJson(),
     'batches': batches.map((batch) => batch.toJson()).toList(),
   });
 
@@ -329,13 +359,16 @@ final class MetadataHistory {
     }
     final raw = jsonDecode(encoded);
     if (raw is! Map ||
-        !const [1, 2].contains(raw['format_version']) ||
+        !const [1, 2, 3].contains(raw['format_version']) ||
         raw['batches'] is! List ||
         (raw['batches'] as List).length > maxBatches) {
       throw const FormatException('Nicht unterstützter Metadatenverlauf.');
     }
     final legacy = raw['format_version'] == 1;
-    return MetadataHistory(
+    final history = MetadataHistory(
+      policy: raw['format_version'] == 3
+          ? MetadataHistoryPolicy.fromJson(raw['policy'])
+          : const MetadataHistoryPolicy(),
       batches: (raw['batches'] as List).map((value) {
         if (!legacy || value is! Map || value['changes'] is! List) {
           return MetadataChangeBatch.fromJson(value);
@@ -349,6 +382,8 @@ final class MetadataHistory {
         });
       }),
     );
+    history.referencedImages;
+    return history;
   }
 }
 

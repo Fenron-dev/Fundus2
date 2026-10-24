@@ -192,6 +192,10 @@ class _MetadataEditorState extends State<_MetadataEditor> {
               bytes: _coverBytes!,
               extension: _coverExtension,
             );
+            await widget.library.setCoverPreference(
+              widget.work.id,
+              generated: true,
+            );
           }
           if (_backdropBytes != null) {
             await widget.library.cacheBackdrop(

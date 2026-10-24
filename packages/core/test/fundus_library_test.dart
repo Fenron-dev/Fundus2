@@ -691,7 +691,7 @@ void main() {
       final metadata = await File(
         '${original.path}/_fundus/meta.yaml',
       ).readAsString();
-      expect(metadata, contains('"format_version": 4'));
+      expect(metadata, contains('"format_version": 5'));
       expect(metadata, contains('"work_id": "${originalWork.id}"'));
       expect(metadata, contains('"base_kind": "audiobook"'));
 

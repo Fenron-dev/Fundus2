@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
+import 'package:crypto/crypto.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import 'package:path/path.dart' as p;
@@ -27,12 +28,15 @@ import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/metadata_import_conflict.dart';
 import '../model/metadata_history.dart';
+import '../model/metadata_history_policy.dart';
+import '../model/metadata_image.dart';
 import '../model/person_role.dart';
 import '../model/person_profile.dart';
 import '../model/work_property.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import 'remote_catalogue.dart';
+import 'metadata_image_store.dart';
 import '../publication/epub_package.dart';
 import '../publication/publication_manifest.dart';
 import '../publication/publication_engine.dart';
@@ -119,6 +123,8 @@ final class FundusLibrary {
   final Map<String, Future<PublicationManifest?>> _publicationReads = {};
   final Map<String, Future<void>> _checkpointWrites = {};
   Future<void> _metadataHistoryOperations = Future.value();
+  Future<void> _metadataImageOperations = Future.value();
+  bool _metadataImageCollectionPending = false;
   Object? contentUpdatesError;
   Object? metadataHistoryError;
 
@@ -143,6 +149,7 @@ final class FundusLibrary {
     Set<String>? visibleTagNames,
     bool includeProtected = false,
   }) => MetadataHistory(
+    policy: _database.metadataHistoryPolicy,
     batches: [
       for (final batch in _database.metadataHistorySnapshot().history.batches)
         MetadataChangeBatch(
@@ -194,28 +201,83 @@ final class FundusLibrary {
     Set<String>? visiblePropertyIds,
     Set<String>? visibleTagNames,
     bool includeProtected = false,
-  }) async {
-    _ensureWritable();
-    final plan = _database.undoMetadataBatch(
-      batchId,
-      visibleWorkIds: visibleWorkIds,
-      selectedKeys: selectedKeys,
-      expectedAfter: expectedAfter,
-      visiblePropertyIds: visiblePropertyIds,
-      visibleTagNames: visibleTagNames,
-      includeProtected: includeProtected,
-    );
-    await persistMetadataHistory();
-    for (final id in plan.applicable.map((change) => change.workId).toSet()) {
-      await _writeMetadataSidecar(id);
-      if (plan.applicable.any(
-            (change) => change.workId == id && change.field == 'tags',
-          ) &&
-          _usesPortableSidecars(id)) {
-        await _writeAnnotationSidecars(id);
+  }) {
+    Future<MetadataUndoPlan> run() async {
+      _ensureWritable();
+      final preview = _database.previewMetadataUndo(
+        batchId,
+        visibleWorkIds: visibleWorkIds,
+        selectedKeys: selectedKeys,
+        visiblePropertyIds: visiblePropertyIds,
+        visibleTagNames: visibleTagNames,
+        includeProtected: includeProtected,
+      );
+      if (preview.conflicts.isNotEmpty) {
+        throw MetadataUndoConflictException(preview);
       }
+      final store = MetadataImageStore(root);
+      for (final change in preview.applicable.where(
+        (change) => change.field == 'cover' || change.field == 'backdrop',
+      )) {
+        final previous = MetadataImageVersion.inState(change.before.value);
+        if (change.before.present && previous == null) {
+          throw const FormatException(
+            'Die frühere Bildversion ist nicht verfügbar.',
+          );
+        }
+        if (previous != null) await store.verify(previous);
+        final selected = change.field == 'cover'
+            ? _database.metadataCoverDescriptor(change.workId).path
+            : _database.metadataBackdropPath(change.workId);
+        if (change.after.present) {
+          final current = MetadataImageVersion.inState(change.after.value);
+          if (current == null || selected == null) {
+            throw const FormatException(
+              'Das aktuelle Bild hat keinen sicheren Versionsbeleg.',
+            );
+          }
+          final bytes = await store.readVaultImage(selected);
+          if (bytes.length != current.bytes ||
+              sha256.convert(bytes).toString() != current.digest) {
+            throw StateError('Das Bild wurde nach der Vorschau verändert.');
+          }
+        } else if (selected != null) {
+          throw StateError('Das Bild wurde nach der Vorschau verändert.');
+        }
+      }
+      final plan = _database.undoMetadataBatch(
+        batchId,
+        visibleWorkIds: visibleWorkIds,
+        selectedKeys: selectedKeys,
+        expectedAfter: expectedAfter,
+        visiblePropertyIds: visiblePropertyIds,
+        visibleTagNames: visibleTagNames,
+        includeProtected: includeProtected,
+      );
+      if (plan.applicable.any(
+        (change) => change.field == 'cover' || change.field == 'backdrop',
+      )) {
+        _metadataImageCollectionPending = true;
+      }
+      await persistMetadataHistory();
+      for (final id in plan.applicable.map((change) => change.workId).toSet()) {
+        await _writeMetadataSidecar(id);
+        if (plan.applicable.any(
+              (change) => change.workId == id && change.field == 'tags',
+            ) &&
+            _usesPortableSidecars(id)) {
+          await _writeAnnotationSidecars(id);
+        }
+      }
+      return plan;
     }
-    return plan;
+
+    return selectedKeys.any(
+          (key) =>
+              key.endsWith('\u0000cover') || key.endsWith('\u0000backdrop'),
+        )
+        ? _imageOperation(run)
+        : run();
   }
 
   Future<void> _exportMetadataHistoryNow() async {
@@ -229,6 +291,18 @@ final class FundusLibrary {
       _database.markMetadataHistoryExported(snapshot.revision);
     }
     metadataHistoryError = null;
+    if (_metadataImageCollectionPending &&
+        !_database.metadataHistoryNeedsExport) {
+      final retained = _database
+          .metadataHistorySnapshot()
+          .history
+          .referencedImages
+          .keys;
+      await MetadataImageStore(
+        root,
+      ).collect({...retained, ..._database.activeMetadataImagePaths()});
+      _metadataImageCollectionPending = false;
+    }
   }
 
   Future<void> persistMetadataHistory({bool force = false}) {
@@ -300,9 +374,18 @@ final class FundusLibrary {
   /// applying metadata; mutation integration must supply its actual before/after.
   Future<void> appendMetadataHistory(
     MetadataChangeBatch batch, {
-    int retainBatches = 100,
-    int byteBudget = 16 * 1024 * 1024,
+    int? retainBatches,
+    int? byteBudget,
   }) {
+    if (batch.changes.any(
+      (change) => change.field == 'cover' || change.field == 'backdrop',
+    )) {
+      return Future.error(
+        ArgumentError(
+          'Bildversionen werden nur mit der tatsächlichen Bildänderung protokolliert.',
+        ),
+      );
+    }
     final operation = _ioZone.run(
       () => _metadataHistoryOperations.then((_) async {
         _ensureWritable();
@@ -326,6 +409,25 @@ final class FundusLibrary {
     );
     return operation;
   }
+
+  MetadataHistoryPolicy get metadataHistoryPolicy =>
+      _database.metadataHistoryPolicy;
+
+  ({int droppedBatches, int reclaimableImageBytes})
+  previewMetadataHistoryPolicy(MetadataHistoryPolicy policy) =>
+      _database.previewMetadataHistoryPolicy(policy);
+
+  /// Only immutable managed versions can be previewed from history.
+  Future<Uint8List> readMetadataHistoryImage(MetadataImageVersion version) =>
+      MetadataImageStore(root).verify(version);
+
+  Future<void> setMetadataHistoryPolicy(MetadataHistoryPolicy policy) =>
+      _imageOperation(() async {
+        _ensureWritable();
+        _database.setMetadataHistoryPolicy(policy);
+        _metadataImageCollectionPending = true;
+        await persistMetadataHistory();
+      });
 
   Future<void> _contentUpdateOperation(Future<void> Function() action) {
     final operation = _ioZone.run(
@@ -1226,6 +1328,7 @@ final class FundusLibrary {
   /// flight. Anything that has to see it — closing the vault, a test reading
   /// the file back — waits here rather than guessing at a delay.
   Future<void> flushSidecarWrites() async {
+    await _metadataImageOperations;
     if (!isReadOnly && !_closed) await persistMetadataHistory(force: true);
     await _metadataHistoryOperations;
     await _contentUpdateOperations;
@@ -2096,30 +2199,117 @@ final class FundusLibrary {
     required String workId,
     required Uint8List bytes,
     String extension = 'png',
-  }) async {
+  }) => _imageOperation(() async {
     _ensureWritable();
-    if (bytes.isEmpty) throw ArgumentError.value(bytes, 'bytes');
-    final normalizedExtension = extension.toLowerCase() == 'jpg'
-        ? 'jpg'
-        : 'png';
-    final directory = Directory(
-      p.join(root.path, metadataDirectoryName, 'covers'),
+    final store = MetadataImageStore(root);
+    final old = _database.metadataCoverDescriptor(workId);
+    final version = await store.store(
+      bytes,
+      role: 'cover',
+      extension: extension,
     );
-    await directory.create(recursive: true);
-    final filename = '$workId.document.$normalizedExtension';
-    final target = File(p.join(directory.path, filename));
-    await target.writeAsBytes(bytes, flush: true);
-    _database.setGeneratedCoverPath(
-      workId,
-      p.posix.join(metadataDirectoryName, 'covers', filename),
+    final changesVisible = old.prefersGenerated || old.folderPath == null;
+    if (old.generatedPath == version.path &&
+        (!changesVisible ||
+            MetadataImageVersion.inState(
+                  _database
+                      .metadataImageProof(workId, 'cover', old.path)
+                      ?.value,
+                )?.digest ==
+                version.digest)) {
+      return p.join(root.path, p.fromUri(version.path));
+    }
+    final oldState = changesVisible
+        ? await _snapshotImageState(store, workId, 'cover', old.path)
+        : null;
+    final newState = _imageFieldState(version);
+    _database.recordMetadataMutation(
+      workId: workId,
+      source: MetadataEditBatch.current?.source ?? 'user',
+      prepare: oldState == null
+          ? null
+          : () => _database.setMetadataImageProof(
+              workId: workId,
+              role: 'cover',
+              selectedPath: old.path,
+              state: oldState,
+            ),
+      action: () {
+        if (_database.metadataCoverDescriptor(workId) != old) {
+          throw StateError('Das Titelbild wurde zwischenzeitlich geändert.');
+        }
+        _database.setGeneratedCoverPath(workId, version.path);
+        _database.setMetadataImageProof(
+          workId: workId,
+          role: 'generated',
+          selectedPath: version.path,
+          state: newState,
+        );
+        if (changesVisible) {
+          _database.setMetadataImageProof(
+            workId: workId,
+            role: 'cover',
+            selectedPath: version.path,
+            state: newState,
+          );
+        }
+      },
     );
-    return target.path;
-  }
+    _metadataImageCollectionPending = true;
+    await persistMetadataHistory();
+    await _writeMetadataSidecar(workId);
+    return p.join(root.path, p.fromUri(version.path));
+  });
 
-  void setCoverPreference(String workId, {required bool generated}) {
-    _ensureWritable();
-    _database.setCoverPreference(workId, generated: generated);
-  }
+  Future<void> setCoverPreference(String workId, {required bool generated}) =>
+      _imageOperation(() async {
+        _ensureWritable();
+        final old = _database.metadataCoverDescriptor(workId);
+        if (old.prefersGenerated == generated) return;
+        final selected = generated
+            ? old.generatedPath
+            : old.folderPath ?? old.generatedPath;
+        final store = MetadataImageStore(root);
+        final oldState = await _snapshotImageState(
+          store,
+          workId,
+          'cover',
+          old.path,
+        );
+        final newState = await _snapshotImageState(
+          store,
+          workId,
+          'cover',
+          selected,
+        );
+        _database.recordMetadataMutation(
+          workId: workId,
+          source: MetadataEditBatch.current?.source ?? 'user',
+          prepare: () => _database.setMetadataImageProof(
+            workId: workId,
+            role: 'cover',
+            selectedPath: old.path,
+            state: oldState,
+          ),
+          action: () {
+            if (_database.metadataCoverDescriptor(workId) != old) {
+              throw StateError(
+                'Das Titelbild wurde zwischenzeitlich geändert.',
+              );
+            }
+            _database.setCoverPreference(workId, generated: generated);
+            _database.setMetadataImageProof(
+              workId: workId,
+              role: 'cover',
+              selectedPath: selected,
+              state: newState,
+            );
+          },
+        );
+        _metadataImageCollectionPending = true;
+        await persistMetadataHistory();
+        await _writeMetadataSidecar(workId);
+      });
 
   /// Keeps a wide picture for a work.
   ///
@@ -2131,24 +2321,91 @@ final class FundusLibrary {
     required String workId,
     required Uint8List bytes,
     String extension = 'jpg',
-  }) async {
+  }) => _imageOperation(() async {
     _ensureWritable();
-    if (bytes.isEmpty) throw ArgumentError.value(bytes, 'bytes');
-    final normalizedExtension = extension.toLowerCase() == 'png'
-        ? 'png'
-        : 'jpg';
-    final directory = Directory(
-      p.join(root.path, metadataDirectoryName, 'backdrops'),
+    final store = MetadataImageStore(root);
+    final old = _database.metadataBackdropPath(workId);
+    final version = await store.store(
+      bytes,
+      role: 'backdrop',
+      extension: extension,
     );
-    await directory.create(recursive: true);
-    final filename = '$workId.backdrop.$normalizedExtension';
-    final target = File(p.join(directory.path, filename));
-    await target.writeAsBytes(bytes, flush: true);
-    _database.setBackdropPath(
-      workId,
-      p.posix.join(metadataDirectoryName, 'backdrops', filename),
+    if (old == version.path &&
+        MetadataImageVersion.inState(
+              _database.metadataImageProof(workId, 'backdrop', old)?.value,
+            )?.digest ==
+            version.digest) {
+      return p.join(root.path, p.fromUri(version.path));
+    }
+    final oldState = await _snapshotImageState(store, workId, 'backdrop', old);
+    final newState = _imageFieldState(version);
+    _database.recordMetadataMutation(
+      workId: workId,
+      source: MetadataEditBatch.current?.source ?? 'user',
+      prepare: () => _database.setMetadataImageProof(
+        workId: workId,
+        role: 'backdrop',
+        selectedPath: old,
+        state: oldState,
+      ),
+      action: () {
+        if (_database.metadataBackdropPath(workId) != old) {
+          throw StateError('Das Breitbild wurde zwischenzeitlich geändert.');
+        }
+        _database.setBackdropPath(workId, version.path);
+        _database.setMetadataImageProof(
+          workId: workId,
+          role: 'backdrop',
+          selectedPath: version.path,
+          state: newState,
+        );
+      },
     );
-    return target.path;
+    _metadataImageCollectionPending = true;
+    await persistMetadataHistory();
+    await _writeMetadataSidecar(workId);
+    return p.join(root.path, p.fromUri(version.path));
+  });
+
+  Future<T> _imageOperation<T>(Future<T> Function() action) {
+    final operation = _metadataImageOperations.then((_) => action());
+    _metadataImageOperations = _ioZone.run(
+      () => operation.then<void>((_) {}, onError: (Object _) {}),
+    );
+    return operation;
+  }
+
+  MetadataFieldState _imageFieldState(
+    MetadataImageVersion version, {
+    String? source,
+    DateTime? at,
+  }) => MetadataFieldState(
+    present: true,
+    value: {'image': version.toJson()},
+    source: source ?? MetadataEditBatch.current?.source ?? 'user',
+    originAt: at ?? DateTime.now().toUtc(),
+    locked: (source ?? MetadataEditBatch.current?.source ?? 'user') == 'user',
+  );
+
+  Future<MetadataFieldState> _snapshotImageState(
+    MetadataImageStore store,
+    String workId,
+    String role,
+    String? path,
+  ) async {
+    if (path == null) return MetadataFieldState(present: false);
+    final version = await store.snapshot(path, role: role);
+    final previous = _database.metadataImageProof(workId, role, path);
+    final previousVersion = MetadataImageVersion.inState(previous?.value);
+    return _imageFieldState(
+      version,
+      source: previousVersion?.digest == version.digest
+          ? previous!.source
+          : path.startsWith('.library/')
+          ? 'generated'
+          : 'folder',
+      at: previousVersion?.digest == version.digest ? previous!.originAt : null,
+    );
   }
 
   PlaybackSession savePlaybackSession(
@@ -3062,7 +3319,12 @@ final class FundusLibrary {
     final candidates = <AudiobookImportCandidate>[];
     final portableIdentities = <String, _PortableWorkIdentity>{};
     for (final grouped in groupedCandidates) {
-      if (!touched(grouped.directory, grouped.audioFiles)) continue;
+      if (!touched(grouped.directory, [
+        ...grouped.audioFiles,
+        ...grouped.coverFiles,
+      ])) {
+        continue;
+      }
       final portable = await _readPortableIdentity(grouped);
       portableIdentities[grouped.directory] = portable;
       final withAbsMetadata = await _withAbsMetadata(grouped);
@@ -3934,10 +4196,17 @@ final class FundusLibrary {
     // Metadaten behalten.
     final work = workSummary(workId);
     if (work == null) return;
+    final cover = _database.metadataCoverDescriptor(workId);
+    final images = _database.metadataFieldStates(workId)!;
+    final generated = _database.metadataImageProof(
+      workId,
+      'generated',
+      cover.generatedPath,
+    );
     await _writeSidecar(
       File(p.join(directory.path, 'meta.yaml')),
       '${const JsonEncoder.withIndent('  ').convert({
-        'format_version': 4,
+        'format_version': 5,
         'work_id': workId,
         'base_kind': work.kind,
         'custom_type': null,
@@ -3968,8 +4237,105 @@ final class FundusLibrary {
         },
         'tags': annotations.tags,
         'properties': exportWorkProperties(workId, includeProtected: true),
+        'images': {'prefer_generated': cover.prefersGenerated, 'cover': images['cover']!.toJson(), 'generated': generated?.toJson(), 'backdrop': images['backdrop']!.toJson()},
       })}\n',
     );
+  }
+
+  Future<void> _restoreSidecarImages(String workId, Object? raw) async {
+    if (raw is! Map || raw['prefer_generated'] is! bool) {
+      throw const FormatException('Bildauswahl im Werk-Sidecar ist ungültig.');
+    }
+    final store = MetadataImageStore(root);
+    MetadataFieldState? readState(Object? value) =>
+        value == null ? null : MetadataFieldState.fromJson(value);
+    final cover = readState(raw['cover']);
+    final generated = readState(raw['generated']);
+    final backdrop = readState(raw['backdrop']);
+    for (final state in [cover, generated, backdrop]) {
+      if (state == null || !state.present) continue;
+      final version = MetadataImageVersion.inState(state.value);
+      if (version == null) {
+        // Older unversioned folder pictures need no managed copy to recover.
+        if (state.value is Map &&
+            (state.value as Map).containsKey('unversioned_path')) {
+          continue;
+        }
+        throw const FormatException(
+          'Bildversion im Werk-Sidecar ist ungültig.',
+        );
+      }
+      await store.verify(version);
+    }
+    final current = _database.metadataCoverDescriptor(workId);
+    if (_database.metadataImageProof(workId, 'cover', current.path) == null) {
+      final generatedVersion = MetadataImageVersion.inState(generated?.value);
+      if (generatedVersion != null && current.generatedPath == null) {
+        _database.setGeneratedCoverPath(workId, generatedVersion.path);
+        _database.setMetadataImageProof(
+          workId: workId,
+          role: 'generated',
+          selectedPath: generatedVersion.path,
+          state: generated!,
+        );
+      }
+      final selectedVersion = MetadataImageVersion.inState(cover?.value);
+      if (raw['prefer_generated'] == true &&
+          cover != null &&
+          (current.generatedPath == null ||
+              current.generatedPath == selectedVersion?.path) &&
+          (!cover.present || selectedVersion != null)) {
+        _database.setGeneratedCoverPath(workId, selectedVersion?.path);
+        _database.setCoverPreference(workId, generated: true);
+        _database.setMetadataImageProof(
+          workId: workId,
+          role: 'generated',
+          selectedPath: selectedVersion?.path,
+          state: cover,
+        );
+      }
+      final selected = _database.metadataCoverDescriptor(workId).path;
+      var selectedMatches = false;
+      if (selectedVersion != null && selected != null) {
+        try {
+          final currentBytes = await store.readVaultImage(selected);
+          selectedMatches =
+              currentBytes.length == selectedVersion.bytes &&
+              sha256.convert(currentBytes).toString() == selectedVersion.digest;
+        } on FileSystemException {
+          // A replaced folder picture must not inherit an old image proof.
+        }
+      }
+      if (cover != null &&
+          (selectedMatches || !cover.present && selected == null)) {
+        _database.setMetadataImageProof(
+          workId: workId,
+          role: 'cover',
+          selectedPath: selected,
+          state: cover,
+        );
+      }
+    }
+    if (backdrop != null &&
+        _database.metadataImageProof(
+              workId,
+              'backdrop',
+              _database.metadataBackdropPath(workId),
+            ) ==
+            null) {
+      final version = MetadataImageVersion.inState(backdrop.value);
+      final currentPath = _database.metadataBackdropPath(workId);
+      if ((currentPath == null || currentPath == version?.path) &&
+          (version != null || !backdrop.present)) {
+        _database.setBackdropPath(workId, version?.path);
+        _database.setMetadataImageProof(
+          workId: workId,
+          role: 'backdrop',
+          selectedPath: version?.path,
+          state: backdrop,
+        );
+      }
+    }
   }
 
   Future<void> _importAnnotationSidecars(
@@ -4069,6 +4435,9 @@ final class FundusLibrary {
               personalStatus: personalStatus is String ? personalStatus : null,
             );
           }
+        }
+        if (value['format_version'] == 5) {
+          await _restoreSidecarImages(workId, value['images']);
         }
       }
     }

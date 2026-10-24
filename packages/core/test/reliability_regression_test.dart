@@ -216,6 +216,7 @@ void main() {
         File('${root.path}/.library/index.db'),
       );
       db.rawExecute('PRAGMA user_version = 22');
+      db.rawExecute('DROP TABLE metadata_image_refs');
       db.rawExecute('DROP TABLE metadata_history_batches');
       db.rawExecute('DROP TABLE metadata_history_state');
       db.rawExecute('DROP INDEX work_files_file_id_lookup');

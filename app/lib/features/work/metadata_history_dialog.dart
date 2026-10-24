@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -34,6 +35,150 @@ class _MetadataHistoryDialogState extends State<_MetadataHistoryDialog> {
   bool _wholeBatch = false, _busy = false;
   final _selected = <String>{};
   final _expanded = <String>{};
+
+  Future<void> _configureRetention() async {
+    if (_vault == null || _vault.isReadOnly || _busy) return;
+    final current = _vault.metadataHistoryPolicy;
+    var batches = current.retainBatches;
+    var documents = current.byteBudget;
+    var images = current.imageBudget;
+    final batchOptions = <int>{25, 50, 100, 250, 500, 1000, batches}.toList()
+      ..sort();
+    final documentOptions = <int>{
+      1,
+      4,
+      8,
+      16,
+      32,
+    }.map((size) => size * 1024 * 1024).toSet()..add(documents);
+    final imageOptions = <int>{
+      16,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+    }.map((size) => size * 1024 * 1024).toSet()..add(images);
+    final choice = await showDialog<MetadataHistoryPolicy>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Verlauf aufbewahren'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Ältere Änderungspakete und ungenutzte Bildversionen werden nach diesen Grenzen entfernt. Aktuelle Bilder bleiben erhalten.',
+              ),
+              DropdownButton<int>(
+                isExpanded: true,
+                value: batches,
+                items: batchOptions
+                    .map(
+                      (count) => DropdownMenuItem(
+                        value: count,
+                        child: Text('$count Änderungspakete'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => update(() => batches = value ?? batches),
+              ),
+              DropdownButton<int>(
+                isExpanded: true,
+                value: documents,
+                items: (documentOptions.toList()..sort())
+                    .map(
+                      (size) => DropdownMenuItem(
+                        value: size,
+                        child: Text('${_storageLabel(size)} Verlaufstext'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) =>
+                    update(() => documents = value ?? documents),
+              ),
+              DropdownButton<int>(
+                isExpanded: true,
+                value: images,
+                items: (imageOptions.toList()..sort())
+                    .map(
+                      (size) => DropdownMenuItem(
+                        value: size,
+                        child: Text('${_storageLabel(size)} ältere Bilder'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => update(() => images = value ?? images),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                MetadataHistoryPolicy(
+                  retainBatches: batches,
+                  byteBudget: documents,
+                  imageBudget: images,
+                ),
+              ),
+              child: const Text('Übernehmen'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    if (choice.retainBatches == current.retainBatches &&
+        choice.byteBudget == current.byteBudget &&
+        choice.imageBudget == current.imageBudget) {
+      return;
+    }
+    try {
+      final impact = _vault.previewMetadataHistoryPolicy(choice);
+      if (impact.droppedBatches > 0) {
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Älteren Verlauf entfernen?'),
+            content: Text(
+              '${impact.droppedBatches} Änderungspakete fallen aus dem Verlauf. '
+              '${(impact.reclaimableImageBytes / (1024 * 1024)).toStringAsFixed(1)} MiB ältere Bilder können danach entfernt werden. '
+              'Diese Rücknahmen sind anschließend nicht mehr verfügbar. Vorher bei Bedarf ein Vault-Backup erstellen.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Grenzen ändern'),
+              ),
+            ],
+          ),
+        );
+        if (confirm != true || !mounted) return;
+      }
+      setState(() => _busy = true);
+      await _vault.setMetadataHistoryPolicy(choice);
+      if (mounted) setState(() => _error = 'Aufbewahrung aktualisiert.');
+    } on Object {
+      if (mounted) {
+        setState(
+          () => _error =
+              'Aufbewahrung konnte nicht aktualisiert werden. Bitte Vault-Zugriff prüfen.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   Set<String> get _visibleWorks => {
     for (final work in widget.scope.library.works)
@@ -129,7 +274,7 @@ class _MetadataHistoryDialogState extends State<_MetadataHistoryDialog> {
             );
       final compatible = {
         for (final change in plan?.applicable ?? <MetadataFieldChange>[])
-          if (change.field != 'cover' && change.field != 'backdrop') change.key,
+          if (!_isImageChange(change) || _reversibleImage(change)) change.key,
       };
       final activeSelection =
           batch?.changes
@@ -239,15 +384,41 @@ class _MetadataHistoryDialogState extends State<_MetadataHistoryDialog> {
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  '${_display(change.before)} → ${_display(change.after)}',
-                                  maxLines: _expanded.contains(change.key)
-                                      ? null
-                                      : 3,
-                                  overflow: _expanded.contains(change.key)
-                                      ? null
-                                      : TextOverflow.ellipsis,
-                                ),
+                                if (_isImageChange(change))
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _HistoryImagePreview(
+                                          library: _vault,
+                                          state: change.before,
+                                          label: 'Bisher',
+                                          expanded: _expanded.contains(
+                                            change.key,
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: _HistoryImagePreview(
+                                          library: _vault,
+                                          state: change.after,
+                                          label: 'Danach',
+                                          expanded: _expanded.contains(
+                                            change.key,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                else
+                                  Text(
+                                    '${_display(change.before)} → ${_display(change.after)}',
+                                    maxLines: _expanded.contains(change.key)
+                                        ? null
+                                        : 3,
+                                    overflow: _expanded.contains(change.key)
+                                        ? null
+                                        : TextOverflow.ellipsis,
+                                  ),
                                 Text(
                                   'Herkunft: ${change.before.source ?? 'ohne Angabe'} → ${change.after.source ?? 'ohne Angabe'}${change.before.locked ? ' · vorher manuell gesperrt' : ''}',
                                 ),
@@ -255,9 +426,9 @@ class _MetadataHistoryDialogState extends State<_MetadataHistoryDialog> {
                                   Text(
                                     _vault.isReadOnly
                                         ? 'Nur lesen'
-                                        : change.field == 'cover' ||
-                                              change.field == 'backdrop'
-                                        ? 'Bildversionen sind noch nicht rücknehmbar.'
+                                        : _isImageChange(change) &&
+                                              !_reversibleImage(change)
+                                        ? 'Für diese ältere Bildauswahl fehlt ein sicherer Versionsbeleg.'
                                         : 'Seitdem geändert – wird nicht zurückgenommen.',
                                   ),
                                 TextButton(
@@ -282,6 +453,11 @@ class _MetadataHistoryDialogState extends State<_MetadataHistoryDialog> {
           ),
         ),
         actions: [
+          if (available && !_vault.isReadOnly)
+            TextButton(
+              onPressed: _busy ? null : _configureRetention,
+              child: const Text('Aufbewahrung'),
+            ),
           if (batch != null)
             TextButton(
               onPressed: _busy
@@ -327,6 +503,128 @@ String _display(MetadataFieldState state) {
   if (value is String) return value.isEmpty ? 'leer' : value;
   if (value is List) return value.isEmpty ? 'leer' : value.join(', ');
   return jsonEncode(value);
+}
+
+bool _isImageChange(MetadataFieldChange change) =>
+    change.field == 'cover' || change.field == 'backdrop';
+
+String _storageLabel(int bytes) => bytes < 1024 * 1024
+    ? '${(bytes / 1024).round()} KiB'
+    : '${(bytes / (1024 * 1024)).toStringAsFixed(bytes % (1024 * 1024) == 0 ? 0 : 1)} MiB';
+
+bool _reversibleImage(MetadataFieldChange change) {
+  try {
+    return (!change.before.present ||
+            MetadataImageVersion.inState(change.before.value) != null) &&
+        (!change.after.present ||
+            MetadataImageVersion.inState(change.after.value) != null);
+  } on FormatException {
+    return false;
+  }
+}
+
+class _HistoryImagePreview extends StatefulWidget {
+  const _HistoryImagePreview({
+    required this.library,
+    required this.state,
+    required this.label,
+    required this.expanded,
+  });
+  final FundusLibrary library;
+  final MetadataFieldState state;
+  final String label;
+  final bool expanded;
+
+  @override
+  State<_HistoryImagePreview> createState() => _HistoryImagePreviewState();
+}
+
+class _HistoryImagePreviewState extends State<_HistoryImagePreview> {
+  Future<Uint8List>? _bytes;
+  String? _path;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HistoryImagePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.state.sameAs(widget.state) ||
+        oldWidget.library != widget.library) {
+      _load();
+    }
+  }
+
+  void _load() {
+    try {
+      final version = MetadataImageVersion.inState(widget.state.value);
+      _path = version?.path;
+      _bytes = version == null
+          ? null
+          : widget.library.readMetadataHistoryImage(version);
+    } on FormatException {
+      _path = null;
+      _bytes = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final height =
+        MediaQuery.sizeOf(context).height * (widget.expanded ? .28 : .12);
+    return Column(
+      children: [
+        Text(widget.label),
+        if (_bytes == null)
+          SizedBox(
+            height: height,
+            child: Center(
+              child: Text(
+                widget.state.present ? 'Keine sichere Vorschau' : 'Kein Bild',
+              ),
+            ),
+          )
+        else
+          FutureBuilder<Uint8List>(
+            key: ValueKey(_path),
+            future: _bytes,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return SizedBox(
+                  height: height,
+                  child: const Center(
+                    child: Text('Bildversion fehlt oder ist beschädigt'),
+                  ),
+                );
+              }
+              final data = snapshot.data;
+              if (data == null) {
+                return SizedBox(
+                  height: height,
+                  child: const Center(child: CircularProgressIndicator()),
+                );
+              }
+              final targetWidth =
+                  (MediaQuery.sizeOf(context).width *
+                          MediaQuery.devicePixelRatioOf(context) *
+                          .32)
+                      .round();
+              return SizedBox(
+                height: height,
+                child: Image.memory(
+                  data,
+                  fit: BoxFit.contain,
+                  cacheWidth: targetWidth,
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
 }
 
 const _labels = {

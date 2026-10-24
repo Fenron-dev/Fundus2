@@ -284,7 +284,7 @@ Future<MetadataApplyResult> applyMetadata({
           extension: poster.toLowerCase().endsWith('.png') ? 'png' : 'jpg',
         );
         if (useIncomingCover) {
-          library.setCoverPreference(work.id, generated: true);
+          await library.setCoverPreference(work.id, generated: true);
         }
         fetched = true;
       }

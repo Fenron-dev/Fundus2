@@ -16,6 +16,8 @@ export 'src/model/offline_plan.dart';
 export 'src/model/offline_checkpoint_receipt.dart';
 export 'src/model/offline_cleanup.dart';
 export 'src/model/metadata_history.dart';
+export 'src/model/metadata_history_policy.dart';
+export 'src/model/metadata_image.dart';
 export 'src/model/offline_rule.dart';
 export 'src/model/episode_naming.dart';
 export 'src/model/fundus_id.dart';

@@ -25,7 +25,43 @@ void main() {
     expect(database.columnExists('progress', 'element_id'), isTrue);
     expect(database.columnExists('progress', 'scroll_offset'), isTrue);
     expect(database.tableExists('search_index'), isTrue);
+    expect(database.tableExists('metadata_image_refs'), isTrue);
+    expect(
+      database.columnExists('metadata_history_state', 'policy_json'),
+      isTrue,
+    );
   });
+
+  test(
+    'schema 25 migrates history policy without changing its revision',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('fundus-db-v25-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/index.db');
+      final current = FundusDatabase.openFile(file);
+      current.rawExecute(
+        'UPDATE metadata_history_state SET initialized = 1, revision = 7, exported_revision = 5 WHERE id = 1',
+      );
+      current.rawExecute('DROP TABLE metadata_image_refs');
+      current.rawExecute(
+        'ALTER TABLE metadata_history_state DROP COLUMN policy_json',
+      );
+      current.rawExecute('PRAGMA user_version = 25');
+      current.close();
+
+      final migrated = FundusDatabase.openFile(file);
+      addTearDown(migrated.close);
+      expect(migrated.userVersion, FundusDatabase.schemaVersion);
+      expect(migrated.tableExists('metadata_image_refs'), isTrue);
+      expect(
+        migrated.columnExists('metadata_history_state', 'policy_json'),
+        isTrue,
+      );
+      expect(migrated.metadataHistoryNeedsExport, isTrue);
+      expect(migrated.metadataHistorySnapshot().revision, 7);
+      expect(migrated.metadataHistoryPolicy, isA<MetadataHistoryPolicy>());
+    },
+  );
 
   test('schema v1 is migrated to idempotent progress operations', () async {
     final directory = await Directory.systemTemp.createTemp('fundus-db-v1-');

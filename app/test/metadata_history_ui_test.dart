@@ -10,6 +10,7 @@ import 'package:fundus/features/work/metadata_history_dialog.dart';
 import 'package:fundus/media/playback_controller.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:image/image.dart' as image;
 
 import 'playback_controller_test.dart' show FakeEngine;
 
@@ -99,8 +100,8 @@ void main() {
   }
 
   Future<void> settleIo(WidgetTester tester, bool Function() done) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 5));
-    while (!done() && DateTime.now().isBefore(deadline)) {
+    await tester.pump();
+    for (var attempt = 0; attempt < 250 && !done(); attempt++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
@@ -136,6 +137,94 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('picture comparison restores the selected earlier cover', (
+    tester,
+  ) async {
+    final firstImage = image.fill(
+      image.Image(width: 2, height: 2),
+      color: image.ColorRgb8(255, 0, 0),
+    );
+    final secondImage = image.fill(
+      image.Image(width: 2, height: 2),
+      color: image.ColorRgb8(0, 0, 255),
+    );
+    late String first;
+    await tester.runAsync(() async {
+      first = await library.library!.cacheGeneratedCover(
+        workId: id,
+        bytes: image.encodePng(firstImage),
+      );
+      await library.library!.cacheGeneratedCover(
+        workId: id,
+        bytes: image.encodePng(secondImage),
+      );
+    });
+    library.refreshWork(id);
+    await pump(tester);
+    await tester.tap(find.text('Verlauf öffnen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining(' · user').first);
+    await tester.pump();
+    for (
+      var attempt = 0;
+      attempt < 100 &&
+          find.byType(CircularProgressIndicator).evaluate().isNotEmpty;
+      attempt++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Titelbild'),
+      100,
+      scrollable: find
+          .descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(Scrollable),
+          )
+          .last,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Bisher'), findsOneWidget);
+    expect(find.text('Danach'), findsOneWidget);
+    await tester.tap(find.text('Titelbild'));
+    await tester.pump();
+    await tester.tap(find.text('1 Felder zurücknehmen'));
+    await settleIo(
+      tester,
+      () =>
+          find.textContaining('1 Felder zurückgenommen').evaluate().isNotEmpty,
+    );
+    expect(library.library!.workSummary(id)?.coverPath, first);
+    expect(find.textContaining('1 Felder zurückgenommen'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('retention can be adjusted from the history dialog', (
+    tester,
+  ) async {
+    await pump(tester);
+    await tester.tap(find.text('Verlauf öffnen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aufbewahrung'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButton<int>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('25 Änderungspakete').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Übernehmen'));
+    await settleIo(
+      tester,
+      () => find.text('Aufbewahrung aktualisiert.').evaluate().isNotEmpty,
+    );
+    expect(library.library!.metadataHistoryPolicy.retainBatches, 25);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'whole batch is explicit and includes only currently visible works',

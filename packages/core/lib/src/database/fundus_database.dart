@@ -13,6 +13,8 @@ import '../model/library_playlist.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/metadata_history.dart';
+import '../model/metadata_history_policy.dart';
+import '../model/metadata_image.dart';
 import '../model/person_role.dart';
 import '../model/person_profile.dart';
 import '../model/playback_session.dart';
@@ -234,7 +236,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 25;
+  static const schemaVersion = 26;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -344,13 +346,27 @@ final class FundusDatabase {
           .isNotEmpty;
 
   void initializeMetadataHistory(MetadataHistory history) {
-    if (metadataHistoryInitialized) return;
+    if (metadataHistoryInitialized) {
+      if (_database
+              .select(
+                'SELECT policy_json FROM metadata_history_state WHERE id = 1',
+              )
+              .single['policy_json'] ==
+          null) {
+        _database.execute(
+          'UPDATE metadata_history_state SET policy_json = ?, revision = revision + 1 WHERE id = 1',
+          [jsonEncode(history.policy.toJson())],
+        );
+      }
+      return;
+    }
     transaction(() {
       for (final batch in history.batches) {
         _insertMetadataBatch(batch);
       }
       _database.execute(
-        'UPDATE metadata_history_state SET initialized = 1, revision = 1, exported_revision = 1 WHERE id = 1',
+        'UPDATE metadata_history_state SET initialized = 1, revision = 1, exported_revision = 1, policy_json = ? WHERE id = 1',
+        [jsonEncode(history.policy.toJson())],
       );
     });
   }
@@ -367,6 +383,7 @@ final class FundusDatabase {
         .single;
     return (
       history: MetadataHistory(
+        policy: metadataHistoryPolicy,
         batches: [
           for (final row in _database.select(
             'SELECT batch_json FROM metadata_history_batches ORDER BY sequence',
@@ -392,7 +409,8 @@ final class FundusDatabase {
       _insertMetadataBatch(batch);
     }
     _database.execute(
-      'UPDATE metadata_history_state SET initialized = 1, revision = revision + 1 WHERE id = 1',
+      'UPDATE metadata_history_state SET initialized = 1, revision = revision + 1, policy_json = ? WHERE id = 1',
+      [jsonEncode(history.policy.toJson())],
     );
   });
 
@@ -411,10 +429,12 @@ final class FundusDatabase {
     required String workId,
     required String source,
     required T Function() action,
+    void Function()? prepare,
   }) => transaction(() {
     if (!metadataHistoryInitialized) {
       throw StateError('Metadatenverlauf ist nicht verfügbar.');
     }
+    prepare?.call();
     final before = metadataFieldStates(workId);
     if (before == null) throw StateError('Werk wurde nicht gefunden.');
     final result = action();
@@ -481,22 +501,254 @@ final class FundusDatabase {
     if (batch.changes.isNotEmpty) _insertMetadataBatch(batch);
     // Whole-batch retention, with SQL byte accounting rather than repeatedly
     // encoding a multi-megabyte history during one edit.
+    pruneMetadataHistory(
+      checkImages: changes.any(
+        (change) => change.field == 'cover' || change.field == 'backdrop',
+      ),
+      requireNewest: true,
+    );
+    _database.execute(
+      'UPDATE metadata_history_state SET revision = revision + 1 WHERE id = 1',
+    );
+    return result;
+  });
+
+  MetadataHistoryPolicy get metadataHistoryPolicy {
+    if (!columnExists('metadata_history_state', 'policy_json')) {
+      return const MetadataHistoryPolicy();
+    }
+    final encoded = _database
+        .select('SELECT policy_json FROM metadata_history_state WHERE id = 1')
+        .single['policy_json'];
+    return encoded is String
+        ? MetadataHistoryPolicy.fromJson(jsonDecode(encoded))
+        : const MetadataHistoryPolicy();
+  }
+
+  void setMetadataHistoryPolicy(
+    MetadataHistoryPolicy policy,
+  ) => transaction(() {
+    policy.validate();
+    _database.execute(
+      'UPDATE metadata_history_state SET policy_json = ?, revision = revision + 1 WHERE id = 1',
+      [jsonEncode(policy.toJson())],
+    );
+    pruneMetadataHistory(checkImages: true);
+  });
+
+  ({int droppedBatches, int reclaimableImageBytes})
+  previewMetadataHistoryPolicy(MetadataHistoryPolicy policy) {
+    policy.validate();
+    final rows = _database.select(
+      'SELECT batch_json, byte_count FROM metadata_history_batches ORDER BY sequence DESC',
+    );
+    final active = activeMetadataImagePaths();
+    final allImages = <String, MetadataImageVersion>{};
+    final keptImages = <String, MetadataImageVersion>{};
+    var bytes = utf8.encode(MetadataHistory(policy: policy).encode()).length;
+    var kept = 0;
+    var dropping = false;
+    for (final row in rows) {
+      final batch = MetadataChangeBatch.fromJson(
+        jsonDecode(row['batch_json'] as String),
+      );
+      final next = MetadataHistory(batches: [batch]).referencedImages;
+      final withThis = {...keptImages};
+      _mergeMetadataImageVersions(withThis, next);
+      _mergeMetadataImageVersions(allImages, next);
+      final historicalBytes = withThis.values
+          .where((image) => !active.contains(image.path))
+          .fold<int>(0, (sum, image) => sum + image.bytes);
+      final size = row['byte_count'] as int;
+      if (dropping ||
+          kept >= policy.retainBatches ||
+          bytes + size + (kept == 0 ? 0 : 1) > policy.byteBudget ||
+          historicalBytes > policy.imageBudget) {
+        dropping = true;
+      } else {
+        bytes += size + (kept == 0 ? 0 : 1);
+        kept++;
+        keptImages.addAll(next);
+      }
+    }
+    return (
+      droppedBatches: rows.length - kept,
+      reclaimableImageBytes: allImages.values
+          .where(
+            (image) =>
+                !active.contains(image.path) &&
+                !keptImages.containsKey(image.path),
+          )
+          .fold<int>(0, (sum, image) => sum + image.bytes),
+    );
+  }
+
+  static void _mergeMetadataImageVersions(
+    Map<String, MetadataImageVersion> target,
+    Map<String, MetadataImageVersion> incoming,
+  ) {
+    for (final image in incoming.values) {
+      if (target[image.path] case final previous?
+          when previous.bytes != image.bytes) {
+        throw const FormatException('Widersprüchliche Bildversionsbelege.');
+      }
+      target[image.path] = image;
+    }
+  }
+
+  /// Paths currently selected by works are never reclaimed by history
+  /// retention, even after every old batch referencing them has expired.
+  Set<String> activeMetadataImagePaths() {
+    if (!tableExists('metadata_image_refs')) return const {};
+    return {
+      for (final row in _database.select(
+        'SELECT managed_path FROM metadata_image_refs WHERE managed_path IS NOT NULL',
+      ))
+        row['managed_path'] as String,
+    };
+  }
+
+  ({
+    String? path,
+    String? generatedPath,
+    String? folderPath,
+    bool prefersGenerated,
+  })
+  metadataCoverDescriptor(String workId) {
+    final rows = _database.select(
+      'SELECT w.generated_cover_path, w.prefer_generated_cover, cover.path AS folder_path '
+      'FROM works w LEFT JOIN files cover ON cover.id = w.cover_file_id '
+      "AND cover.status = 'available' WHERE w.id = ?",
+      [workId],
+    );
+    if (rows.isEmpty) throw StateError('Werk wurde nicht gefunden.');
+    final row = rows.single;
+    final generatedPath = row['generated_cover_path'] as String?;
+    final folderPath = row['folder_path'] as String?;
+    final prefersGenerated = row['prefer_generated_cover'] == 1;
+    return (
+      path: prefersGenerated ? generatedPath : (folderPath ?? generatedPath),
+      generatedPath: generatedPath,
+      folderPath: folderPath,
+      prefersGenerated: prefersGenerated,
+    );
+  }
+
+  String? metadataBackdropPath(String workId) {
+    final rows = _database.select(
+      'SELECT backdrop_path FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) throw StateError('Werk wurde nicht gefunden.');
+    return rows.single['backdrop_path'] as String?;
+  }
+
+  MetadataFieldState? metadataImageProof(
+    String workId,
+    String role,
+    String? selectedPath,
+  ) {
+    if (!const {'cover', 'backdrop', 'generated'}.contains(role) ||
+        !tableExists('metadata_image_refs')) {
+      return null;
+    }
+    final rows = _database.select(
+      'SELECT selected_path, managed_path, state_json FROM metadata_image_refs '
+      'WHERE work_id = ? AND role = ?',
+      [workId, role],
+    );
+    if (rows.isEmpty ||
+        rows.single['selected_path'] != selectedPath ||
+        rows.single['state_json'] == null) {
+      return null;
+    }
+    final state = MetadataFieldState.fromJson(
+      jsonDecode(rows.single['state_json'] as String),
+    );
+    final version = MetadataImageVersion.inState(state.value);
+    if (version?.path != rows.single['managed_path']) {
+      throw const FormatException(
+        'Bildversionsbeleg im Index ist widersprüchlich.',
+      );
+    }
+    return state;
+  }
+
+  void setMetadataImageProof({
+    required String workId,
+    required String role,
+    required String? selectedPath,
+    required MetadataFieldState state,
+  }) {
+    if (!const {'cover', 'backdrop', 'generated'}.contains(role)) {
+      throw ArgumentError.value(role, 'role');
+    }
+    final version = MetadataImageVersion.inState(state.value);
+    if (state.present && version == null) {
+      throw const FormatException(
+        'Bildbeleg benötigt eine unveränderliche Version.',
+      );
+    }
+    if (!state.present && (state.value != null || selectedPath != null)) {
+      throw const FormatException('Fehlendes Bild darf keinen Pfad haben.');
+    }
+    _database.execute(
+      'INSERT INTO metadata_image_refs (work_id, role, selected_path, managed_path, state_json) '
+      'VALUES (?, ?, ?, ?, ?) ON CONFLICT(work_id, role) DO UPDATE SET '
+      'selected_path = excluded.selected_path, managed_path = excluded.managed_path, '
+      'state_json = excluded.state_json',
+      [workId, role, selectedPath, version?.path, jsonEncode(state.toJson())],
+    );
+  }
+
+  void pruneMetadataHistory({
+    bool checkImages = false,
+    bool requireNewest = false,
+  }) {
+    final policy = metadataHistoryPolicy;
     final rows = _database.select(
       'SELECT batch_id, byte_count FROM metadata_history_batches ORDER BY sequence DESC',
     );
-    var bytes = utf8.encode(MetadataHistory().encode()).length;
+    var bytes = utf8.encode(MetadataHistory(policy: policy).encode()).length;
     var count = 0;
+    final images = <String, MetadataImageVersion>{};
+    final active = checkImages ? activeMetadataImagePaths() : const <String>{};
     var pruning = false;
     for (final row in rows) {
       final size = row['byte_count'] as int;
-      if (count == 0 && bytes + size > 16 * 1024 * 1024) {
+      if (requireNewest && count == 0 && bytes + size > policy.byteBudget) {
         throw const FormatException(
           'Die Änderung überschreitet das Verlaufsbudget.',
         );
       }
+      final nextImages = {...images};
+      if (checkImages && !pruning) {
+        final batch = MetadataChangeBatch.fromJson(
+          jsonDecode(
+            _database.select(
+                  'SELECT batch_json FROM metadata_history_batches WHERE batch_id = ?',
+                  [row['batch_id']],
+                ).single['batch_json']
+                as String,
+          ),
+        );
+        _mergeMetadataImageVersions(
+          nextImages,
+          MetadataHistory(batches: [batch]).referencedImages,
+        );
+      }
+      final historicalBytes = nextImages.values
+          .where((image) => !active.contains(image.path))
+          .fold<int>(0, (sum, image) => sum + image.bytes);
+      if (requireNewest && count == 0 && historicalBytes > policy.imageBudget) {
+        throw const FormatException(
+          'Das Bildversionsbudget reicht für die vorige Version nicht aus. Bitte Aufbewahrung erhöhen.',
+        );
+      }
       if (pruning ||
-          count >= 100 ||
-          bytes + size + (count == 0 ? 0 : 1) > 16 * 1024 * 1024) {
+          count >= policy.retainBatches ||
+          bytes + size + (count == 0 ? 0 : 1) > policy.byteBudget ||
+          historicalBytes > policy.imageBudget) {
         pruning = true;
         _database.execute(
           'DELETE FROM metadata_history_batches WHERE batch_id = ?',
@@ -505,13 +757,10 @@ final class FundusDatabase {
       } else {
         bytes += size + (count == 0 ? 0 : 1);
         count++;
+        images.addAll(nextImages);
       }
     }
-    _database.execute(
-      'UPDATE metadata_history_state SET revision = revision + 1 WHERE id = 1',
-    );
-    return result;
-  });
+  }
 
   bool _protectedHistoryField(
     String field,
@@ -648,9 +897,32 @@ final class FundusDatabase {
       final state = entry.value;
       final value = state.value;
       if (field == 'cover' || field == 'backdrop') {
-        throw StateError(
-          'Bildversionen können in diesem Schritt noch nicht zurückgenommen werden.',
+        final version = MetadataImageVersion.inState(value);
+        if (state.present && version == null) {
+          throw const FormatException(
+            'Die frühere Bildversion ist nicht rücknehmbar.',
+          );
+        }
+        final selectedPath = version?.path;
+        if (field == 'cover') {
+          setGeneratedCoverPath(workId, selectedPath);
+          setCoverPreference(workId, generated: true);
+          setMetadataImageProof(
+            workId: workId,
+            role: 'generated',
+            selectedPath: selectedPath,
+            state: state,
+          );
+        } else {
+          setBackdropPath(workId, selectedPath);
+        }
+        setMetadataImageProof(
+          workId: workId,
+          role: field,
+          selectedPath: selectedPath,
+          state: state,
         );
+        continue;
       }
       if (field.startsWith('property:')) {
         if (state.present &&
@@ -847,22 +1119,15 @@ final class FundusDatabase {
         present: true,
         value: loadAnnotations(workId).tags,
       ),
-      'cover': MetadataFieldState(
-        present:
-            row['generated_cover_path'] != null ||
-            row['prefer_generated_cover'] == 1,
-        value:
-            row['generated_cover_path'] != null ||
-                row['prefer_generated_cover'] == 1
-            ? {
-                'generated_path': row['generated_cover_path'],
-                'prefer_generated': row['prefer_generated_cover'] == 1,
-              }
-            : null,
+      'cover': _metadataImageState(
+        workId,
+        'cover',
+        metadataCoverDescriptor(workId).path,
       ),
-      'backdrop': MetadataFieldState(
-        present: row['backdrop_path'] != null,
-        value: row['backdrop_path'],
+      'backdrop': _metadataImageState(
+        workId,
+        'backdrop',
+        row['backdrop_path'] as String?,
       ),
     };
     final definitions = {
@@ -884,9 +1149,20 @@ final class FundusDatabase {
     return result;
   }
 
+  MetadataFieldState _metadataImageState(
+    String workId,
+    String role,
+    String? selectedPath,
+  ) =>
+      metadataImageProof(workId, role, selectedPath) ??
+      MetadataFieldState(
+        present: selectedPath != null,
+        value: selectedPath == null ? null : {'unversioned_path': selectedPath},
+      );
+
   String upsertFile(ScannedFile file) {
     final existing = _database.select(
-      'SELECT id FROM files WHERE source_id = ? AND path = ?',
+      'SELECT id, size, file_modified_at FROM files WHERE source_id = ? AND path = ?',
       [localSourceId, file.relativePath],
     );
     final id = existing.isEmpty
@@ -936,6 +1212,16 @@ final class FundusDatabase {
             : jsonEncode(videoEpisodeToJson(file.videoEpisode!)),
       ],
     );
+    if (existing.isNotEmpty &&
+        (existing.first['size'] != file.size ||
+            existing.first['file_modified_at'] !=
+                file.modifiedAt.millisecondsSinceEpoch)) {
+      _database.execute(
+        "DELETE FROM metadata_image_refs WHERE role = 'cover' AND work_id IN ("
+        'SELECT id FROM works WHERE cover_file_id = ? AND prefer_generated_cover = 0)',
+        [id],
+      );
+    }
     return id;
   }
 
@@ -5091,6 +5377,27 @@ final class FundusDatabase {
     if (_database.userVersion == 22 && !readOnly) _migrateToVersion23();
     if (_database.userVersion == 23 && !readOnly) _migrateToVersion24();
     if (_database.userVersion == 24 && !readOnly) _migrateToVersion25();
+    if (_database.userVersion == 25 && !readOnly) _migrateToVersion26();
+  }
+
+  void _migrateToVersion26() {
+    transaction(() {
+      _database.execute(
+        'ALTER TABLE metadata_history_state ADD COLUMN policy_json TEXT',
+      );
+      _database.execute(
+        'CREATE TABLE metadata_image_refs ('
+        'work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE, '
+        'role TEXT NOT NULL CHECK(role IN (\'cover\', \'backdrop\', \'generated\')), '
+        'selected_path TEXT, managed_path TEXT, state_json TEXT, '
+        'PRIMARY KEY(work_id, role))',
+      );
+      _database.execute(
+        'CREATE INDEX metadata_image_refs_managed_path_lookup '
+        'ON metadata_image_refs(managed_path)',
+      );
+      _database.userVersion = 26;
+    });
   }
 
   void _migrateToVersion25() {

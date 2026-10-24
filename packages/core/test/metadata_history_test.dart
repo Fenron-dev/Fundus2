@@ -85,7 +85,7 @@ void main() {
         restored.batches.single.changes.every((change) => change.protected),
         isTrue,
       );
-      expect(jsonDecode(restored.encode())['format_version'], 2);
+      expect(jsonDecode(restored.encode())['format_version'], 3);
     },
   );
 

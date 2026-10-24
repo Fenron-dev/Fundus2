@@ -55,7 +55,7 @@ Lauffähig als Einzelplatz-Bibliothek:
 - Einstellungen mit Thema, Dichte, Bibliotheken, Geräten und Diagnose
 - Hell und Dunkel gleichwertig, Dichteumschaltung komfortabel/kompakt
 
-Datenmodell (Schema 25):
+Datenmodell (Schema 26):
 
 - `sources` — die geöffnete Bibliothek ist selbst eine Quelle
 - `availability` auf Dateien und Werken; der Pfad ist nicht mehr die Identität
@@ -63,11 +63,13 @@ Datenmodell (Schema 25):
   keine Reader- und Darstellungseinstellungen kostet
 - Metadatenänderung und Feldverlauf gemeinsam im Index, anschließend portable
   Verlaufskopie; selektive Rücknahme unter „Metadatenverlauf“ am Werk
+- unveränderliche Bildversionen im Vault, bildgenaue Rücknahme und einstellbare
+  Aufbewahrung für ältere Änderungspakete und Bilder
 
-Schema 25 migriert vorhandene Indizes ohne Änderung der Medien oder persönlichen
+Schema 26 migriert vorhandene Indizes ohne Änderung der Medien oder persönlichen
 Stände. Ältere Clients können den neueren Index nicht öffnen; beteiligte Apps
-aktualisieren und vorher eine Sicherung erstellen. Bildversionen und die
-vollständige Erfassung automatischer Scan-Übernahmen sind noch in Arbeit.
+aktualisieren und vorher eine Sicherung erstellen. Die automatische Erfassung
+aller Metadatenübernahmen beim Bibliotheksscan ist noch in Arbeit.
 
 Wiedergabe, Reader, Peer-Server-Anbindung, Katalog-Delta, Sync-Journal,
 Downloads, Metadaten-Abgleich und Schutzmodus sind inzwischen im Workspace

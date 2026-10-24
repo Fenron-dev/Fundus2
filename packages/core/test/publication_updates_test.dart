@@ -289,6 +289,7 @@ void main() {
           'ALTER TABLE files DROP COLUMN publication_manifest_json',
         );
         db.rawExecute('PRAGMA user_version = 23');
+        db.rawExecute('DROP TABLE metadata_image_refs');
         db.rawExecute('DROP TABLE metadata_history_batches');
         db.rawExecute('DROP TABLE metadata_history_state');
         db.close();

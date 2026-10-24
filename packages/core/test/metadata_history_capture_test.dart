@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fundus_core/fundus_core.dart';
 import 'package:test/test.dart';
@@ -40,6 +41,167 @@ void main() {
 
   FundusDatabase probe() =>
       FundusDatabase.openFile(File('${root.path}/.library/index.db'));
+
+  test(
+    'cover versions restore the exact earlier picture without touching media',
+    () async {
+      final first = await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List.fromList([1, 2, 3]),
+      );
+      final second = await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List.fromList([4, 5, 6]),
+      );
+      expect(first, isNot(second));
+      expect(library.workSummary(id)!.coverPath, second);
+      final batch = history().batches.last;
+      final cover = batch.changes.singleWhere(
+        (change) => change.field == 'cover',
+      );
+      expect(MetadataImageVersion.inState(cover.before.value), isNotNull);
+      await library.undoMetadataBatch(
+        batch.id,
+        visibleWorkIds: {id},
+        selectedKeys: {cover.key},
+      );
+      expect(library.workSummary(id)!.coverPath, first);
+      expect(await File(first).readAsBytes(), [1, 2, 3]);
+      expect(await File(second).readAsBytes(), [4, 5, 6]);
+      await library.shutdown();
+      library = await FundusLibrary.open(root);
+      await library.index().drain<void>();
+      expect(library.workSummary(id)!.coverPath, first);
+    },
+  );
+
+  test(
+    'missing prior picture blocks undo without changing the current choice',
+    () async {
+      final first = await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List.fromList([1, 2, 3]),
+      );
+      final second = await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List.fromList([4, 5, 6]),
+      );
+      final batch = history().batches.last;
+      final cover = batch.changes.singleWhere(
+        (change) => change.field == 'cover',
+      );
+      await File(first).delete();
+      await expectLater(
+        library.undoMetadataBatch(
+          batch.id,
+          visibleWorkIds: {id},
+          selectedKeys: {cover.key},
+        ),
+        throwsA(anything),
+      );
+      expect(library.workSummary(id)!.coverPath, second);
+      expect(history().batches.last.id, batch.id);
+    },
+  );
+
+  test(
+    'a folder cover stays untouched when an imported cover is chosen and undone',
+    () async {
+      final folderCover = File(
+        '${root.path}/Karl May/Winnetou/01 - First/cover.png',
+      );
+      await folderCover.writeAsBytes([7, 8, 9]);
+      await library.index().drain<void>();
+      final original = library.workSummary(id)!.coverPath;
+      expect(original, folderCover.path);
+      await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List.fromList([1, 2, 3]),
+      );
+      expect(library.workSummary(id)!.coverPath, original);
+      await library.setCoverPreference(id, generated: true);
+      final changed = library.workSummary(id)!.coverPath;
+      expect(changed, isNot(original));
+      final batch = history().batches.last;
+      final cover = batch.changes.singleWhere(
+        (change) => change.field == 'cover',
+      );
+      await library.undoMetadataBatch(
+        batch.id,
+        visibleWorkIds: {id},
+        selectedKeys: {cover.key},
+      );
+      final restored = library.workSummary(id)!.coverPath!;
+      expect(
+        restored,
+        contains(
+          '${Platform.pathSeparator}.library${Platform.pathSeparator}covers${Platform.pathSeparator}versions${Platform.pathSeparator}',
+        ),
+      );
+      expect(await File(restored).readAsBytes(), [7, 8, 9]);
+      expect(await folderCover.readAsBytes(), [7, 8, 9]);
+      expect(await File(changed!).readAsBytes(), [1, 2, 3]);
+    },
+  );
+
+  test('a changed folder image cannot reuse an older image proof', () async {
+    final folderCover = File(
+      '${root.path}/Karl May/Winnetou/01 - First/cover.png',
+    );
+    await folderCover.writeAsBytes([7, 8, 9]);
+    await library.index().drain<void>();
+    await library.cacheGeneratedCover(
+      workId: id,
+      bytes: Uint8List.fromList([1, 2, 3]),
+    );
+    await library.setCoverPreference(id, generated: true);
+    await library.setCoverPreference(id, generated: false);
+    final db = probe();
+    expect(
+      MetadataImageVersion.inState(db.metadataFieldStates(id)!['cover']!.value),
+      isNotNull,
+    );
+    db.close();
+    await folderCover.writeAsBytes([4, 5, 6, 7]);
+    await library.index().drain<void>();
+    final after = probe();
+    expect(
+      MetadataImageVersion.inState(
+        after.metadataFieldStates(id)!['cover']!.value,
+      ),
+      isNull,
+    );
+    after.close();
+    expect(await folderCover.readAsBytes(), [4, 5, 6, 7]);
+  });
+
+  test(
+    'image quota expires whole old batches but keeps current and undoable pictures',
+    () async {
+      await library.setMetadataHistoryPolicy(
+        const MetadataHistoryPolicy(imageBudget: 1024 * 1024),
+      );
+      final first = await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List(700000)..fillRange(0, 700000, 1),
+      );
+      final second = await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List(700000)..fillRange(0, 700000, 2),
+      );
+      final third = await library.cacheGeneratedCover(
+        workId: id,
+        bytes: Uint8List(700000)..fillRange(0, 700000, 3),
+      );
+      expect(history().batches, hasLength(1));
+      expect(await File(first).exists(), isFalse);
+      expect(await File(second).exists(), isTrue);
+      expect(await File(third).exists(), isTrue);
+      final snapshot = await library.loadMetadataHistory();
+      expect(snapshot.policy.imageBudget, 1024 * 1024);
+      expect(snapshot.batches, hasLength(1));
+    },
+  );
 
   test(
     'authors roll back as one coherent field, including the primary author',
@@ -571,6 +733,7 @@ void main() {
       );
       await library.shutdown();
       final db = probe();
+      db.rawExecute('DROP TABLE metadata_image_refs');
       db.rawExecute('DROP TABLE metadata_history_batches');
       db.rawExecute('DROP TABLE metadata_history_state');
       db.rawExecute('PRAGMA user_version = 24');
@@ -585,7 +748,7 @@ void main() {
             '${root.path}/_fundus/metadata-history.json',
           ).readAsString(),
         )['format_version'],
-        2,
+        3,
       );
     },
   );

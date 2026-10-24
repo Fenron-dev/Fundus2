@@ -187,7 +187,7 @@ void main() {
       throwsStateError,
     );
     expect(await historyFile().readAsString(), before);
-    expect(jsonDecode(before)['format_version'], 2);
+    expect(jsonDecode(before)['format_version'], 3);
   });
 
   test('linked history folders cannot write outside the vault', () async {

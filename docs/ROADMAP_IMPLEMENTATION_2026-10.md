@@ -8,7 +8,7 @@ implementiert oder ausgeliefert ist. Die Stabilisierungsabnahme #47 bleibt separ
 
 1. Update-Posteingang und Abos (#56) – implementiert, CI und drei Plattform-Builds bestanden.
 2. Intelligentes Offline-Mitnehmen (#55) – Regeln, Downloads und bestätigtes Aufräumen implementiert; Plattform-/Geräteabnahme offen.
-3. Metadatenverlauf und gezieltes Rückgängig (#57) – Editor-/Abgleicherfassung und selektive Rücknahme in der Oberfläche; Bildversionen und Scan-Erfassung offen.
+3. Metadatenverlauf und gezieltes Rückgängig (#57) – Editor-/Abgleicherfassung, selektive Rücknahme und versionierte Bilder mit Aufbewahrung in der Oberfläche; automatische Scan-Erfassung offen.
 4. Medienwelten und Reihenfolgen (#60) – offen.
 5. Regelregale und Dashboard-Zeilen (#58) – offen.
 6. Bibliotheks-Check (#59) – offen.
@@ -401,10 +401,57 @@ Rücknahme, erhaltene Herkunft, veraltete Batch-Vorschau, atomaren Abbruch,
 verschachtelte Transaktionen, unveränderte persönliche Daten, Exportfehler mit
 Neustart-Recovery, historische Schutzkennzeichnung, Schema-24-Migration und
 mobile Bedienung einschließlich Sperren eines erweiterten Vergleichs.
-CI und Plattform-Builds dieses Schritts stehen noch aus.
+GitHub-CI 40105755747 und die Plattform-Builds dieses Schritts sind bestanden:
+macOS 40106116415, Windows 40106116368, Android 40106116308. Der
+nachfolgende Bildschritt benötigt eine eigene Abnahme.
 
-**Weiterhin offen in #57:** Bildversionen mit begrenzter Aufbewahrung und
-Bild-Rücknahme, vollständige Erfassung automatischer Scan-Übernahmen sowie die
-Bedienung der Aufbewahrungsgrenzen. Daher bleibt das Issue offen. Bestehende
-Bildcache-Schreiber sind noch kein versionssicherer Bildverlauf; die Oberfläche
-bietet dafür keine scheinbar funktionierende Rücknahme an.
+**Zum Ende dieses Schritts offen in #57:** Bildversionen mit begrenzter
+Aufbewahrung, Bild-Rücknahme, vollständige Erfassung automatischer
+Scan-Übernahmen und Bedienung der Aufbewahrungsgrenzen. Die folgenden Absätze
+beschreiben den danach begonnenen Bildschritt. #57 bleibt offen.
+
+### Dritter Schritt: Bildversionen und Aufbewahrung
+
+- Schema 26 ergänzt eine Aufbewahrungsregel und Belege für die aktuell
+  ausgewählten Cover, Breitbilder und zwischengespeicherten Cover. Die Migration
+  von Schema 25 bewahrt Verlauf, Exportrevision und persönliche Daten. Vor dem
+  ersten Öffnen mit Schema 26 beide Clients aktualisieren und ein Backup
+  erstellen; ältere Clients lehnen den neuen Index ab.
+- Neue Bildentscheidungen speichern eine unveränderliche, anhand SHA-256
+  überprüfte Kopie unter `.library/covers/versions/`. Bilder aus Medienordnern
+  werden gelesen und nie überschrieben. Ein ungenutztes heruntergeladenes
+  Cover ändert den sichtbaren Bildverlauf erst bei ausdrücklicher Auswahl.
+  Der manuelle Werkeditor aktiviert ein dort gewähltes Cover nun auch dann,
+  wenn ein Ordner-Cover vorhanden ist.
+- Der Verlaufszustand beschreibt die *sichtbare* Bildversion. Wechsel und
+  Rücknahme prüfen das aktuelle Bild sowie die vorherige Kopie auf Größe und
+  Hash. Ein fehlendes, beschädigtes oder extern verändertes Bild bricht die
+  ganze ausgewählte Rücknahme ab. Alte Einträge ohne sicheren Bildbeleg bleiben
+  lesbar, aber für Bilder nicht auswählbar. Andere Metadaten im selben Batch
+  können weiter einzeln zurückgenommen werden.
+- Das Werk-Sidecar trägt Bildauswahl und Belege in Format 5. Beim Neuaufbau des
+  Index werden nur überprüfte Kopien wiederhergestellt; ein neueres Bild aus
+  dem Medienordner übernimmt keinen veralteten Beleg. Vault-Backup und
+  Wiederherstellung nehmen den verwalteten Bildordner mit.
+- Das Verlaufsdokument nutzt Format 3 mit portabler Aufbewahrungsregel.
+  Standard: 100 ganze Batches, 16 MiB Verlaufstext und 256 MiB ältere
+  Bildversionen; pro Bild höchstens 32 MiB. Im Verlauf lässt sich die Grenze
+  ändern. Vor einem verlustbehafteten Absenken zeigt die App die Anzahl der
+  betroffenen Änderungspakete und die voraussichtlich entfallenden Bildbytes
+  zur Bestätigung. Aktuell benutzte Bilder zählen nicht gegen das Budget und
+  werden nicht entfernt. Aufräumen erfolgt erst nach erfolgreichem Export der
+  portablen Verlaufskopie; fremde Dateien, Links und unbestätigte Bilder werden
+  nicht gelöscht. Alte eigene Teil-Dateien werden erst nach einem Tag entfernt.
+- Ein normaler inkrementeller Scan bemerkt jetzt auch neu hinzugefügte oder
+  geänderte Hörbuch-Cover. Bei geänderter Ordnerdatei wird ein alter Bildbeleg
+  verworfen. Die automatische Historisierung aller Fero-/ABS-/Scan-Metadaten
+  benötigt weiterhin eine separate saubere Transaktionsgrenze und bleibt offen.
+
+Gezielte Tests prüfen Schema-25-Migration, Bildwechsel und Rücknahme,
+fehlende Bildversionen, unveränderte Ordner-Cover, Neuaufbau des Index,
+Bildbudget und Löschung alter Kopien, verlinkte Pfade und die Bildvorschau im
+Flutter-Dialog. Die lokale Gesamtprüfung dieses Bildschritts besteht aus
+Core 344, Server 45, Client 46, Design 3 und App 518 bestandenen Tests
+(zusammen 956); acht App-Tests sind übersprungen. `dart analyze` und
+Formatprüfung sind sauber. GitHub-CI und Plattform-Builds für diesen
+Änderungsstand sind noch ausstehende Freigabeschritte.
