@@ -18,6 +18,7 @@ import '../../data/work_filter.dart';
 import '../../data/work_view.dart';
 import '../../metadata/metadata_apply.dart';
 import '../downloads/downloads_screen.dart' show formatBytes;
+import '../downloads/offline_settings_sheet.dart';
 import '../library/work_poster.dart';
 import '../people/person_credits.dart';
 import '../people/person_screen.dart';
@@ -698,6 +699,8 @@ class _Actions extends StatelessWidget {
           _ListButton(work: work),
           ContentSubscriptionButton(workId: work.id),
           _OfflineButton(work: work),
+          if (work.summary.sourceId != FundusDatabase.localSourceId)
+            OfflineSettingsButton(workId: work.id),
           _LocationButton(work: work),
           _MetadataButtons(work: work),
         ],
@@ -717,6 +720,8 @@ class _Actions extends StatelessWidget {
             _ListButton(work: work),
             ContentSubscriptionButton(workId: work.id),
             _OfflineButton(work: work),
+            if (work.summary.sourceId != FundusDatabase.localSourceId)
+              OfflineSettingsButton(workId: work.id),
             _LocationButton(work: work),
             _MoreDetailsButton(work: work),
             _MetadataButtons(work: work),
@@ -2906,12 +2911,20 @@ class _OfflineButton extends StatelessWidget {
 
     if (job != null) {
       return switch (job.state) {
-        DownloadState.failed => OutlinedButton.icon(
-          onPressed: () => downloads.download(work),
+        DownloadState.failed || DownloadState.paused => OutlinedButton.icon(
+          onPressed: () => downloads.retry(work),
           icon: Icon(FundusIcons.warning, size: FundusIcons.sizeSm),
-          label: const Text('Erneut versuchen'),
+          label: Text(
+            job.state == DownloadState.paused
+                ? 'Fortsetzen'
+                : 'Erneut versuchen',
+          ),
         ),
-        DownloadState.done => const SizedBox.shrink(),
+        DownloadState.done => OutlinedButton.icon(
+          onPressed: () => unawaited(_take(context, scope, work)),
+          icon: Icon(FundusIcons.downloads, size: FundusIcons.sizeSm),
+          label: const Text('Weitere mitnehmen'),
+        ),
         _ => OutlinedButton.icon(
           onPressed: job.state == DownloadState.queued
               ? () => downloads.cancel(work.id)

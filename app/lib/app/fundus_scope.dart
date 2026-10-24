@@ -15,6 +15,7 @@ import '../data/library_controller.dart';
 import '../data/server_host.dart';
 import '../data/peer_connection.dart';
 import '../data/download_controller.dart';
+import '../data/offline_controller.dart';
 import '../data/peer_library.dart';
 import '../data/protection.dart';
 import '../data/sync_controller.dart';
@@ -168,6 +169,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         storageRoot: getApplicationSupportDirectory,
       );
   WorkFilter _filter = const WorkFilter();
+  late final OfflineController offline = OfflineController(
+    settings: settings,
+    library: library,
+    downloads: downloads,
+  );
   int _revision = 0;
 
   AppSettings get settings => widget.settings;
@@ -207,6 +213,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     host.unlockPath = (path) => vaultAccess.unlock(path);
     peerLibraries.addListener(_bump);
     downloads.addListener(_bump);
+    offline.addListener(_bump);
     photos.addListener(_bump);
     protection.addListener(_applyProtection);
     library.hides = _hidesFromLists;
@@ -398,6 +405,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state != AppLifecycleState.resumed) {
+      offline.setForeground(false);
       // A backgrounded phone must not wake every 45 seconds just to ask for
       // remote progress. Audio playback has its own media-session lifecycle;
       // this timer is only a foreground convenience.
@@ -421,6 +429,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     _startCatchingUp();
     _startLibraryScanTimer();
     peerLibraries.setForeground(true);
+    offline.setForeground(true);
     unawaited(host.checkHealth());
     unawaited(catchUpWithPeers());
     if (settings.libraryScanIntervalMinutes > 0) {
@@ -609,6 +618,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     host.removeListener(_bump);
     peerLibraries.removeListener(_bump);
     downloads.removeListener(_bump);
+    offline.removeListener(_bump);
+    offline.dispose();
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);
     peerLibraries.removeListener(_wireSources);

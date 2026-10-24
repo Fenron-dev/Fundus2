@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Color, ThemeMode;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:fundus_core/fundus_core.dart' show OfflinePolicy, OfflineRule;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -205,6 +206,72 @@ class AppSettings extends ChangeNotifier {
 
   /// Whether opening a vault performs one file scan immediately.
   bool get scanOnStartup => _values['scan_on_startup'] == true;
+
+  /// Physical offline budgets/rules belong to this installation, not a vault
+  /// copied to another phone or an archive disk. Invalid data is not reset.
+  OfflinePolicy get offlinePolicy => _values['offline_policy'] == null
+      ? const OfflinePolicy()
+      : OfflinePolicy.fromJson(_values['offline_policy']);
+
+  Future<void> setOfflinePolicy(OfflinePolicy policy) {
+    offlinePolicy;
+    policy.validate();
+    return _set('offline_policy', policy.toJson());
+  }
+
+  List<OfflineRule> offlineRules(String libraryId) {
+    final values = _values['offline_rules'];
+    if (values == null) return const [];
+    if (values is! Map ||
+        values['format_version'] != 1 ||
+        values['libraries'] is! Map) {
+      throw const FormatException('Nicht unterstützte Offline-Auswahl.');
+    }
+    final rules = (values['libraries'] as Map)[libraryId];
+    if (rules == null) return const [];
+    if (rules is! List || rules.length > 1000) {
+      throw const FormatException('Offline-Auswahl ist zu groß oder ungültig.');
+    }
+    return rules.map(OfflineRule.fromJson).toList(growable: false);
+  }
+
+  Future<void> setOfflineRules(String libraryId, List<OfflineRule> rules) =>
+      _set('offline_rules', _offlineRulesValue(libraryId, rules));
+
+  Future<void> setOfflineConfiguration(
+    String libraryId,
+    OfflinePolicy policy,
+    List<OfflineRule> rules,
+  ) async {
+    offlinePolicy;
+    policy.validate();
+    final ruleValue = _offlineRulesValue(libraryId, rules);
+    _values['offline_policy'] = policy.toJson();
+    _values['offline_rules'] = ruleValue;
+    notifyListeners();
+    await _persist();
+  }
+
+  Map<String, Object?> _offlineRulesValue(
+    String libraryId,
+    List<OfflineRule> rules,
+  ) {
+    offlineRules(libraryId); // Preserve unknown versions instead of clobbering.
+    if (rules.length > 1000) {
+      throw const FormatException('Zu viele Offline-Regeln.');
+    }
+    final normalized = {
+      for (final rule in rules) rule.key: OfflineRule.fromJson(rule.toJson()),
+    };
+    final old = _values['offline_rules'] as Map?;
+    return {
+      'format_version': 1,
+      'libraries': {
+        if (old?['libraries'] case final Map libraries) ...libraries,
+        libraryId: normalized.values.map((rule) => rule.toJson()).toList(),
+      },
+    };
+  }
 
   /// The TMDB key, if this device has one.
   ///

@@ -7,6 +7,7 @@ import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/download_controller.dart';
 import '../../data/work_view.dart';
+import 'offline_settings_sheet.dart';
 
 /// Downloads and offline copies.
 ///
@@ -34,7 +35,10 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     super.didChangeDependencies();
     if (_measured) return;
     _measured = true;
-    unawaited(FundusScope.of(context).downloads.measureStorage());
+    final downloads = FundusScope.of(context).downloads;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(downloads.measureStorage());
+    });
   }
 
   @override
@@ -72,14 +76,21 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         offline.isEmpty &&
         partial.isEmpty &&
         history.isEmpty) {
-      return FundusEmptyState(
-        title: 'Nichts heruntergeladen',
-        reason: scope.peerLibraries.hasConnection
-            ? 'Öffne ein Werk und wähle „Mitnehmen" — es liegt dann auch '
-                  'ohne Netz hier.'
-            : 'Werke eines gekoppelten Geräts lassen sich mitnehmen, solange '
-                  'es erreichbar ist. Gerade antwortet keines.',
-        icon: null,
+      return Column(
+        children: [
+          const OfflineSettingsButton(),
+          Expanded(
+            child: FundusEmptyState(
+              title: 'Nichts heruntergeladen',
+              reason: scope.peerLibraries.hasConnection
+                  ? 'Öffne ein Werk und wähle „Mitnehmen" — es liegt dann auch '
+                        'ohne Netz hier.'
+                  : 'Werke eines gekoppelten Geräts lassen sich mitnehmen, solange '
+                        'es erreichbar ist. Gerade antwortet keines.',
+              icon: null,
+            ),
+          ),
+        ],
       );
     }
 
@@ -90,6 +101,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const OfflineSettingsButton(),
         if (_selected.isNotEmpty)
           _SelectionBar(
             count: _selected.length,
@@ -376,7 +388,8 @@ class _JobTile extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = context.fundus;
     final line = [
-      if (job.state == DownloadState.failed)
+      if (job.state == DownloadState.failed ||
+          job.state == DownloadState.paused)
         job.failure ?? 'Abgebrochen'
       else if (job.state == DownloadState.queued)
         'wartet'
@@ -402,13 +415,16 @@ class _JobTile extends StatelessWidget {
                   style: theme.textTheme.bodyMedium,
                 ),
               ),
-              if (job.state == DownloadState.failed)
+              if (job.state == DownloadState.failed ||
+                  job.state == DownloadState.paused)
                 TextButton(
                   onPressed: () {
                     final work = scope.library.workById(job.workId);
-                    if (work != null) unawaited(scope.downloads.download(work));
+                    if (work != null) unawaited(scope.downloads.retry(work));
                   },
-                  child: const Text('Erneut'),
+                  child: Text(
+                    job.state == DownloadState.paused ? 'Fortsetzen' : 'Erneut',
+                  ),
                 )
               else
                 IconButton(

@@ -240,4 +240,44 @@ void main() {
     expect(scope.textReader.paragraphIndex, 0);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'offline settings are available even without downloads and save validated preferences',
+    (tester) async {
+      final scope = await pump(tester);
+      scope.navigation.reset(const DownloadsRoute());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Automatisch mitnehmen'));
+      await tester.pumpAndSettle();
+      expect(find.text('Automatik aktivieren'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).at(0), '4');
+      await tester.enterText(find.byType(TextField).at(1), '128');
+      await tester.ensureVisible(find.text('Speichern und prüfen'));
+      await tester.tap(find.text('Speichern und prüfen'));
+      await tester.pump();
+      await tester.runAsync(() async {
+        await library.library!.flushSidecarWrites();
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      });
+      await tester.pumpAndSettle();
+      expect(settings.offlinePolicy.enabled, isFalse);
+      expect(settings.offlinePolicy.nextFiles, 4);
+      expect(settings.offlinePolicy.storageBudgetBytes, 128 * 1024 * 1024);
+      final deadline = DateTime.now().add(const Duration(seconds: 8));
+      while (find.text('Speichern und prüfen').evaluate().isEmpty &&
+          DateTime.now().isBefore(deadline)) {
+        await tester.pump(const Duration(milliseconds: 20));
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+      }
+      await tester.enterText(find.byType(TextField).at(0), '0');
+      await tester.ensureVisible(find.text('Speichern und prüfen'));
+      await tester.tap(find.text('Speichern und prüfen'));
+      await tester.pumpAndSettle();
+      expect(settings.offlinePolicy.nextFiles, 4);
+      expect(find.textContaining('Ungültige Offline-Anzahl'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

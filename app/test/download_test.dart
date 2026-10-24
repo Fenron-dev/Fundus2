@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/data/download_controller.dart';
+import 'package:fundus/data/offline_controller.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/peer_connection.dart';
 import 'package:fundus/data/peer_library.dart';
@@ -97,6 +98,251 @@ void main() {
       '${downloads.jobFor(theWork().id)?.failure}',
     );
   }
+
+  Future<OfflineController> smart({
+    bool wifi = true,
+    int next = 1,
+    int budget = 1048576,
+  }) async {
+    await settings.setOfflineConfiguration(
+      library.library!.manifest.libraryId,
+      OfflinePolicy(enabled: true, nextFiles: next, storageBudgetBytes: budget),
+      [
+        OfflineRule(
+          scope: OfflineRuleScope.work,
+          targetId: theWork().id,
+          nextFiles: next,
+        ),
+      ],
+    );
+    final controller = OfflineController(
+      settings: settings,
+      library: library,
+      downloads: downloads,
+      conditions: () async => OfflineConditions(wifi: wifi, charging: true),
+      scheduleAutomatically: false,
+    );
+    addTearDown(controller.dispose);
+    return controller;
+  }
+
+  test(
+    'offline rules are installation-local, versioned and separated by vault',
+    () async {
+      const first = OfflineRule(
+        scope: OfflineRuleScope.work,
+        targetId: 'work-a',
+        nextFiles: 5,
+      );
+      await settings.setOfflineRules('vault-a', [first, first]);
+      await settings.setOfflineRules('vault-b', [
+        const OfflineRule(scope: OfflineRuleScope.shelf, targetId: 'shelf-b'),
+      ]);
+      expect(settings.offlineRules('vault-a').single.nextFiles, 5);
+      expect(
+        settings.offlineRules('vault-b').single.scope,
+        OfflineRuleScope.shelf,
+      );
+      final future = AppSettings.inMemory(
+        values: {
+          'offline_rules': {'format_version': 2, 'libraries': {}},
+        },
+      );
+      expect(
+        () => future.setOfflineRules('vault-a', []),
+        throwsFormatException,
+      );
+      final futurePolicy = AppSettings.inMemory(
+        values: {
+          'offline_policy': {'format_version': 2},
+        },
+      );
+      await expectLater(
+        futurePolicy.setOfflineConfiguration(
+          'vault-a',
+          const OfflinePolicy(),
+          [],
+        ),
+        throwsFormatException,
+      );
+      expect(OfflineRule.fromJson(first.toJson()).key, first.key);
+      expect(
+        () => OfflineRule.fromJson(first.toJson()..['next_files'] = 0),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'smart preview expands a saved shelf, with a specific work rule taking precedence',
+    () async {
+      final controller = await smart();
+      final views = await library.library!.saveView(
+        'Hörregal',
+        const LibraryWorkQuery(kinds: {'audiobook'}),
+      );
+      await settings.setOfflineRules(library.library!.manifest.libraryId, [
+        OfflineRule(
+          scope: OfflineRuleScope.shelf,
+          targetId: views.single.id,
+          nextFiles: 2,
+        ),
+        OfflineRule(
+          scope: OfflineRuleScope.work,
+          targetId: theWork().id,
+          nextFiles: 1,
+        ),
+      ]);
+      final plan = await controller.preview();
+      expect(plan.files, hasLength(1));
+      expect(plan.bytesToDownload, 1024);
+      expect(downloads.jobs, isEmpty);
+      expect(library.library!.loadProgress(theWork().id), isNull);
+    },
+  );
+
+  test('smart downloads respect wifi and foreground gates', () async {
+    final controller = await smart(wifi: false);
+    final plan = await controller.preview();
+    expect(plan.files, isEmpty);
+    expect(plan.deferred[theWork().id], OfflineDeferral.wifiRequired);
+    await controller.run(force: true);
+    expect(downloads.jobs, isEmpty);
+    controller.setForeground(false);
+    expect(
+      (await controller.preview()).deferred[theWork().id],
+      OfflineDeferral.background,
+    );
+    await controller.run(force: true);
+    expect(downloads.jobs, isEmpty);
+  });
+
+  test('offline budget includes copies from hidden or other vaults', () async {
+    final controller = await smart(budget: 4096);
+    final other = File(
+      '${temporary.path}/speicher/offline/other-vault/private.mp4',
+    );
+    await other.parent.create(recursive: true);
+    await other.writeAsBytes(List.filled(4096, 1));
+    final plan = await controller.preview();
+    expect(plan.files, isEmpty);
+    expect(plan.deferred[theWork().id], OfflineDeferral.budgetExceeded);
+  });
+
+  test(
+    'smart selection downloads once and does not keep refilling the next N',
+    () async {
+      final controller = await smart();
+      await controller.run(force: true);
+      await settle();
+      expect(downloads.offlineFileCount(theWork().id), 1);
+      expect((await controller.preview()).files, isEmpty);
+      await controller.run(force: true);
+      expect(downloads.offlineFileCount(theWork().id), 1);
+    },
+  );
+
+  test(
+    'enabled rule changes automatically start the existing queue in foreground',
+    () async {
+      final controller = OfflineController(
+        settings: settings,
+        library: library,
+        downloads: downloads,
+        conditions: () async =>
+            const OfflineConditions(wifi: true, charging: true),
+      );
+      addTearDown(controller.dispose);
+      await settings.setOfflineConfiguration(
+        library.library!.manifest.libraryId,
+        const OfflinePolicy(enabled: true),
+        [
+          OfflineRule(
+            scope: OfflineRuleScope.work,
+            targetId: theWork().id,
+            nextFiles: 1,
+          ),
+        ],
+      );
+      await settle();
+      expect(downloads.offlineFileCount(theWork().id), 1);
+    },
+  );
+
+  test('hidden works produce no smart preview or jobs', () async {
+    final controller = await smart();
+    library.hides = (_) => true;
+    library.refresh();
+    final plan = await controller.preview();
+    expect(plan.files, isEmpty);
+    expect(plan.deferred, isEmpty);
+    await controller.run(force: true);
+    expect(downloads.jobs, isEmpty);
+  });
+
+  test(
+    'an externally deleted offline copy is selected and fetched again',
+    () async {
+      final controller = await smart();
+      final first = library.library!.contentFiles(theWork().id).first.fileId;
+      await downloads.download(theWork(), only: {first});
+      await settle();
+      final copy = library.library!
+          .contentFiles(theWork().id)
+          .firstWhere((file) => file.fileId == first)
+          .offlinePath!;
+      await File(copy).delete();
+      final plan = await controller.preview();
+      expect(plan.files.single.track.fileId, first);
+      expect(plan.files.single.track.isRemote, isTrue);
+      await controller.run(force: true);
+      await settle();
+      expect(await File(copy).exists(), isTrue);
+    },
+  );
+
+  test('paused retry preserves both selection and transfer guard', () async {
+    final file = library.library!.contentFiles(theWork().id).first;
+    var allowed = false;
+    await downloads.download(
+      theWork(),
+      only: {file.fileId},
+      mayTransfer: () async => allowed,
+    );
+    Future<void> paused() async {
+      for (
+        var i = 0;
+        i < 200 &&
+            downloads.jobFor(theWork().id)?.state != DownloadState.paused;
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(downloads.jobFor(theWork().id)?.state, DownloadState.paused);
+    }
+
+    await paused();
+    await downloads.retry(theWork());
+    await paused();
+    expect(downloads.offlineFileCount(theWork().id), 0);
+    allowed = true;
+    await downloads.retry(theWork());
+    await settle();
+    expect(downloads.offlineFileCount(theWork().id), 1);
+    expect(downloads.jobFor(theWork().id)!.total, 1);
+  });
+
+  test(
+    'a finished partial job can fetch a later explicitly chosen file',
+    () async {
+      final files = library.library!.contentFiles(theWork().id);
+      await downloads.download(theWork(), only: {files.first.fileId});
+      await settle();
+      await downloads.download(theWork(), only: {files.last.fileId});
+      await settle();
+      expect(downloads.isSecured(theWork().id), isTrue);
+    },
+  );
 
   test('ein gestreamtes Werk lässt sich mitnehmen', () async {
     expect(theWork().origin, FundusOrigin.stream);

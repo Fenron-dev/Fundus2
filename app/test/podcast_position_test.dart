@@ -122,7 +122,8 @@ void main() {
       await File('${folder.path}/$name').writeAsBytes(List.filled(64, 1));
     }
     final vault = await FundusLibrary.create(other);
-    addTearDown(vault.close);
+    // Wait for the player's final checkpoint before deleting its directory.
+    addTearDown(vault.shutdown);
     await vault.index().drain<void>();
     final book = WorkView.fromSummary(vault.listWorks().single);
     final files = vault.playbackTracks(book.id);

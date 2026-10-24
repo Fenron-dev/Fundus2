@@ -6,8 +6,8 @@ implementiert oder ausgeliefert ist. Die Stabilisierungsabnahme #47 bleibt separ
 
 ## Umfang und Reihenfolge
 
-1. Update-Posteingang und Abos (#56) – in Arbeit, Datei- und EPUB-Kapitel-Updates.
-2. Intelligentes Offline-Mitnehmen (#55) – Planer-Grundlage in Arbeit.
+1. Update-Posteingang und Abos (#56) – implementiert, CI und drei Plattform-Builds bestanden.
+2. Intelligentes Offline-Mitnehmen (#55) – Regeln, Oberfläche und Download-Anbindung in Arbeit.
 3. Metadatenverlauf und gezieltes Rückgängig (#57) – offen.
 4. Medienwelten und Reihenfolgen (#60) – offen.
 5. Regelregale und Dashboard-Zeilen (#58) – offen.
@@ -122,8 +122,8 @@ Analyse und Formatprüfung sauber; Core 278, Server 45, Client 41, Design 3,
 App 484 bestanden, zusammen 851. Acht App-Tests bleiben plattform- oder
 zugangsdatenabhängig übersprungen. Die Kapitel-Erweiterung `ff8d48e` hat ihre
 GitHub-CI bestanden (Run 40078336229). Zugeordnete Plattformläufe:
-Windows 40078641688, macOS 40078641657, Android 40078641656; zum Zeitpunkt
-dieses Nachtrags noch laufend, nicht als erfolgreich abgenommen.
+Windows 40078641688, macOS 40078641657, Android 40078641656; alle erfolgreich.
+Issue #56 ist anhand dieser Nachweise abgeschlossen. #47 bleibt gesondert offen.
 Die Gesamt-Roadmap bleibt offen.
 
 ## Intelligentes Offline-Mitnehmen: Planer-Grundlage
@@ -151,3 +151,71 @@ Systembedingungen, Anbindung an die vorhandene Download-Warteschlange,
 Unterbrechungs-/Fortsetzungsverhalten, ausdrücklich erlaubtes Aufräumen nach
 bestätigtem Fortschrittssync sowie die Android-Geräteabnahme. Diese Grundlage
 ist deshalb nicht als fertige Offline-Funktion abzuhaken.
+
+### Zweiter Schritt: Regeln, Vorschau und Übertragung
+
+- Auf einem entfernten Werk und im Download-Bereich (auch im Leerzustand)
+  öffnet „Automatisch mitnehmen“ die Einstellungen. Opt-in, Anzahl, globales
+  MiB-Budget, WLAN und Laden sind einstellbar. Die Vorschau nennt konkrete
+  Dateien und Größen sowie Wartegründe. Lange Dateilisten sind virtualisiert.
+- Regeln für einzelne Werke und gespeicherte Regale liegen versioniert im
+  installationsgebundenen `device.json`, getrennt nach Vault-ID. Eine konkrete
+  Werkregel hat Vorrang vor einem überlappenden Regal. Konfiguration wird
+  gemeinsam gespeichert; unbekannte Versionen werden nicht still ersetzt.
+- Die vorhandene Download-Warteschlange wird weiterverwendet. Nach Änderungen
+  und optional einmal pro Minute wird **nur im Vordergrund und nur bei aktivem
+  Opt-in mit Regeln** neu ausgewertet, ohne Scan oder zusätzlichen Katalogabruf.
+  Wiederholversuche sind begrenzt. Hintergrundwechsel stoppt die Auswertung;
+  laufende neue Übertragungen pausieren und behalten den empfangenen Präfix.
+- Android fragt den aktiven ungetakteten WLAN-Transport und Ladestatus über
+  System-APIs ab, ohne neuen Dienst, Wake-Lock oder permanente Registrierung.
+  Während einer Übertragung höchstens eine Systemabfrage pro Sekunde;
+  Schutz-/Vordergrundwechsel wirken ohne diese Verzögerung. Auf noch nicht
+  unterstützten Plattformen bleibt der Systemstatus unbekannt: aktivierte
+  Bedingungen warten, statt sie als erfüllt auszugeben. Der Nutzer kann
+  bewusst Bedingungen abwählen. Quellen: [Android Netzwerkfähigkeiten](https://developer.android.com/reference/android/net/NetworkCapabilities),
+  [Ladestatus](https://developer.android.com/training/monitoring-device-state/battery-monitoring).
+- Budget zählt tatsächlich belegte Offline-Dateien einschließlich versteckter,
+  verwaister und anderer Vault-Kopien sowie vorgemerkte Dateien. Ein gebündeltes
+  Index-Inventar verhindert je eine Abfrage pro Werk auf Netzwerk-Vaults.
+  Die Übertragung verwirft Antworten, die größer als die reservierte Datei sind;
+  Größen ohne verlässliche Angaben werden nicht als kostenlos betrachtet.
+- Unterbrochene Dateien werden mit Range und starkem ETag fortgesetzt. Ein
+  geänderter Ressourcenstand, ungültiger Bereich oder vollständige Antwort
+  darf nie an alte Bytes angehängt werden. Höchstens ein Neustartversuch.
+  Identische gleichzeitige Cache-Anfragen teilen eine Übertragung. Erst eine
+  vollständige Datei wird als Offline-Kopie registriert. Ein begrenzter Abruf
+  überschreibt bei Fehlern keine bereits vollständige Kopie.
+- Pausierte Aufträge lassen sich unter Beibehaltung von Dateiauswahl und
+  Bedingungen fortsetzen. Vault-Wechsel beendet zugehörige Aufträge; alte
+  Übertragungen dürfen nicht in einen neuen/geschlossenen Index schreiben.
+- Nebenbefunde behoben: teilweise gesicherte Werke lösten ihre Gegenstelle
+  fälschlich anhand der schon lokalen ersten Datei auf. Fertige Teilaufträge
+  verhinderten weitere gezielte Downloads. Der leere Download-Bildschirm
+  benachrichtigte beim Aufbau synchron seinen übergeordneten Zustand.
+  Außerhalb von Fundus gelöschte Kopien werden in der Vorschau wieder als
+  benötigte Dateien erkannt und tatsächlich erneut geholt, ohne den
+  persönlichen Fortschritt zurückzusetzen.
+
+Neue echte Server-/Clienttests prüfen Regeln, überlappende Regale, Gates,
+globale Budgets, Schutz, keine endlose Nachfüllung, Wiederholung und weitere
+Teildownloads. Cache-Tests prüfen Range, ETag-Wechsel, Zusammenlegen paralleler
+Abrufe und Budgetgrenzen. Widget-Test: Einstellungen auch ohne Downloads,
+Speichern und Abweisen ungültiger Eingaben ohne Überschreiben.
+
+Lokale Abnahme dieses zweiten Schritts: Core 290, Server 45, Client 41,
+Design 3 und App 498 bestanden (zusammen 877), acht App-Tests übersprungen.
+Analyse/Format sauber. Eine bestehende unzuverlässige Testbereinigung wartet
+nun auf `vault.shutdown`, bevor der temporäre Hörbuchordner entfernt wird;
+zuvor konnte ein noch laufender Checkpoint dessen Löschung überholen.
+Die automatische Auslösung und die reine Auswahlberechnung sind getrennt
+getestet, damit ein Timer nicht unbemerkt eine Vorschau-Prüfung verändert.
+GitHub-CI und Android-Kompilierung der neuen Systemabfrage stehen für diesen
+Schritt noch aus; erfolgreiche Builds des vorigen Schritts ersetzen das nicht.
+
+**Weiterhin offen in #55:** ausdrücklich erlaubtes Aufräumen konsumierter
+Kopien erst nach bestätigtem Fortschrittsabgleich und geprüftem verwaltetem
+Dateipfad (keine Originale/externen Pfade), weitere Plattform-Erkennung
+für WLAN/Laden, Neustart-/Unterbrechungs- und Schutzwechsel-Abnahmen sowie
+Android-Laufzeit-/Akkuprüfung auf einem Gerät. Keine automatische Löschung ist
+mit diesem Schritt aktiviert; Originalmedien bleiben unangetastet.

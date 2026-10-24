@@ -2,8 +2,13 @@ package dev.fundus.fundus2
 
 import android.Manifest
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
@@ -54,6 +59,32 @@ class MainActivity : AudioServiceFragmentActivity() {
             when (call.method) {
                 "name" -> result.success(deviceName())
                 else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "dev.fundus/offline_conditions",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "read") {
+                result.notImplemented()
+            } else {
+                try {
+                    val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                    val caps = manager.getNetworkCapabilities(manager.activeNetwork)
+                    val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                    val status = battery?.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                    result.success(mapOf(
+                        "wifi" to (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                            !caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)),
+                        "charging" to if (status == null || status == -1) null else
+                            (status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                status == BatteryManager.BATTERY_STATUS_FULL),
+                    ))
+                } catch (_: Exception) {
+                    // Unknown conditions are not permission to download.
+                    result.success(mapOf("wifi" to null, "charging" to null))
+                }
             }
         }
     }

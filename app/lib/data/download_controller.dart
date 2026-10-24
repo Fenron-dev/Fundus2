@@ -12,7 +12,7 @@ import 'library_controller.dart';
 import 'work_view.dart';
 
 /// What a download is doing right now.
-enum DownloadState { queued, running, done, failed }
+enum DownloadState { queued, running, done, failed, paused }
 
 /// One work on its way to this device.
 final class DownloadJob {
@@ -113,7 +113,10 @@ final class DownloadJob {
 /// work back on the network. „Offline gesichert" is a state of a work, which
 /// is exactly what the design says origin is.
 class DownloadController extends ChangeNotifier {
-  DownloadController({required this.library, required this.storageRoot});
+  DownloadController({required this.library, required this.storageRoot}) {
+    _boundHandle = library.library;
+    library.addListener(_libraryChanged);
+  }
 
   final LibraryController library;
 
@@ -121,8 +124,23 @@ class DownloadController extends ChangeNotifier {
   /// state rather than in the media folders — nothing else should mistake
   /// them for a library.
   final Future<Directory> Function() storageRoot;
+  FundusLibrary? _boundHandle;
+
+  void _libraryChanged() {
+    final current = library.library;
+    if (identical(current, _boundHandle)) return;
+    _boundHandle = current;
+    _generations.clear();
+    _jobs.clear();
+    _wanted.clear();
+    _transferGuards.clear();
+    notifyListeners();
+  }
 
   final Map<String, DownloadJob> _jobs = {};
+  final Map<String, Future<bool> Function()> _transferGuards = {};
+  final Map<String, int> _generations = {};
+  var _generation = 0;
 
   /// Where a work's bytes come from, by the source it belongs to.
   FundusStreamProxy? Function(String sourceId)? proxyForSource;
@@ -139,15 +157,16 @@ class DownloadController extends ChangeNotifier {
   bool canDownload(WorkView work) =>
       _proxyFor(work.id) != null &&
       !isSecured(work.id) &&
-      !_jobs.containsKey(work.id);
+      (_jobs[work.id] == null || _jobs[work.id]!.state == DownloadState.done);
 
   /// The door for a work's files, if the machine holding them is answering.
   FundusStreamProxy? _proxyFor(String workId) {
     final vault = library.library;
     if (vault == null) return null;
-    final tracks = vault.playbackTracks(workId);
-    if (tracks.isEmpty) return null;
-    return proxyForSource?.call(tracks.first.sourceId);
+    // Playback tracks can already be local offline copies while the next
+    // file still belongs to the peer. Resolve the owning source, not track 1.
+    final sourceId = vault.workSummary(workId)?.sourceId;
+    return sourceId == null ? null : proxyForSource?.call(sourceId);
   }
 
   /// Whether every file of a work is already here.
@@ -189,6 +208,7 @@ class DownloadController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    library.removeListener(_libraryChanged);
     super.dispose();
   }
 
@@ -256,13 +276,20 @@ class DownloadController extends ChangeNotifier {
   /// [only] names the files to fetch — the chapters somebody picked. Without
   /// it the whole work comes along, which is right for a film and wrong for
   /// a manga with four hundred chapters.
-  Future<void> download(WorkView work, {Set<String>? only}) async {
+  Future<void> download(
+    WorkView work, {
+    Set<String>? only,
+    Future<bool> Function()? mayTransfer,
+  }) async {
     final vault = library.library;
     if (vault == null || _proxyFor(work.id) == null) return;
     final previous = _jobs[work.id];
     // A failed job is history, not a lock. Keeping it in the map used to make
     // the visible „Erneut“ action a no-op forever after the first timeout.
-    if (previous != null && previous.state != DownloadState.failed) return;
+    if (previous?.state == DownloadState.running ||
+        previous?.state == DownloadState.queued) {
+      return;
+    }
     if (previous != null) _jobs.remove(work.id);
     final files = [
       for (final file in vault.contentFiles(work.id))
@@ -271,6 +298,12 @@ class DownloadController extends ChangeNotifier {
     if (files.isEmpty) return;
 
     _wanted[work.id] = {for (final file in files) file.fileId};
+    _generations[work.id] = ++_generation;
+    if (mayTransfer == null) {
+      _transferGuards.remove(work.id);
+    } else {
+      _transferGuards[work.id] = mayTransfer;
+    }
     _jobs[work.id] = DownloadJob(
       workId: work.id,
       title: work.title,
@@ -285,10 +318,24 @@ class DownloadController extends ChangeNotifier {
   /// Which files each job was told to fetch.
   final Map<String, Set<String>> _wanted = {};
 
+  Future<void> retry(WorkView work) => download(
+    work,
+    only: _wanted[work.id],
+    mayTransfer: _transferGuards[work.id],
+  );
+
+  Set<String> get queuedFileIds => {
+    for (final job in _jobs.values)
+      if (job.state == DownloadState.running ||
+          job.state == DownloadState.queued)
+        ...?_wanted[job.workId],
+  };
+
   /// Throws a copy away and gives the work back to the network.
   Future<void> remove(String workId) async {
     final vault = library.library;
     if (vault == null) return;
+    cancel(workId);
     for (final file in vault.contentFiles(workId)) {
       final path = file.offlinePath;
       if (path != null) {
@@ -315,6 +362,8 @@ class DownloadController extends ChangeNotifier {
   void cancel(String workId) {
     if (_jobs.remove(workId) == null) return;
     _wanted.remove(workId);
+    _generations.remove(workId);
+    _transferGuards.remove(workId);
     notifyListeners();
   }
 
@@ -332,7 +381,18 @@ class DownloadController extends ChangeNotifier {
             .where((job) => job.state == DownloadState.queued)
             .firstOrNull;
         if (next == null) return;
-        await _fetch(next);
+        final generation = _generations[next.workId];
+        try {
+          await _fetch(next);
+        } on Object catch (error) {
+          if (_generations[next.workId] == generation) {
+            _update(
+              next.workId,
+              (job) =>
+                  job.copyWith(state: DownloadState.failed, failure: '$error'),
+            );
+          }
+        }
       }
     } finally {
       _running = false;
@@ -357,6 +417,16 @@ class DownloadController extends ChangeNotifier {
 
   Future<void> _fetch(DownloadJob job) async {
     final vault = library.library;
+    final generation = _generations[job.workId];
+    bool current() =>
+        !_disposed &&
+        identical(library.library, vault) &&
+        _generations[job.workId] == generation &&
+        _jobs.containsKey(job.workId);
+    Future<bool> permitted() async =>
+        current() &&
+        library.workById(job.workId) != null &&
+        (await _transferGuards[job.workId]?.call() ?? true);
     final proxy = _proxyFor(job.workId);
     if (vault == null || proxy == null) {
       _jobs[job.workId] = job.copyWith(
@@ -377,21 +447,32 @@ class DownloadController extends ChangeNotifier {
     var bytesDone = 0;
 
     final wanted = _wanted[job.workId];
+    if (!current()) return;
     for (final file in vault.contentFiles(job.workId)) {
-      if (!_jobs.containsKey(job.workId)) return;
+      if (!current()) return;
       if (wanted != null && !wanted.contains(file.fileId)) continue;
       if (file.availability == 'offline_copy' && file.offlinePath != null) {
-        done++;
-        bytesDone += file.sizeBytes;
-        continue;
+        final present = await File(file.offlinePath!).exists();
+        if (!current()) return;
+        if (present) {
+          done++;
+          bytesDone += file.sizeBytes;
+          continue;
+        }
+        vault.clearOfflineCopy(file.fileId);
       }
       // Tempo aus dem, was tatsächlich ankommt: ein gleitender Wert, damit
       // eine Sekunde Funkloch nicht als „noch 4 Stunden" durchschlägt.
       final started = Stopwatch()..start();
+      int? resumedBytes;
       var lastReported = Duration.zero;
       try {
         final path = await cache.fileFor(
           _trackFor(vault.playbackTracks(job.workId), file.fileId),
+          mayTransfer: permitted,
+          maxBytes: _transferGuards.containsKey(job.workId)
+              ? file.sizeBytes
+              : null,
           onProgress: (fraction) {
             _update(
               job.workId,
@@ -404,6 +485,7 @@ class DownloadController extends ChangeNotifier {
             );
           },
           onBytes: (received, expected) {
+            resumedBytes ??= received;
             final elapsed = started.elapsed;
             // Viermal je Sekunde reicht für etwas, das ein Mensch liest.
             if (elapsed - lastReported < const Duration(milliseconds: 250)) {
@@ -420,7 +502,9 @@ class DownloadController extends ChangeNotifier {
                 fraction: expectedBytes > 0
                     ? (received / expectedBytes).clamp(0, 1)
                     : null,
-                bytesPerSecond: seconds <= 0 ? null : received / seconds,
+                bytesPerSecond: seconds <= 0
+                    ? null
+                    : (received - resumedBytes!) / seconds,
                 bytesLeft: expectedBytes > 0 ? expectedBytes - received : null,
               ),
             );
@@ -431,7 +515,7 @@ class DownloadController extends ChangeNotifier {
         // weggeräumt, darf die fertige Datei nicht doch noch als
         // Offline-Kopie gelten — sonst steht ein Werk als „mitgenommen" da,
         // dessen Löschung der Nutzer gerade angestoßen hat.
-        if (!_jobs.containsKey(job.workId)) return;
+        if (!current()) return;
         vault.setOfflineCopy(fileId: file.fileId, path: path);
         done++;
         bytesDone += file.sizeBytes;
@@ -445,10 +529,13 @@ class DownloadController extends ChangeNotifier {
           ),
         );
       } on Object catch (error) {
+        if (!current()) return;
         _update(
           job.workId,
           (current) => current.copyWith(
-            state: DownloadState.failed,
+            state: error is TransferPaused
+                ? DownloadState.paused
+                : DownloadState.failed,
             done: done,
             failure: 'Abgebrochen bei „${file.filename}": $error',
           ),

@@ -4277,6 +4277,35 @@ final class FundusDatabase {
       )
       .toList(growable: false);
 
+  /// One bounded inventory query, rather than one network-DB query per work.
+  List<({String fileId, String? offlinePath, int sizeBytes})> offlineInventory(
+    Set<String> reservedIds,
+  ) {
+    final rows =
+        <String, ({String fileId, String? offlinePath, int sizeBytes})>{};
+    void collect(String where, List<Object?> parameters) {
+      for (final row in _database.select(
+        'SELECT id, offline_path, size FROM files WHERE $where',
+        parameters,
+      )) {
+        final id = row['id'] as String;
+        rows[id] = (
+          fileId: id,
+          offlinePath: row['offline_path'] as String?,
+          sizeBytes: row['size'] as int,
+        );
+      }
+    }
+
+    collect('offline_path IS NOT NULL', []);
+    final ids = reservedIds.toList();
+    for (var offset = 0; offset < ids.length; offset += 400) {
+      final chunk = ids.skip(offset).take(400).toList();
+      collect('id IN (${List.filled(chunk.length, '?').join(',')})', chunk);
+    }
+    return rows.values.toList(growable: false);
+  }
+
   /// Removes a mirrored source and its works.
   ///
   /// The local vault is never a candidate: its works are files on this disk,

@@ -113,6 +113,7 @@ final class FundusStreamProxy {
       for (final header in [
         HttpHeaders.ifNoneMatchHeader,
         HttpHeaders.ifModifiedSinceHeader,
+        HttpHeaders.ifRangeHeader,
       ]) {
         final value = request.headers.value(header);
         if (value != null) outgoing.headers.set(header, value);

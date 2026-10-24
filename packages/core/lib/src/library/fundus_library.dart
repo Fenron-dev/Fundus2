@@ -532,6 +532,10 @@ final class FundusLibrary {
   >
   contentFiles(String workId) => _database.contentFiles(workId);
 
+  List<({String fileId, String? offlinePath, int sizeBytes})> offlineInventory(
+    Set<String> reservedIds,
+  ) => _database.offlineInventory(reservedIds);
+
   /// What a mirror last saw of a source, as work id → state marker.
   ///
   /// Kept beside the index it belongs to rather than with the app: it
