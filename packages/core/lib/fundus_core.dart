@@ -12,6 +12,7 @@ export 'src/library/remote_catalogue.dart';
 export 'src/library/work_annotations.dart';
 export 'src/model/device_profile.dart';
 export 'src/model/content_updates.dart';
+export 'src/model/offline_plan.dart';
 export 'src/model/episode_naming.dart';
 export 'src/model/fundus_id.dart';
 export 'src/model/library_configuration.dart';

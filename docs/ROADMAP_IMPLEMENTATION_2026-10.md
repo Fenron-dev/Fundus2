@@ -7,7 +7,7 @@ implementiert oder ausgeliefert ist. Die Stabilisierungsabnahme #47 bleibt separ
 ## Umfang und Reihenfolge
 
 1. Update-Posteingang und Abos (#56) – in Arbeit, Datei- und EPUB-Kapitel-Updates.
-2. Intelligentes Offline-Mitnehmen (#55) – offen.
+2. Intelligentes Offline-Mitnehmen (#55) – Planer-Grundlage in Arbeit.
 3. Metadatenverlauf und gezieltes Rückgängig (#57) – offen.
 4. Medienwelten und Reihenfolgen (#60) – offen.
 5. Regelregale und Dashboard-Zeilen (#58) – offen.
@@ -120,6 +120,34 @@ Wiederholung bei unverändertem Katalog. Schutztests und direkte
 Reader-/Oberflächen-Einstiege ergänzen die Abnahme. Lokaler Kapitel-Zwischenstand:
 Analyse und Formatprüfung sauber; Core 278, Server 45, Client 41, Design 3,
 App 484 bestanden, zusammen 851. Acht App-Tests bleiben plattform- oder
-zugangsdatenabhängig übersprungen. Der vorherige Datei-Zwischenstand hat die
-GitHub-CI bestanden (Run 40076351630); die Kapitel-Erweiterung benötigt noch
-ihren eigenen CI-/Plattformlauf. Die Gesamt-Roadmap bleibt offen.
+zugangsdatenabhängig übersprungen. Die Kapitel-Erweiterung `ff8d48e` hat ihre
+GitHub-CI bestanden (Run 40078336229). Zugeordnete Plattformläufe:
+Windows 40078641688, macOS 40078641657, Android 40078641656; zum Zeitpunkt
+dieses Nachtrags noch laufend, nicht als erfolgreich abgenommen.
+Die Gesamt-Roadmap bleibt offen.
+
+## Intelligentes Offline-Mitnehmen: Planer-Grundlage
+
+Der gemeinsame Core enthält zunächst eine reine Vorschau-Berechnung, noch
+keine neue Download-Automatik oder fertige Bedienoberfläche. Regeln sind
+standardmäßig aus. Anzahl, Speicherbudget, WLAN- und Ladebedingung haben ein
+versioniertes Modell. Unbekannte Systembedingungen erlauben keine Übertragung;
+die erste Ausführung bleibt ausdrücklich auf die geöffnete App begrenzt.
+
+Die Auswahl beginnt an der ausdrücklich gewählten persönlichen Datei und
+behält die vorgegebene Reihenfolge. Bereits vorhandene oder vorgemerkte Dateien
+belegen Plätze im Vorausladefenster, damit erneutes Auswerten nicht immer weiter
+die nächsten N Dateien nachlädt. Verbrauch und Reservierungen zählen global,
+auch wenn die zugehörigen Werke derzeit nicht sichtbar sind. Unbekannte Größen,
+fehlende Positionsanker und Budgetüberschreitungen werden als Grund ausgegeben;
+eine zu große Folge wird nicht still übersprungen. EPUB/CBZ sind physische
+Dateien, keine einzeln angebotenen eingebetteten Kapitel.
+
+Zwölf gezielte Tests prüfen diese Berechnung. Der gesamte lokale Lauf mit
+dieser Grundlage besteht 863 Tests (Core 290, Server 45, Client 41, Design 3,
+App 484; acht App-Tests übersprungen), Analyse/Format sauber. Noch offen in #55: gespeicherte
+Werk-/Regalregeln, Vorschau und Einstellungen in der Oberfläche, zuverlässige
+Systembedingungen, Anbindung an die vorhandene Download-Warteschlange,
+Unterbrechungs-/Fortsetzungsverhalten, ausdrücklich erlaubtes Aufräumen nach
+bestätigtem Fortschrittssync sowie die Android-Geräteabnahme. Diese Grundlage
+ist deshalb nicht als fertige Offline-Funktion abzuhaken.
