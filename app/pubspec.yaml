@@ -29,7 +29,7 @@ dependencies:
   path_provider: ^2.1.6
   file_picker: ^11.0.2
   pdfrx: ^2.4.7
-  image: ^4.9.2
+  image: ^4.12.0
   audio_service: ^0.18.19
   audio_session: ^0.2.4
   qr_flutter: ^4.1.0
