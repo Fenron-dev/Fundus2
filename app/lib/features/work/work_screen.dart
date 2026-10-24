@@ -27,6 +27,7 @@ import '../updates/content_updates_screen.dart' show ContentSubscriptionButton;
 import 'download_choice_sheet.dart';
 import 'metadata_dialog.dart';
 import 'metadata_editor.dart';
+import 'metadata_history_dialog.dart';
 
 /// One work detail screen for every media type.
 ///
@@ -925,10 +926,20 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
     final vault = scope.library.library;
     // A mirrored work is an index of something on another machine; its
     // details are that machine's to change.
-    if (vault == null ||
-        vault.isReadOnly ||
-        widget.work.summary.sourceId != 'local') {
-      return const SizedBox.shrink();
+    if (vault == null) return const SizedBox.shrink();
+    final history = OutlinedButton.icon(
+      onPressed: _busy
+          ? null
+          : () => showMetadataHistory(
+              context,
+              scope: scope,
+              workId: widget.work.id,
+            ),
+      icon: const Icon(Icons.history),
+      label: const Text('Metadatenverlauf'),
+    );
+    if (vault.isReadOnly || widget.work.summary.sourceId != 'local') {
+      return history;
     }
     return Wrap(
       spacing: FundusSpace.x3,
@@ -943,6 +954,7 @@ class _MetadataButtonsState extends State<_MetadataButtons> {
           icon: Icon(FundusIcons.edit, size: FundusIcons.sizeSm),
           label: const Text('Bearbeiten'),
         ),
+        history,
       ],
     );
   }
@@ -1165,6 +1177,35 @@ class _StatusEditor extends StatelessWidget {
 
   final WorkView work;
 
+  Future<void> _saveStatus(
+    BuildContext context,
+    FundusScopeState scope,
+    FundusLibrary vault, {
+    String? publicationStatus,
+    String? personalStatus,
+  }) async {
+    try {
+      await vault.setWorkStatuses(
+        workId: work.id,
+        publicationStatus: publicationStatus,
+        personalStatus: personalStatus,
+      );
+      if (identical(scope.library.library, vault)) {
+        scope.library.refreshWork(work.id);
+      }
+    } on Object {
+      if (context.mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Status nicht gespeichert. Bitte Vault-Zugriff und Metadatenverlauf prüfen.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   static const publication = <String, String>{
     'unknown': 'Unbekannt',
     'ongoing': 'Laufend',
@@ -1218,12 +1259,8 @@ class _StatusEditor extends StatelessWidget {
           onChanged: (value) {
             if (value != null) {
               unawaited(
-                library.setWorkStatuses(
-                  workId: work.id,
-                  publicationStatus: value,
-                ),
+                _saveStatus(context, scope, library, publicationStatus: value),
               );
-              scope.library.refreshWork(work.id);
             }
           },
         ),
@@ -1240,9 +1277,8 @@ class _StatusEditor extends StatelessWidget {
           onChanged: (value) {
             if (value != null) {
               unawaited(
-                library.setWorkStatuses(workId: work.id, personalStatus: value),
+                _saveStatus(context, scope, library, personalStatus: value),
               );
-              scope.library.refreshWork(work.id);
             }
           },
         ),

@@ -120,6 +120,136 @@ final class FundusLibrary {
   final Map<String, Future<void>> _checkpointWrites = {};
   Future<void> _metadataHistoryOperations = Future.value();
   Object? contentUpdatesError;
+  Object? metadataHistoryError;
+
+  Future<void> _initializeMetadataHistory() async {
+    try {
+      final portable = await _readMetadataHistory();
+      if (isReadOnly) return;
+      _database.initializeMetadataHistory(portable);
+      await _exportMetadataHistoryNow();
+    } on Object catch (error) {
+      metadataHistoryError = error;
+      lastSidecarError = error;
+    }
+  }
+
+  /// Read from the index only. Filtering must be based on current visibility,
+  /// not on titles or protection flags retained in an old history record.
+  MetadataHistory indexedMetadataHistory({
+    required Set<String> visibleWorkIds,
+    Set<String> protectedPropertyIds = const {},
+    Set<String>? visiblePropertyIds,
+    Set<String>? visibleTagNames,
+    bool includeProtected = false,
+  }) => MetadataHistory(
+    batches: [
+      for (final batch in _database.metadataHistorySnapshot().history.batches)
+        MetadataChangeBatch(
+          id: batch.id,
+          source: batch.source,
+          at: batch.at,
+          reversesBatchId: batch.reversesBatchId,
+          changes: batch.changes.where(
+            (change) =>
+                visibleWorkIds.contains(change.workId) &&
+                (includeProtected || !change.protected) &&
+                (change.field != 'tags' ||
+                    visibleTagNames == null ||
+                    [change.before.value, change.after.value]
+                        .whereType<List>()
+                        .expand((values) => values)
+                        .every(visibleTagNames.contains)) &&
+                (!change.field.startsWith('property:') ||
+                    visiblePropertyIds == null ||
+                    visiblePropertyIds.contains(change.field.substring(9))) &&
+                !(change.field.startsWith('property:') &&
+                    protectedPropertyIds.contains(change.field.substring(9))),
+          ),
+        ),
+    ].where((batch) => batch.changes.isNotEmpty),
+  );
+
+  MetadataUndoPlan previewMetadataUndo(
+    String batchId, {
+    required Set<String> visibleWorkIds,
+    Set<String>? selectedKeys,
+    Set<String>? visiblePropertyIds,
+    Set<String>? visibleTagNames,
+    bool includeProtected = false,
+  }) => _database.previewMetadataUndo(
+    batchId,
+    visibleWorkIds: visibleWorkIds,
+    selectedKeys: selectedKeys,
+    visiblePropertyIds: visiblePropertyIds,
+    visibleTagNames: visibleTagNames,
+    includeProtected: includeProtected,
+  );
+
+  Future<MetadataUndoPlan> undoMetadataBatch(
+    String batchId, {
+    required Set<String> visibleWorkIds,
+    required Set<String> selectedKeys,
+    Map<String, MetadataFieldState>? expectedAfter,
+    Set<String>? visiblePropertyIds,
+    Set<String>? visibleTagNames,
+    bool includeProtected = false,
+  }) async {
+    _ensureWritable();
+    final plan = _database.undoMetadataBatch(
+      batchId,
+      visibleWorkIds: visibleWorkIds,
+      selectedKeys: selectedKeys,
+      expectedAfter: expectedAfter,
+      visiblePropertyIds: visiblePropertyIds,
+      visibleTagNames: visibleTagNames,
+      includeProtected: includeProtected,
+    );
+    await persistMetadataHistory();
+    for (final id in plan.applicable.map((change) => change.workId).toSet()) {
+      await _writeMetadataSidecar(id);
+      if (plan.applicable.any(
+            (change) => change.workId == id && change.field == 'tags',
+          ) &&
+          _usesPortableSidecars(id)) {
+        await _writeAnnotationSidecars(id);
+      }
+    }
+    return plan;
+  }
+
+  Future<void> _exportMetadataHistoryNow() async {
+    if (!_database.metadataHistoryInitialized) return;
+    while (true) {
+      if (!_database.metadataHistoryNeedsExport) break;
+      final snapshot = _database.metadataHistorySnapshot();
+      if (!snapshot.dirty) break;
+      await _readMetadataHistory(); // Never overwrite an unknown/corrupt format.
+      await _writeSidecar(_metadataHistoryFile, snapshot.history.encode());
+      _database.markMetadataHistoryExported(snapshot.revision);
+    }
+    metadataHistoryError = null;
+  }
+
+  Future<void> persistMetadataHistory({bool force = false}) {
+    final batch = MetadataEditBatch.current;
+    if (!force && batch != null) {
+      batch.onComplete(this, () => persistMetadataHistory(force: true));
+      return Future.value();
+    }
+    final operation = _ioZone.run(
+      () => _metadataHistoryOperations.then((_) => _exportMetadataHistoryNow()),
+    );
+    _metadataHistoryOperations = _ioZone.run(
+      () => operation.catchError((Object error) {
+        metadataHistoryError = error;
+        lastSidecarError = error;
+      }),
+    );
+    // Metadata and its ledger are already committed together. A portable-copy
+    // error is reported separately, not misrepresented as an unsaved edit.
+    return _metadataHistoryOperations;
+  }
 
   File get _metadataHistoryFile =>
       File(p.join(root.path, '_fundus', 'metadata-history.json'));
@@ -177,6 +307,7 @@ final class FundusLibrary {
       () => _metadataHistoryOperations.then((_) async {
         _ensureWritable();
         if (_closed) throw StateError('Die Bibliothek ist geschlossen.');
+        await _exportMetadataHistoryNow();
         final history = await _readMetadataHistory();
         final updated = history.append(
           batch,
@@ -184,7 +315,8 @@ final class FundusLibrary {
           byteBudget: byteBudget,
         );
         if (identical(history, updated)) return;
-        await _writeSidecar(_metadataHistoryFile, updated.encode());
+        _database.replaceMetadataHistory(updated);
+        await _exportMetadataHistoryNow();
       }),
     );
     _metadataHistoryOperations = _ioZone.run(
@@ -453,6 +585,7 @@ final class FundusLibrary {
       database: FundusDatabase.openFile(_databaseFile(root)),
     );
     library._registerAsSource();
+    await library._initializeMetadataHistory();
     return library;
   }
 
@@ -487,6 +620,7 @@ final class FundusLibrary {
       await library._importPropertyDefinitions();
     }
     await library._loadContentUpdates();
+    await library._initializeMetadataHistory();
     return library;
   }
 
@@ -1092,6 +1226,7 @@ final class FundusLibrary {
   /// flight. Anything that has to see it — closing the vault, a test reading
   /// the file back — waits here rather than guessing at a delay.
   Future<void> flushSidecarWrites() async {
+    if (!isReadOnly && !_closed) await persistMetadataHistory(force: true);
     await _metadataHistoryOperations;
     await _contentUpdateOperations;
     await _publicationReadQueue;
@@ -2301,12 +2436,17 @@ final class FundusLibrary {
     String source = 'user',
   }) async {
     _ensureWritable();
-    _database.setWorkProperty(
+    _database.recordMetadataMutation(
       workId: workId,
-      definitionId: definitionId,
-      value: value,
       source: source,
+      action: () => _database.setWorkProperty(
+        workId: workId,
+        definitionId: definitionId,
+        value: value,
+        source: source,
+      ),
     );
+    await persistMetadataHistory();
     if (_usesPortableSidecars(workId)) await _writeMetadataSidecar(workId);
   }
 
@@ -2431,32 +2571,35 @@ final class FundusLibrary {
     bool force = false,
   }) async {
     _ensureWritable();
-    _database.updateWorkMetadata(
+    _database.recordMetadataMutation(
       workId: workId,
-      title: title,
-      authors: authors,
-      subtitle: subtitle,
-      alternateTitles: alternateTitles,
-      series: series,
-      seriesSequence: seriesSequence,
-      narrators: narrators,
-      language: language,
-      description: description,
-      publisher: publisher,
-      publishedYear: publishedYear,
-      contentSensitivity: contentSensitivity,
-      genres: genres,
-      contentStyle: contentStyle,
-      externalIds: externalIds,
-      source: source,
-      force: force,
+      source: source.name,
+      action: () => _database.updateWorkMetadata(
+        workId: workId,
+        title: title,
+        authors: authors,
+        subtitle: subtitle,
+        alternateTitles: alternateTitles,
+        series: series,
+        seriesSequence: seriesSequence,
+        narrators: narrators,
+        language: language,
+        description: description,
+        publisher: publisher,
+        publishedYear: publishedYear,
+        contentSensitivity: contentSensitivity,
+        genres: genres,
+        contentStyle: contentStyle,
+        externalIds: externalIds,
+        source: source,
+        force: force,
+      ),
     );
     // Neue Namen, neue Personen — sofern nicht eine echte Besetzung dasteht.
     _database.derivePeopleFromMetadata(workId: workId);
+    await persistMetadataHistory();
     await _writeMetadataSidecar(workId);
-    return listWorks(
-      includeMissing: true,
-    ).firstWhere((work) => work.id == workId);
+    return workSummary(workId)!;
   }
 
   Future<void> resolveMetadataImportConflict(
@@ -2465,15 +2608,21 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     final selected = importedFields.toSet();
-    _database.applyImportedMetadataFields(
+    _database.recordMetadataMutation(
       workId: conflict.workId,
-      fields: {
-        for (final field in conflict.fields)
-          if (selected.contains(field.field)) field.field: field.incomingValue,
-      },
-      source: conflict.source,
+      source: conflict.source.name,
+      action: () => _database.applyImportedMetadataFields(
+        workId: conflict.workId,
+        fields: {
+          for (final field in conflict.fields)
+            if (selected.contains(field.field))
+              field.field: field.incomingValue,
+        },
+        source: conflict.source,
+      ),
     );
     _database.derivePeopleFromMetadata(workId: conflict.workId);
+    await persistMetadataHistory();
     await _writeMetadataSidecar(conflict.workId);
   }
 
@@ -2484,16 +2633,19 @@ final class FundusLibrary {
     String? contentSensitivity,
   }) async {
     _ensureWritable();
-    _database.updateWorkKind(
+    _database.recordMetadataMutation(
       workId: workId,
-      kind: kind,
-      contentStyle: contentStyle,
-      contentSensitivity: contentSensitivity,
+      source: 'user',
+      action: () => _database.updateWorkKind(
+        workId: workId,
+        kind: kind,
+        contentStyle: contentStyle,
+        contentSensitivity: contentSensitivity,
+      ),
     );
+    await persistMetadataHistory();
     await _writeMetadataSidecar(workId);
-    return listWorks(
-      includeMissing: true,
-    ).firstWhere((work) => work.id == workId);
+    return workSummary(workId)!;
   }
 
   Future<LibraryWorkSummary> setWorkStatuses({
@@ -2502,13 +2654,18 @@ final class FundusLibrary {
     String? personalStatus,
   }) async {
     _ensureWritable();
-    _database.setWorkStatuses(
+    _database.recordMetadataMutation(
       workId: workId,
-      publicationStatus: publicationStatus,
-      personalStatus: personalStatus,
+      source: 'user',
+      action: () => _database.setWorkStatuses(
+        workId: workId,
+        publicationStatus: publicationStatus,
+        personalStatus: personalStatus,
+      ),
     );
+    await persistMetadataHistory();
     await _writeMetadataSidecar(workId);
-    return listWorks(includeMissing: true).firstWhere((w) => w.id == workId);
+    return workSummary(workId)!;
   }
 
   Future<WorkAnnotations> replaceWorkTags(
@@ -2516,7 +2673,12 @@ final class FundusLibrary {
     Iterable<String> tags,
   ) async {
     _ensureWritable();
-    _database.replaceWorkTags(workId, tags);
+    _database.recordMetadataMutation(
+      workId: workId,
+      source: 'user',
+      action: () => _database.replaceWorkTags(workId, tags),
+    );
+    await persistMetadataHistory();
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }

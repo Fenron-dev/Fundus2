@@ -327,13 +327,18 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       );
       if (!mounted) return;
       if (selected != null) {
-        for (final entry in selected.entries) {
-          if (entry.key >= conflicts.length) continue;
-          await library.resolveMetadataConflict(
-            conflicts[entry.key],
-            entry.value,
-          );
-        }
+        await MetadataEditBatch.run(
+          source: 'import:batch',
+          action: () async {
+            for (final entry in selected.entries) {
+              if (entry.key >= conflicts.length) continue;
+              await library.resolveMetadataConflict(
+                conflicts[entry.key],
+                entry.value,
+              );
+            }
+          },
+        );
         // An empty decision means “keep everything as it is”. Dismiss the
         // remaining inbox in one step; “Später” leaves it available in
         // Einstellungen > Benachrichtigungen.

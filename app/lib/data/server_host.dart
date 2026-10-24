@@ -67,6 +67,7 @@ class ServerHostController extends ChangeNotifier {
   final AppSettings settings;
   final LibraryController library;
   bool _disposed = false;
+  Future<void>? _startingOperation;
   bool _checkingHealth = false;
   final Map<String, DateTime> _recoveryAfter = {};
 
@@ -183,7 +184,19 @@ class ServerHostController extends ChangeNotifier {
     if (await store.loadSharing()) await start(remember: false);
   }
 
-  Future<void> start({bool remember = true}) async {
+  Future<void> start({bool remember = true}) {
+    if (_disposed) return Future.value();
+    final pending = _startingOperation;
+    if (pending != null) return pending;
+    late Future<void> operation;
+    operation = _start(remember: remember).whenComplete(() {
+      if (identical(_startingOperation, operation)) _startingOperation = null;
+    });
+    _startingOperation = operation;
+    return operation;
+  }
+
+  Future<void> _start({required bool remember}) async {
     if (isRunning || isBusy) return;
     // Der Wunsch gilt dem Gerät, nicht dem Augenblick: ist gerade keine
     // Bibliothek offen, können die konfigurierten zusätzlichen Bibliotheken
@@ -201,9 +214,14 @@ class ServerHostController extends ChangeNotifier {
 
     try {
       final identity = await _ensureIdentity();
+      if (_disposed || !_wantsSharing) return;
       final registry = FundusLibraryRegistry();
       _registry = registry;
       _libraries = await _registerLibraries(registry);
+      if (_disposed || !_wantsSharing) {
+        await _releaseRegistry();
+        return;
+      }
       if (registry.libraries.isEmpty) {
         throw StateError('Keine der ausgewählten Bibliotheken ist verfügbar.');
       }
@@ -223,7 +241,17 @@ class ServerHostController extends ChangeNotifier {
         onLibraryUnusable: _reopenLibrary,
       );
       _socket = await _listen(handler, identity);
+      if (_disposed || !_wantsSharing) {
+        await _closeSocket();
+        await _releaseRegistry();
+        return;
+      }
       _addresses = await _networkAddresses(_socket!.port);
+      if (_disposed || !_wantsSharing) {
+        await _closeSocket();
+        await _releaseRegistry();
+        return;
+      }
       _address = _addresses.firstOrNull;
       _state = ServerHostState.running;
       // Sagen, dass es uns gibt — sonst muss die Gegenseite raten, und Raten
@@ -254,6 +282,12 @@ class ServerHostController extends ChangeNotifier {
         );
       }
       if (remember) await _identityStore!.saveSharing(true);
+      if (_disposed || !_wantsSharing) {
+        if (remember) await _identityStore!.saveSharing(false);
+        await _closeSocket();
+        await _releaseRegistry();
+        return;
+      }
       _presenceTick ??= Timer.periodic(
         const Duration(seconds: 15),
         (_) => unawaited(checkHealth()),
@@ -264,7 +298,7 @@ class ServerHostController extends ChangeNotifier {
       _failure = _describe(error);
       _state = ServerHostState.failed;
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   /// Adds a vault to the server's persistent sharing selection. The currently
@@ -493,6 +527,7 @@ class ServerHostController extends ChangeNotifier {
 
   Future<void> stop({bool remember = true}) async {
     _wantsSharing = false;
+    await _startingOperation;
     _shared = null;
     _presenceTick?.cancel();
     _presenceTick = null;
@@ -505,7 +540,7 @@ class ServerHostController extends ChangeNotifier {
     _failure = null;
     _libraries = _statusForPreferences(settings.serverLibraries);
     if (remember) await _identityStore?.saveSharing(false);
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> setSharing(bool value) => value ? start() : stop();
@@ -555,6 +590,8 @@ class ServerHostController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _wantsSharing = false;
+    _state = ServerHostState.stopped;
     library.removeListener(_followLibrary);
     _presenceTick?.cancel();
     final socket = _socket;
@@ -796,7 +833,7 @@ class ServerHostController extends ChangeNotifier {
       devices: identity.pairedDevices,
       onChanged: (devices) async {
         await store.savePairedDevices(devices);
-        notifyListeners();
+        if (!_disposed) notifyListeners();
       },
     );
     return identity;

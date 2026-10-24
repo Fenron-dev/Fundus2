@@ -389,13 +389,18 @@ class _Notifications extends StatelessWidget {
                         );
                     if (selected == null) return;
                     final snapshot = List<MetadataImportConflict>.of(conflicts);
-                    for (final entry in selected.entries) {
-                      if (entry.key >= snapshot.length) continue;
-                      await scope.library.resolveMetadataConflict(
-                        snapshot[entry.key],
-                        entry.value,
-                      );
-                    }
+                    await MetadataEditBatch.run(
+                      source: 'import:batch',
+                      action: () async {
+                        for (final entry in selected.entries) {
+                          if (entry.key >= snapshot.length) continue;
+                          await scope.library.resolveMetadataConflict(
+                            snapshot[entry.key],
+                            entry.value,
+                          );
+                        }
+                      },
+                    );
                     if (selected.isEmpty) {
                       for (final conflict in snapshot) {
                         await scope.library.dismissMetadataConflict(conflict);

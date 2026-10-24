@@ -156,62 +156,75 @@ class _MetadataEditorState extends State<_MetadataEditor> {
       _error = null;
     });
     try {
-      await widget.library.updateWorkMetadata(
-        workId: widget.work.id,
-        title: _text('title'),
-        authors: authors,
-        subtitle: _text('subtitle').isEmpty ? null : _text('subtitle'),
-        series: _text('series').isEmpty ? null : _text('series'),
-        seriesSequence: double.tryParse(_text('sequence').replaceAll(',', '.')),
-        language: _text('language').isEmpty ? null : _text('language'),
-        description: _text('description').isEmpty ? null : _text('description'),
-        publisher: _text('publisher').isEmpty ? null : _text('publisher'),
-        publishedYear: int.tryParse(_text('year')),
-        genres: _list('genres'),
-      );
-      widget.library.updateWorkKind(
-        workId: widget.work.id,
-        kind: _kind,
-        contentSensitivity: _hhh ? 'adult_explicit' : 'general',
-      );
-      widget.library.setWorkStatuses(
-        workId: widget.work.id,
-        publicationStatus: _publicationStatus,
-        personalStatus: _personalStatus,
-      );
-      if (_coverBytes != null) {
-        await widget.library.cacheGeneratedCover(
-          workId: widget.work.id,
-          bytes: _coverBytes!,
-          extension: _coverExtension,
-        );
-      }
-      if (_backdropBytes != null) {
-        await widget.library.cacheBackdrop(
-          workId: widget.work.id,
-          bytes: _backdropBytes!,
-          extension: _backdropExtension,
-        );
-      }
-      // „Für alle Bände" schreibt nur, was eine Reihe gemeinsam hat. Ein
-      // Band, der dabei nicht angenommen wird, hält den Rest nicht auf.
-      if (_wholeSeries) {
-        for (final sibling in _siblings) {
-          try {
-            await applySharedFields(
-              library: widget.library,
-              work: sibling,
-              authors: authors,
-              series: _text('series').isEmpty ? null : _text('series'),
-              publisher: _text('publisher').isEmpty ? null : _text('publisher'),
-              language: _text('language').isEmpty ? null : _text('language'),
-              genres: _list('genres'),
+      await MetadataEditBatch.run(
+        source: 'user',
+        action: () async {
+          await widget.library.updateWorkMetadata(
+            workId: widget.work.id,
+            title: _text('title'),
+            authors: authors,
+            subtitle: _text('subtitle').isEmpty ? null : _text('subtitle'),
+            series: _text('series').isEmpty ? null : _text('series'),
+            seriesSequence: double.tryParse(
+              _text('sequence').replaceAll(',', '.'),
+            ),
+            language: _text('language').isEmpty ? null : _text('language'),
+            description: _text('description').isEmpty
+                ? null
+                : _text('description'),
+            publisher: _text('publisher').isEmpty ? null : _text('publisher'),
+            publishedYear: int.tryParse(_text('year')),
+            genres: _list('genres'),
+          );
+          await widget.library.updateWorkKind(
+            workId: widget.work.id,
+            kind: _kind,
+            contentSensitivity: _hhh ? 'adult_explicit' : 'general',
+          );
+          await widget.library.setWorkStatuses(
+            workId: widget.work.id,
+            publicationStatus: _publicationStatus,
+            personalStatus: _personalStatus,
+          );
+          if (_coverBytes != null) {
+            await widget.library.cacheGeneratedCover(
+              workId: widget.work.id,
+              bytes: _coverBytes!,
+              extension: _coverExtension,
             );
-          } on Object {
-            continue;
           }
-        }
-      }
+          if (_backdropBytes != null) {
+            await widget.library.cacheBackdrop(
+              workId: widget.work.id,
+              bytes: _backdropBytes!,
+              extension: _backdropExtension,
+            );
+          }
+          // „Für alle Bände" schreibt nur, was eine Reihe gemeinsam hat. Ein
+          // Band, der dabei nicht angenommen wird, hält den Rest nicht auf.
+          if (_wholeSeries) {
+            for (final sibling in _siblings) {
+              try {
+                await applySharedFields(
+                  library: widget.library,
+                  work: sibling,
+                  authors: authors,
+                  series: _text('series').isEmpty ? null : _text('series'),
+                  publisher: _text('publisher').isEmpty
+                      ? null
+                      : _text('publisher'),
+                  language: _text('language').isEmpty
+                      ? null
+                      : _text('language'),
+                  genres: _list('genres'),
+                );
+              } on Object {
+                continue;
+              }
+            }
+          }
+        },
+      );
       if (mounted) Navigator.of(context).pop(true);
     } on Object catch (error) {
       if (!mounted) return;

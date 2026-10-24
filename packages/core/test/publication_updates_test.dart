@@ -289,12 +289,14 @@ void main() {
           'ALTER TABLE files DROP COLUMN publication_manifest_json',
         );
         db.rawExecute('PRAGMA user_version = 23');
+        db.rawExecute('DROP TABLE metadata_history_batches');
+        db.rawExecute('DROP TABLE metadata_history_state');
         db.close();
         library = await FundusLibrary.open(root);
         final probe = FundusDatabase.openFile(
           File('${root.path}/.library/index.db'),
         );
-        expect(probe.userVersion, 24);
+        expect(probe.userVersion, FundusDatabase.schemaVersion);
         expect(
           probe.columnExists('files', 'publication_manifest_json'),
           isTrue,

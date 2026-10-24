@@ -8,7 +8,7 @@ implementiert oder ausgeliefert ist. Die Stabilisierungsabnahme #47 bleibt separ
 
 1. Update-Posteingang und Abos (#56) – implementiert, CI und drei Plattform-Builds bestanden.
 2. Intelligentes Offline-Mitnehmen (#55) – Regeln, Downloads und bestätigtes Aufräumen implementiert; Plattform-/Geräteabnahme offen.
-3. Metadatenverlauf und gezieltes Rückgängig (#57) – Daten-/Ablagevertrag in Arbeit; noch keine Oberfläche oder automatische Erfassung.
+3. Metadatenverlauf und gezieltes Rückgängig (#57) – Editor-/Abgleicherfassung und selektive Rücknahme in der Oberfläche; Bildversionen und Scan-Erfassung offen.
 4. Medienwelten und Reihenfolgen (#60) – offen.
 5. Regelregale und Dashboard-Zeilen (#58) – offen.
 6. Bibliotheks-Check (#59) – offen.
@@ -280,10 +280,8 @@ Die vollständige Roadmap und #47 bleiben offen.
 
 ## Metadatenverlauf: Daten- und Ablagegrundlage
 
-**Noch keine fertige Benutzerfunktion:** Die bestehenden Bearbeiten- und
-Abgleichaktionen erfassen noch keine Historie; Rücknahme-Oberfläche und
-transaktionale Anbindung an die tatsächlichen Metadatenänderungen folgen.
-Die folgenden Core-Verträge sind als erster Schritt von #57 implementiert:
+Der erste Grundlagenschritt war noch keine fertige Benutzerfunktion. Seine
+Core-Verträge werden im nachfolgenden Anbindungsschritt tatsächlich genutzt:
 
 - Ein Feldzustand enthält Wert bzw. ausdrückliches Fehlen, Herkunft,
   Herkunftszeitpunkt und manuelle Sperre. Unveränderliche JSON-Kopien
@@ -301,7 +299,7 @@ Die folgenden Core-Verträge sind als erster Schritt von #57 implementiert:
 - Eine Positivliste erlaubt nur Metadatenfelder und eigene Eigenschaften.
   Positionen, persönliche Stimmen, Notizen, Lesezeichen, Gerätegeheimnisse und
   Offline-Pfade sind keine rücknehmbaren Metadatenfelder.
-- `_fundus/metadata-history.json`, Format 1, wird bei explizitem Core-Aufruf
+- `_fundus/metadata-history.json`, zunächst Format 1 (Format 2 siehe unten), wird bei explizitem Core-Aufruf
   seriell gelesen/ergänzt und mit dem bestehenden atomaren Sidecar-Schreiber
   gesichert. Fehlende Dateien bedeuten leeren Verlauf; beschädigte,
   unbekannte, übergroße oder verlinkte Dateien/Ordner werden nicht als leer
@@ -321,11 +319,92 @@ Peer-Endpunkt und keine Datenbankschemaänderung.
 
 Lokale Gesamtprüfung mit dieser Grundlage: Core 316, Server 45, Client 46,
 Design 3 und App 510 bestanden (zusammen 920), acht App-Tests übersprungen.
-Analyse/Format sauber. GitHub-CI dieser Grundlage steht noch aus; die oben
-genannten erfolgreichen Läufe gehören zum vorigen Offline-Commit.
+Analyse/Format sauber. `6f9345e` hat CI 40101991984 und alle drei Builds
+bestanden: macOS 40102291808, Windows 40102291818, Android 40102291872.
 
-**Offen in #57:** tatsächliche Erfassung aller bestätigten Editor-, Provider-,
+**Zum Ende dieses Grundlagenschritts noch offen:** tatsächliche Erfassung aller bestätigten Editor-, Provider-,
 Fero-/ABS-Konflikt- und Massenänderungen, transaktionale Konsistenz zwischen
 Änderung und Verlauf, geschützte/virtualisierte Oberfläche, echtes feldweises
 und Batch-Rücknehmen, Bildversionen einschließlich Begrenzung und Bedienung
 der Aufbewahrung. Dieser Grundlagenschritt hakt diese Abnahmepunkte nicht ab.
+
+### Zweiter Schritt: tatsächliche Erfassung und Rücknahme
+
+- Schema 25 ergänzt `metadata_history_batches` und einen kleinen
+  Revisions-/Exportstatus. Die Migration von 24 und ältere Vorversionspfade
+  sind geprüft. Medien, Fortschritt, Stimmen und Annotationen werden dabei
+  nicht umgebaut oder gelöscht. Ein älterer Client lehnt den neueren Index ab;
+  betroffene Apps aktualisieren und vor der Migration ein Backup erstellen.
+- Bestätigte Änderungen über Werkeditor, Statusauswahl, Tags, eigene
+  Nicht-Bewertungs-Eigenschaften, Online-Abgleich und Fero-/ABS-Konfliktentscheidungen
+  speichern tatsächliche Vorher-/Nachher-Zustände zusammen mit der Änderung
+  in **derselben SQLite-Transaktion**. Schlägt das Einfügen in den Verlauf
+  fehl, werden auch Metadaten und Suchindexänderung zurückgerollt. Verschachtelte
+  Metadatenoperationen nutzen Savepoints. Fortschrittsoperationen gehören
+  nicht in diese Transaktion.
+- Werkeditor mit „alle Bände“, Mehrfacheditor, Massenabgleich und gemeinsam
+  bestätigte Importkonflikte verwenden je eine logische Batch-ID. Einzelne
+  Schritte dürfen auf Bilder oder Sidecars warten, ohne SQLite offen zu halten.
+  Der Batch behält pro Feld den ersten Vorher- und letzten Nachher-Zustand.
+  Bei einem späteren Teilfehler bleiben genau die bereits bestätigten Schritte
+  nachvollziehbar; es wird keine rückwirkende Komplett-Atomarität versprochen.
+- Die portable Datei wird pro logischem Batch zusammengefasst geschrieben.
+  Shutdown und Backup erzwingen auch bei einem noch offenen Batch die Sicherung
+  des bislang bestätigten Standes. Ein fehlgeschlagener Export löscht den
+  Indexverlauf nicht: sein Revisionsstand bleibt offen und wird beim nächsten
+  Öffnen nachgetragen. Eine beschädigte/zu neue portable Datei bleibt erhalten;
+  die Oberfläche meldet den ausstehenden Export. Ein frischer Index importiert
+  den portablen Verlauf einmalig. Ein nicht initialisierbarer Verlauf blockiert
+  neue protokollpflichtige Änderungen, nicht das Lesen oder Fortschrittsspeichern.
+- „Metadatenverlauf“ am Werk zeigt Quelle, Zeitpunkt und feldweisen Vergleich
+  mit aufklappbarer langer Darstellung. Batch- und Feldlisten sind virtualisiert.
+  Zunächst gilt die Auswahl nur für dieses Werk; andere **aktuell sichtbare**
+  Werke des Batches werden nur ausdrücklich einbezogen. Auswahl ist anfangs leer.
+- Die echte Rücknahme prüft Feldzustand und Auswahl direkt in ihrer
+  Transaktion erneut. Zwischenzeitliche Werte/Herkunft/Sperren verhindern die
+  gesamte ausgewählte Rücknahme; nichts wird still teilweise überschrieben.
+  Der Nutzer kann danach ausdrücklich nur konfliktfreie Felder auswählen.
+  Eine seit der angezeigten Vorschau erweiterte Batch-Fassung wird ebenfalls
+  abgewiesen. Rücknahmen werden als neuer, auf den Ursprung bezogener Batch
+  protokolliert und können selbst wieder zurückgenommen werden.
+- Frühere Feldherkunft und Sperre werden wiederhergestellt, statt alles als
+  neue manuelle Vorgabe zu sperren. Urheberliste und abgeleiteter Haupturheber
+  sind dabei ein gemeinsames Feld; Suchindex und abgeleitete Personenbezüge
+  werden nachgeführt. Entfernte/geänderte eigene Felddefinitionen werden
+  geprüft, nicht still passend gemacht. Persönliche Sterne-Felder, Stimmen,
+  Fortschritte, Notizen und Lesezeichen bleiben unangetastet.
+- Format 2 hält die Schutzkennzeichnung **zum Änderungszeitpunkt** fest.
+  Früher geschützte Inhalte bleiben im Verlauf verborgen, auch wenn das Werk
+  später anders eingestuft wird. Format 1 wird konservativ als geschützt
+  eingelesen und erst bewusst entsperrt angezeigt; ältere Clients dürfen
+  Format 2 nicht überschreiben. Zusätzlich gelten aktuelle Werk-, Bibliotheks-,
+  Eigenschafts- und Tagfreigaben. Sperren entfernt auch einen bereits geöffneten
+  und vergrößerten Vergleich. Es gibt weiterhin keinen Peer-Verlaufsendpunkt.
+- Gleiche Werte mit gleicher Herkunft erzeugen keine neue Herkunftszeit und
+  keinen neuen Verlaufseintrag. Ein unveränderter Scan entwertet dadurch keine
+  Rücknahme-Vorschau. Werkänderungen lesen nur noch das betroffene Werk zurück,
+  nicht den ganzen Katalog.
+
+Nebenbefund aus der Gesamtprüfung: Ein automatisch nachgeholter Serverstart
+konnte nach `stop`/`dispose` weiterlaufen. Startaufrufe teilen jetzt ihren
+laufenden Abschluss, Stop wartet darauf; nach asynchronen Startschritten wird
+eine Rücknahme geprüft. Nach Dispose erfolgen keine späten Start- oder
+Pairing-Benachrichtigungen. Tests warten auf den tatsächlichen Start statt auf
+eine feste 400-ms-Vermutung. Der mobile Detailtest scrollt den gewachsenen
+Aktionskopf tatsächlich bis zu den Tabs, statt deren sofortige Sichtbarkeit
+vorauszusetzen.
+
+Lokale Gesamtprüfung dieses Anbindungsschritts: Core 334, Server 45, Client 46,
+Design 3 und App 516 bestanden (zusammen 944); acht App-Tests übersprungen,
+Analyse/Format sauber. Neue Tests prüfen echte Feld-/Massenrücknahme und deren
+Rücknahme, erhaltene Herkunft, veraltete Batch-Vorschau, atomaren Abbruch,
+verschachtelte Transaktionen, unveränderte persönliche Daten, Exportfehler mit
+Neustart-Recovery, historische Schutzkennzeichnung, Schema-24-Migration und
+mobile Bedienung einschließlich Sperren eines erweiterten Vergleichs.
+CI und Plattform-Builds dieses Schritts stehen noch aus.
+
+**Weiterhin offen in #57:** Bildversionen mit begrenzter Aufbewahrung und
+Bild-Rücknahme, vollständige Erfassung automatischer Scan-Übernahmen sowie die
+Bedienung der Aufbewahrungsgrenzen. Daher bleibt das Issue offen. Bestehende
+Bildcache-Schreiber sind noch kein versionssicherer Bildverlauf; die Oberfläche
+bietet dafür keine scheinbar funktionierende Rücknahme an.

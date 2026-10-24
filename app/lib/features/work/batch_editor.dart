@@ -81,17 +81,22 @@ class _BatchEditorState extends State<_BatchEditor> {
     });
     final authors = _list('authors');
     try {
-      for (final work in widget.works) {
-        await applySharedFields(
-          library: widget.library,
-          work: work.summary,
-          authors: authors,
-          series: _text('series').isEmpty ? null : _text('series'),
-          publisher: _text('publisher').isEmpty ? null : _text('publisher'),
-          language: _text('language').isEmpty ? null : _text('language'),
-          genres: _list('genres'),
-        );
-      }
+      await MetadataEditBatch.run(
+        source: 'user:batch',
+        action: () async {
+          for (final work in widget.works) {
+            await applySharedFields(
+              library: widget.library,
+              work: work.summary,
+              authors: authors,
+              series: _text('series').isEmpty ? null : _text('series'),
+              publisher: _text('publisher').isEmpty ? null : _text('publisher'),
+              language: _text('language').isEmpty ? null : _text('language'),
+              genres: _list('genres'),
+            );
+          }
+        },
+      );
       if (mounted) Navigator.of(context).pop(true);
     } on Object catch (error) {
       if (!mounted) return;

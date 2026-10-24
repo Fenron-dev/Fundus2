@@ -12,6 +12,7 @@ import '../model/content_updates.dart';
 import '../model/library_playlist.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
+import '../model/metadata_history.dart';
 import '../model/person_role.dart';
 import '../model/person_profile.dart';
 import '../model/playback_session.dart';
@@ -233,7 +234,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 24;
+  static const schemaVersion = 25;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -247,6 +248,8 @@ final class FundusDatabase {
   };
 
   final Database _database;
+  int _transactionDepth = 0;
+  int _savepointCounter = 0;
 
   factory FundusDatabase.openFile(File file, {bool readOnly = false}) {
     if (!readOnly) file.parent.createSync(recursive: true);
@@ -302,15 +305,583 @@ final class FundusDatabase {
       .toList(growable: false);
 
   T transaction<T>(T Function() action) {
-    _database.execute('BEGIN IMMEDIATE');
+    final nested = _transactionDepth > 0;
+    final savepoint = 'fundus_nested_${_savepointCounter++}';
+    _database.execute(nested ? 'SAVEPOINT $savepoint' : 'BEGIN IMMEDIATE');
+    _transactionDepth++;
     try {
       final result = action();
-      _database.execute('COMMIT');
+      _database.execute(nested ? 'RELEASE SAVEPOINT $savepoint' : 'COMMIT');
       return result;
     } catch (_) {
-      _database.execute('ROLLBACK');
+      if (nested) {
+        _database.execute('ROLLBACK TO SAVEPOINT $savepoint');
+        _database.execute('RELEASE SAVEPOINT $savepoint');
+      } else {
+        _database.execute('ROLLBACK');
+      }
       rethrow;
+    } finally {
+      _transactionDepth--;
     }
+  }
+
+  bool get metadataHistoryInitialized =>
+      tableExists('metadata_history_state') &&
+      _database
+              .select(
+                'SELECT initialized FROM metadata_history_state WHERE id = 1',
+              )
+              .single['initialized'] ==
+          1;
+
+  bool get metadataHistoryNeedsExport =>
+      metadataHistoryInitialized &&
+      _database
+          .select(
+            'SELECT 1 FROM metadata_history_state WHERE id = 1 AND revision != exported_revision',
+          )
+          .isNotEmpty;
+
+  void initializeMetadataHistory(MetadataHistory history) {
+    if (metadataHistoryInitialized) return;
+    transaction(() {
+      for (final batch in history.batches) {
+        _insertMetadataBatch(batch);
+      }
+      _database.execute(
+        'UPDATE metadata_history_state SET initialized = 1, revision = 1, exported_revision = 1 WHERE id = 1',
+      );
+    });
+  }
+
+  ({MetadataHistory history, int revision, bool dirty})
+  metadataHistorySnapshot() {
+    if (!metadataHistoryInitialized) {
+      return (history: MetadataHistory(), revision: 0, dirty: false);
+    }
+    final state = _database
+        .select(
+          'SELECT revision, exported_revision FROM metadata_history_state WHERE id = 1',
+        )
+        .single;
+    return (
+      history: MetadataHistory(
+        batches: [
+          for (final row in _database.select(
+            'SELECT batch_json FROM metadata_history_batches ORDER BY sequence',
+          ))
+            MetadataChangeBatch.fromJson(
+              jsonDecode(row['batch_json'] as String),
+            ),
+        ],
+      ),
+      revision: state['revision'] as int,
+      dirty: state['revision'] != state['exported_revision'],
+    );
+  }
+
+  void markMetadataHistoryExported(int revision) => _database.execute(
+    'UPDATE metadata_history_state SET exported_revision = MAX(exported_revision, ?) WHERE id = 1',
+    [revision],
+  );
+
+  void replaceMetadataHistory(MetadataHistory history) => transaction(() {
+    _database.execute('DELETE FROM metadata_history_batches');
+    for (final batch in history.batches) {
+      _insertMetadataBatch(batch);
+    }
+    _database.execute(
+      'UPDATE metadata_history_state SET initialized = 1, revision = revision + 1 WHERE id = 1',
+    );
+  });
+
+  void _insertMetadataBatch(MetadataChangeBatch batch) {
+    final encoded = jsonEncode(batch.toJson());
+    _database.execute(
+      'INSERT INTO metadata_history_batches (batch_id, batch_json, byte_count) VALUES (?, ?, ?) '
+      'ON CONFLICT(batch_id) DO UPDATE SET batch_json = excluded.batch_json, byte_count = excluded.byte_count',
+      [batch.id, encoded, utf8.encode(encoded).length],
+    );
+  }
+
+  /// Actual metadata plus its before/after ledger commit atomically. No player
+  /// or annotation mutation belongs in [action]. Never spans an await.
+  T recordMetadataMutation<T>({
+    required String workId,
+    required String source,
+    required T Function() action,
+  }) => transaction(() {
+    if (!metadataHistoryInitialized) {
+      throw StateError('Metadatenverlauf ist nicht verfügbar.');
+    }
+    final before = metadataFieldStates(workId);
+    if (before == null) throw StateError('Werk wurde nicht gefunden.');
+    final result = action();
+    final after = metadataFieldStates(workId);
+    if (after == null) {
+      throw StateError('Werk wurde während der Änderung entfernt.');
+    }
+    final missing = MetadataFieldState(present: false);
+    final sensitive =
+        before['content_sensitivity']?.value == 'adult_explicit' ||
+        after['content_sensitivity']?.value == 'adult_explicit';
+    final changes = [
+      for (final field in {...before.keys, ...after.keys})
+        MetadataFieldChange(
+          workId: workId,
+          field: field,
+          before: before[field] ?? missing,
+          after: after[field] ?? missing,
+          protected:
+              sensitive ||
+              _protectedHistoryField(field, before[field], after[field]),
+        ),
+    ].where((change) => change.changed).toList();
+    if (changes.isEmpty) return result;
+    final context = MetadataEditBatch.current;
+    final id = context?.id ?? FundusId.generate();
+    final previous = _database.select(
+      'SELECT batch_json FROM metadata_history_batches WHERE batch_id = ?',
+      [id],
+    );
+    MetadataChangeBatch? existing;
+    if (previous.isNotEmpty) {
+      existing = MetadataChangeBatch.fromJson(
+        jsonDecode(previous.single['batch_json'] as String),
+      );
+    }
+    final merged = <String, MetadataFieldChange>{
+      for (final change in existing?.changes ?? <MetadataFieldChange>[])
+        '${change.workId}\u0000${change.field}': change,
+    };
+    for (final change in changes) {
+      final key = '${change.workId}\u0000${change.field}';
+      merged[key] = MetadataFieldChange(
+        workId: workId,
+        field: change.field,
+        before: merged[key]?.before ?? change.before,
+        after: change.after,
+        protected: change.protected || (merged[key]?.protected ?? false),
+      );
+    }
+    final batch = MetadataChangeBatch(
+      id: id,
+      source: context?.source ?? source,
+      at: context?.at ?? DateTime.now().toUtc(),
+      changes: merged.values,
+      reversesBatchId: context?.reversesBatchId,
+    );
+    if (existing != null) {
+      _database.execute(
+        'DELETE FROM metadata_history_batches WHERE batch_id = ?',
+        [id],
+      );
+    }
+    if (batch.changes.isNotEmpty) _insertMetadataBatch(batch);
+    // Whole-batch retention, with SQL byte accounting rather than repeatedly
+    // encoding a multi-megabyte history during one edit.
+    final rows = _database.select(
+      'SELECT batch_id, byte_count FROM metadata_history_batches ORDER BY sequence DESC',
+    );
+    var bytes = utf8.encode(MetadataHistory().encode()).length;
+    var count = 0;
+    var pruning = false;
+    for (final row in rows) {
+      final size = row['byte_count'] as int;
+      if (count == 0 && bytes + size > 16 * 1024 * 1024) {
+        throw const FormatException(
+          'Die Änderung überschreitet das Verlaufsbudget.',
+        );
+      }
+      if (pruning ||
+          count >= 100 ||
+          bytes + size + (count == 0 ? 0 : 1) > 16 * 1024 * 1024) {
+        pruning = true;
+        _database.execute(
+          'DELETE FROM metadata_history_batches WHERE batch_id = ?',
+          [row['batch_id']],
+        );
+      } else {
+        bytes += size + (count == 0 ? 0 : 1);
+        count++;
+      }
+    }
+    _database.execute(
+      'UPDATE metadata_history_state SET revision = revision + 1 WHERE id = 1',
+    );
+    return result;
+  });
+
+  bool _protectedHistoryField(
+    String field,
+    MetadataFieldState? before,
+    MetadataFieldState? after,
+  ) {
+    if (field.startsWith('property:')) {
+      return _database.select(
+        'SELECT 1 FROM property_definitions WHERE id = ? AND protected = 1',
+        [field.substring(9)],
+      ).isNotEmpty;
+    }
+    if (field != 'tags') return false;
+    final public = listTags().toSet();
+    return [before?.value, after?.value]
+        .whereType<List>()
+        .expand((values) => values)
+        .any((value) => !public.contains(value));
+  }
+
+  MetadataUndoPlan previewMetadataUndo(
+    String batchId, {
+    required Set<String> visibleWorkIds,
+    Set<String>? selectedKeys,
+    Set<String>? visiblePropertyIds,
+    Set<String>? visibleTagNames,
+    bool includeProtected = false,
+  }) {
+    final rows = _database.select(
+      'SELECT batch_json FROM metadata_history_batches WHERE batch_id = ?',
+      [batchId],
+    );
+    if (rows.isEmpty) {
+      throw StateError('Diese Änderung ist nicht mehr im Verlauf.');
+    }
+    final batch = MetadataChangeBatch.fromJson(
+      jsonDecode(rows.single['batch_json'] as String),
+    );
+    final current = <String, Map<String, MetadataFieldState>?>{};
+    return MetadataUndoPlan.preview(
+      batch: batch,
+      selected: (change) =>
+          visibleWorkIds.contains(change.workId) &&
+          (includeProtected || !change.protected) &&
+          (change.field != 'tags' ||
+              visibleTagNames == null ||
+              [change.before.value, change.after.value]
+                  .whereType<List>()
+                  .expand((values) => values)
+                  .every(visibleTagNames.contains)) &&
+          (selectedKeys == null || selectedKeys.contains(change.key)) &&
+          (!change.field.startsWith('property:') ||
+              visiblePropertyIds == null ||
+              visiblePropertyIds.contains(change.field.substring(9))),
+      current: (workId, field) {
+        final fields = current.putIfAbsent(
+          workId,
+          () => metadataFieldStates(workId),
+        );
+        return fields == null
+            ? null
+            : fields[field] ?? MetadataFieldState(present: false);
+      },
+    );
+  }
+
+  MetadataUndoPlan undoMetadataBatch(
+    String batchId, {
+    required Set<String> visibleWorkIds,
+    required Set<String> selectedKeys,
+    Map<String, MetadataFieldState>? expectedAfter,
+    Set<String>? visiblePropertyIds,
+    Set<String>? visibleTagNames,
+    bool includeProtected = false,
+  }) => MetadataEditBatch.runSynchronous(
+    source: 'user:undo',
+    reversesBatchId: batchId,
+    action: () => transaction(() {
+      final plan = previewMetadataUndo(
+        batchId,
+        visibleWorkIds: visibleWorkIds,
+        selectedKeys: selectedKeys,
+        visiblePropertyIds: visiblePropertyIds,
+        visibleTagNames: visibleTagNames,
+        includeProtected: includeProtected,
+      );
+      if (plan.conflicts.isNotEmpty) throw MetadataUndoConflictException(plan);
+      final byWork = <String, Map<String, MetadataFieldState>>{};
+      for (final change in plan.applicable) {
+        byWork.putIfAbsent(change.workId, () => {})[change.field] =
+            change.before;
+      }
+      for (final work in byWork.entries) {
+        recordMetadataMutation(
+          workId: work.key,
+          source: 'user:undo',
+          action: () {
+            _restoreMetadataStates(work.key, work.value);
+            derivePeopleFromMetadata(workId: work.key);
+          },
+        );
+        if (expectedAfter != null) {
+          for (final change in [
+            ...plan.applicable,
+            ...plan.conflicts.map((conflict) => conflict.change),
+          ]) {
+            if (!(expectedAfter[change.key]?.sameAs(change.after) ?? false)) {
+              throw StateError(
+                'Das Änderungspaket wurde seit der Vorschau erweitert. Bitte erneut prüfen.',
+              );
+            }
+          }
+        }
+      }
+      return plan;
+    }),
+  );
+
+  void _restoreMetadataStates(
+    String workId,
+    Map<String, MetadataFieldState> fields,
+  ) {
+    final row = _database.select(
+      'SELECT kind, title, metadata_json FROM works WHERE id = ?',
+      [workId],
+    ).single;
+    final metadata = Map<String, Object?>.from(
+      jsonDecode(row['metadata_json'] as String) as Map,
+    );
+    final origins = _metadataOrigins(metadata);
+    var kind = row['kind'] as String;
+    for (final entry in fields.entries) {
+      final field = entry.key;
+      final state = entry.value;
+      final value = state.value;
+      if (field == 'cover' || field == 'backdrop') {
+        throw StateError(
+          'Bildversionen können in diesem Schritt noch nicht zurückgenommen werden.',
+        );
+      }
+      if (field.startsWith('property:')) {
+        if (state.present &&
+            (state.source == null ||
+                state.originAt == null ||
+                state.locked != (state.source == 'user'))) {
+          throw const FormatException(
+            'Die frühere Eigenschaftsherkunft ist unvollständig.',
+          );
+        }
+        final id = field.substring(9);
+        final definition = listPropertyDefinitions()
+            .where((definition) => definition.id == id)
+            .firstOrNull;
+        if (definition == null ||
+            definition.valueType == PropertyValueType.rating ||
+            (state.present &&
+                (value == null ||
+                    !WorkPropertyValue.fits(definition.valueType, value)))) {
+          throw StateError(
+            'Die Eigenschaft wurde entfernt oder ihr Typ wurde geändert.',
+          );
+        }
+        setWorkProperty(
+          workId: workId,
+          definitionId: id,
+          value: state.present ? value : null,
+          source: state.source ?? 'user',
+        );
+        if (state.present && state.originAt != null) {
+          _database.execute(
+            'UPDATE work_properties SET updated_at = ? WHERE work_id = ? AND definition_id = ?',
+            [state.originAt!.millisecondsSinceEpoch, workId, id],
+          );
+        }
+        continue;
+      }
+      if (state.present && !_validUndoValue(field, value)) {
+        throw const FormatException(
+          'Der frühere Feldwert passt nicht zum Metadatenfeld.',
+        );
+      }
+      if (field == 'tags') {
+        replaceWorkTags(
+          workId,
+          state.present ? (value as List).cast<String>() : const [],
+        );
+        continue;
+      }
+      if (field == 'title' &&
+          (!state.present || value is! String || value.trim().isEmpty)) {
+        throw const FormatException('Ein Werk benötigt weiterhin einen Titel.');
+      }
+      if (field == 'kind') {
+        if (!state.present || value is! String) {
+          throw const FormatException('Medientyp fehlt.');
+        }
+        kind = value;
+      } else if (state.present) {
+        metadata[field] = value;
+      } else {
+        metadata.remove(field);
+      }
+      if (state.source != null || state.originAt != null || state.locked) {
+        final source = WorkMetadataSource.values
+            .where((candidate) => candidate.name == state.source)
+            .firstOrNull;
+        if (source == null ||
+            state.originAt == null ||
+            state.locked != (source == WorkMetadataSource.user)) {
+          throw const FormatException(
+            'Die frühere Feldherkunft ist nicht vollständig.',
+          );
+        }
+        origins[field] = WorkMetadataOrigin(
+          source: source,
+          updatedAt: state.originAt!,
+        );
+      } else {
+        origins.remove(field);
+      }
+    }
+    if (fields.containsKey('authors')) {
+      final authors = _metadataStrings(metadata['authors']);
+      if (authors.isEmpty) {
+        metadata.remove('author');
+        origins.remove('author');
+      } else {
+        metadata['author'] = authors.first;
+        if (origins['authors'] case final origin?) {
+          origins['author'] = origin;
+        } else {
+          origins.remove('author');
+        }
+      }
+    }
+    metadata['_field_sources'] = _encodeMetadataOrigins(origins);
+    final title = metadata['title'] as String? ?? row['title'] as String;
+    _database.execute(
+      'UPDATE works SET kind = ?, title = ?, sort_title = ?, series_name = ?, series_sequence = ?, metadata_json = ? WHERE id = ?',
+      [
+        kind,
+        title,
+        title.toLowerCase(),
+        metadata['series'],
+        metadata['series_sequence'],
+        jsonEncode(metadata),
+        workId,
+      ],
+    );
+    final body = [
+      for (final field in [
+        'authors',
+        'alternate_titles',
+        'series',
+        'narrators',
+        'subtitle',
+        'description',
+      ])
+        if (metadata[field] is String)
+          metadata[field] as String
+        else
+          ..._metadataStrings(metadata[field]),
+    ].join(' ');
+    _database.execute(
+      "UPDATE search_index SET title = ?, body = ? WHERE entity_type = 'work' AND entity_id = ?",
+      [title, body, workId],
+    );
+  }
+
+  static bool _validUndoValue(String field, Object? value) => switch (field) {
+    'authors' ||
+    'narrators' ||
+    'alternate_titles' ||
+    'genres' ||
+    'tags' => value is List && value.every((item) => item is String),
+    'series_sequence' => value == null || value is num && value.isFinite,
+    'published_year' =>
+      value == null || value is int && value >= 0 && value <= 9999,
+    'external_ids' =>
+      value is Map &&
+          value.keys.every((key) => key is String) &&
+          value.values.every((item) => item is String),
+    'content_sensitivity' =>
+      value == null || supportedContentSensitivities.contains(value),
+    'kind' =>
+      value is String && RegExp(r'^[a-z][a-z0-9_]{0,63}$').hasMatch(value),
+    _ => value == null || value is String,
+  };
+
+  Map<String, MetadataFieldState>? metadataFieldStates(String workId) {
+    final rows = _database.select(
+      'SELECT kind, title, series_name, series_sequence, metadata_json, '
+      'generated_cover_path, prefer_generated_cover, backdrop_path FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.single;
+    final metadata = Map<String, Object?>.from(
+      jsonDecode(row['metadata_json'] as String) as Map,
+    );
+    metadata.putIfAbsent('title', () => row['title']);
+    metadata.putIfAbsent('series', () => row['series_name']);
+    metadata.putIfAbsent('series_sequence', () => row['series_sequence']);
+    metadata['kind'] = row['kind'];
+    final origins = _metadataOrigins(metadata);
+    final result = <String, MetadataFieldState>{
+      for (final entry in metadata.entries)
+        if (MetadataFieldChange.isMetadataField(entry.key) &&
+            !entry.key.startsWith('property:') &&
+            entry.key != 'author' &&
+            entry.key != 'authors' &&
+            entry.key != 'cover' &&
+            entry.key != 'backdrop')
+          entry.key: MetadataFieldState(
+            present: true,
+            value: entry.value,
+            source: origins[entry.key]?.source.name,
+            originAt: origins[entry.key]?.updatedAt,
+            locked: origins[entry.key]?.source == WorkMetadataSource.user,
+          ),
+      'authors': MetadataFieldState(
+        present: true,
+        value: _metadataStrings(metadata['authors']).isNotEmpty
+            ? _metadataStrings(metadata['authors'])
+            : [metadata['author'] as String? ?? 'Unbekannt'],
+        source: (origins['authors'] ?? origins['author'])?.source.name,
+        originAt: (origins['authors'] ?? origins['author'])?.updatedAt,
+        locked:
+            (origins['authors'] ?? origins['author'])?.source ==
+            WorkMetadataSource.user,
+      ),
+      'tags': MetadataFieldState(
+        present: true,
+        value: loadAnnotations(workId).tags,
+      ),
+      'cover': MetadataFieldState(
+        present:
+            row['generated_cover_path'] != null ||
+            row['prefer_generated_cover'] == 1,
+        value:
+            row['generated_cover_path'] != null ||
+                row['prefer_generated_cover'] == 1
+            ? {
+                'generated_path': row['generated_cover_path'],
+                'prefer_generated': row['prefer_generated_cover'] == 1,
+              }
+            : null,
+      ),
+      'backdrop': MetadataFieldState(
+        present: row['backdrop_path'] != null,
+        value: row['backdrop_path'],
+      ),
+    };
+    final definitions = {
+      for (final definition in listPropertyDefinitions())
+        definition.id: definition,
+    };
+    for (final entry in loadWorkProperties(workId).entries) {
+      if (definitions[entry.key]?.valueType == PropertyValueType.rating) {
+        continue;
+      }
+      result['property:${entry.key}'] = MetadataFieldState(
+        present: true,
+        value: entry.value.value,
+        source: entry.value.source,
+        originAt: entry.value.updatedAt,
+        locked: entry.value.source == 'user',
+      );
+    }
+    return result;
   }
 
   String upsertFile(ScannedFile file) {
@@ -949,7 +1520,13 @@ final class FundusDatabase {
         origins.remove(key);
         return;
       }
-      metadata[key] = value is String ? value.trim() : value;
+      final normalized = value is String ? value.trim() : value;
+      if (!fieldOrigins.containsKey(key) &&
+          origins[key]?.source == source &&
+          jsonEncode(metadata[key]) == jsonEncode(normalized)) {
+        return;
+      }
+      metadata[key] = normalized;
       origins[key] =
           fieldOrigins[key] ??
           WorkMetadataOrigin(source: source, updatedAt: changedAt);
@@ -2723,6 +3300,15 @@ final class FundusDatabase {
     if (!WorkPropertyValue.fits(type, value)) {
       throw ArgumentError('Der Wert passt nicht zu „${type.label}": $value');
     }
+    final existing = _database.select(
+      'SELECT value_json, source FROM work_properties WHERE work_id = ? AND definition_id = ?',
+      [workId, definitionId],
+    );
+    if (existing.isNotEmpty &&
+        existing.single['source'] == source &&
+        existing.single['value_json'] == jsonEncode(value)) {
+      return;
+    }
     _database.execute(
       '''
       INSERT INTO work_properties
@@ -3339,6 +3925,10 @@ final class FundusDatabase {
       final current = origins[entry.key]?.source;
       if (current != null &&
           _metadataPriority(current) > _metadataPriority(source)) {
+        continue;
+      }
+      if (current == source &&
+          jsonEncode(mergedMetadata[entry.key]) == jsonEncode(entry.value)) {
         continue;
       }
       mergedMetadata[entry.key] = entry.value;
@@ -4500,6 +5090,24 @@ final class FundusDatabase {
     if (_database.userVersion == 21 && !readOnly) _migrateToVersion22();
     if (_database.userVersion == 22 && !readOnly) _migrateToVersion23();
     if (_database.userVersion == 23 && !readOnly) _migrateToVersion24();
+    if (_database.userVersion == 24 && !readOnly) _migrateToVersion25();
+  }
+
+  void _migrateToVersion25() {
+    transaction(() {
+      _database.execute(
+        'CREATE TABLE metadata_history_batches ('
+        'sequence INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT NOT NULL UNIQUE, '
+        'batch_json TEXT NOT NULL, byte_count INTEGER NOT NULL CHECK(byte_count >= 0))',
+      );
+      _database.execute(
+        'CREATE TABLE metadata_history_state ('
+        'id INTEGER PRIMARY KEY CHECK(id = 1), initialized INTEGER NOT NULL DEFAULT 0, '
+        'revision INTEGER NOT NULL DEFAULT 0, exported_revision INTEGER NOT NULL DEFAULT 0)',
+      );
+      _database.execute('INSERT INTO metadata_history_state (id) VALUES (1)');
+      _database.userVersion = 25;
+    });
   }
 
   void _migrateToVersion24() {

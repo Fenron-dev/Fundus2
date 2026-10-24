@@ -1,4 +1,65 @@
 import 'dart:convert';
+import 'dart:async';
+
+import 'fundus_id.dart';
+
+/// A logical edit may await images/sidecars without holding a SQLite
+/// transaction open. Each committed metadata step shares this identity.
+final class MetadataEditBatch {
+  MetadataEditBatch._(this.id, this.source, this.at, [this.reversesBatchId]);
+  static final _zoneKey = Object();
+  static MetadataEditBatch? get current =>
+      Zone.current[_zoneKey] as MetadataEditBatch?;
+  final String id, source;
+  final DateTime at;
+  final String? reversesBatchId;
+  final Map<Object, Future<void> Function()> _finalizers = {};
+
+  void onComplete(Object key, Future<void> Function() action) =>
+      _finalizers[key] = action;
+
+  static T runSynchronous<T>({
+    required String source,
+    required String reversesBatchId,
+    required T Function() action,
+  }) {
+    _shortString(source, 'Änderungsquelle');
+    _shortString(reversesBatchId, 'Rücknahme');
+    return runZoned(
+      action,
+      zoneValues: {
+        _zoneKey: MetadataEditBatch._(
+          FundusId.generate(),
+          source,
+          DateTime.now().toUtc(),
+          reversesBatchId,
+        ),
+      },
+    );
+  }
+
+  static Future<T> run<T>({
+    required String source,
+    required Future<T> Function() action,
+  }) {
+    _shortString(source, 'Änderungsquelle');
+    if (current != null) return action();
+    final context = MetadataEditBatch._(
+      FundusId.generate(),
+      source,
+      DateTime.now().toUtc(),
+    );
+    return runZoned(() async {
+      try {
+        return await action();
+      } finally {
+        for (final finish in context._finalizers.values) {
+          await finish();
+        }
+      }
+    }, zoneValues: {_zoneKey: context});
+  }
+}
 
 /// A metadata value plus its authorship/lock, not a playback snapshot.
 /// JSON copying prevents later mutations of an editor's lists from changing
@@ -61,6 +122,7 @@ final class MetadataFieldChange {
     required this.field,
     required this.before,
     required this.after,
+    this.protected = false,
   }) {
     _shortString(workId, 'Werkkennung');
     if (!isMetadataField(field)) {
@@ -73,6 +135,8 @@ final class MetadataFieldChange {
   final String workId;
   final String field;
   final MetadataFieldState before, after;
+  final bool protected;
+  String get key => '$workId\u0000$field';
   bool get changed => !before.sameAs(after);
 
   /// No wildcard import of a work row: positions, annotations, personal votes,
@@ -109,17 +173,22 @@ final class MetadataFieldChange {
     'field': field,
     'before': before.toJson(),
     'after': after.toJson(),
+    'protected': protected,
   };
 
   static MetadataFieldChange fromJson(Object? raw) {
     if (raw is! Map || raw['work_id'] is! String || raw['field'] is! String) {
       throw const FormatException('Ungültige Metadatenänderung.');
     }
+    if (raw.containsKey('protected') && raw['protected'] is! bool) {
+      throw const FormatException('Ungültige Schutzkennzeichnung im Verlauf.');
+    }
     return MetadataFieldChange(
       workId: raw['work_id'] as String,
       field: raw['field'] as String,
       before: MetadataFieldState.fromJson(raw['before']),
       after: MetadataFieldState.fromJson(raw['after']),
+      protected: raw['protected'] is bool ? raw['protected'] as bool : true,
     );
   }
 }
@@ -250,7 +319,7 @@ final class MetadataHistory {
   }
 
   String encode() => jsonEncode({
-    'format_version': 1,
+    'format_version': 2,
     'batches': batches.map((batch) => batch.toJson()).toList(),
   });
 
@@ -260,18 +329,38 @@ final class MetadataHistory {
     }
     final raw = jsonDecode(encoded);
     if (raw is! Map ||
-        raw['format_version'] != 1 ||
+        !const [1, 2].contains(raw['format_version']) ||
         raw['batches'] is! List ||
         (raw['batches'] as List).length > maxBatches) {
       throw const FormatException('Nicht unterstützter Metadatenverlauf.');
     }
+    final legacy = raw['format_version'] == 1;
     return MetadataHistory(
-      batches: (raw['batches'] as List).map(MetadataChangeBatch.fromJson),
+      batches: (raw['batches'] as List).map((value) {
+        if (!legacy || value is! Map || value['changes'] is! List) {
+          return MetadataChangeBatch.fromJson(value);
+        }
+        return MetadataChangeBatch.fromJson({
+          ...value,
+          'changes': [
+            for (final change in value['changes'] as List)
+              if (change is Map) {...change, 'protected': true} else change,
+          ],
+        });
+      }),
     );
   }
 }
 
 enum MetadataUndoConflictReason { changedSince }
+
+final class MetadataUndoConflictException implements Exception {
+  const MetadataUndoConflictException(this.plan);
+  final MetadataUndoPlan plan;
+  @override
+  String toString() =>
+      'Zwischenzeitliche Änderungen: ${plan.conflicts.length} Felder. Bitte Auswahl erneut prüfen.';
+}
 
 final class MetadataUndoConflict {
   const MetadataUndoConflict(this.change, this.reason);

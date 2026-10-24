@@ -72,6 +72,24 @@ void main() {
   });
 
   test(
+    'legacy format one is read conservatively and upgraded without losing changes',
+    () {
+      final value =
+          jsonDecode(MetadataHistory().append(batch('legacy')).encode()) as Map;
+      value['format_version'] = 1;
+      for (final raw in (value['batches'] as List).single['changes'] as List) {
+        (raw as Map).remove('protected');
+      }
+      final restored = MetadataHistory.decode(jsonEncode(value));
+      expect(
+        restored.batches.single.changes.every((change) => change.protected),
+        isTrue,
+      );
+      expect(jsonDecode(restored.encode())['format_version'], 2);
+    },
+  );
+
+  test(
     'map order does not create changes but list order remains significant',
     () {
       expect(state({'a': 1, 'b': 2}).sameAs(state({'b': 2, 'a': 1})), isTrue);
@@ -280,7 +298,7 @@ void main() {
     () {
       for (final encoded in [
         '{}',
-        '{"format_version":2,"batches":[]}',
+        '{"format_version":99,"batches":[]}',
         'not json',
       ]) {
         expect(() => MetadataHistory.decode(encoded), throwsFormatException);

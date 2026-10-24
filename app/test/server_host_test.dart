@@ -296,7 +296,7 @@ void main() {
 
       await waiting.open(root);
       // Der Wunsch galt dem Gerät: die Freigabe zieht nach.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await later.start(remember: false);
       expect(later.isRunning, isTrue, reason: later.failure);
     },
   );
@@ -327,6 +327,34 @@ void main() {
     );
     expect(host.pairedDevices, isEmpty);
   });
+
+  test(
+    'stopping while startup is pending cannot leave a late server running',
+    () async {
+      final pending = host.start(remember: false);
+      await host.stop(remember: false);
+      await pending;
+      expect(host.isRunning, isFalse);
+      expect(host.isBusy, isFalse);
+      expect(host.address, isNull);
+    },
+  );
+
+  test(
+    'disposing during startup does not publish or notify after disposal',
+    () async {
+      final later = ServerHostController(
+        settings: settings,
+        library: library,
+        identityStore: store,
+      );
+      final pending = later.start(remember: false);
+      later.dispose();
+      await pending;
+      expect(later.isRunning, isFalse);
+      expect(later.address, isNull);
+    },
+  );
 
   test('eine falsche PIN koppelt nicht', () async {
     await host.start(remember: false);

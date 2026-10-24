@@ -83,77 +83,80 @@ class _BulkMetadataState extends State<_BulkMetadata> {
         if (!_onlyWithoutCover || work.summary.coverPath == null) work,
   ];
 
-  Future<void> _run() async {
-    final targets = _targets;
-    if (targets.isEmpty) return;
-    setState(() {
-      _running = true;
-      _cancelled = false;
-      _done = 0;
-      _rows.clear();
-    });
-    final search = MetadataSearch([
-      providerFor(
-        _provider,
-        apiKey: widget.settings.credentialFor(_provider.credentialKey),
-      ),
-    ]);
-    for (final work in targets) {
-      if (_cancelled || !mounted) break;
-      try {
-        final matches = await search.search(
-          work.title,
-          language: widget.settings.metadataLanguage,
-          year: work.summary.publishedYear,
-        );
-        final best = matches.firstOrNull;
-        if (best == null) {
-          _rows.add(_Row(work, _Outcome.nothing));
-        } else if (best.needsConfirmation) {
+  Future<void> _run() => MetadataEditBatch.run(
+    source: 'batch:${_provider.name}',
+    action: () async {
+      final targets = _targets;
+      if (targets.isEmpty) return;
+      setState(() {
+        _running = true;
+        _cancelled = false;
+        _done = 0;
+        _rows.clear();
+      });
+      final search = MetadataSearch([
+        providerFor(
+          _provider,
+          apiKey: widget.settings.credentialFor(_provider.credentialKey),
+        ),
+      ]);
+      for (final work in targets) {
+        if (_cancelled || !mounted) break;
+        try {
+          final matches = await search.search(
+            work.title,
+            language: widget.settings.metadataLanguage,
+            year: work.summary.publishedYear,
+          );
+          final best = matches.firstOrNull;
+          if (best == null) {
+            _rows.add(_Row(work, _Outcome.nothing));
+          } else if (best.needsConfirmation) {
+            _rows.add(
+              _Row(
+                work,
+                _Outcome.unsure,
+                note: '„${best.candidate.title}"?',
+                best: best,
+              ),
+            );
+          } else {
+            final result = await applyMetadata(
+              library: widget.library,
+              work: work,
+              candidate: best.candidate,
+            );
+            _rows.add(
+              _Row(
+                work,
+                _Outcome.applied,
+                note: result.coverFetched
+                    ? '${result.title} · mit Bild'
+                    : result.coverFailed
+                    ? '${result.title} · ${result.coverFailure ?? 'Bildabruf fehlgeschlagen'}'
+                    : result.title,
+              ),
+            );
+          }
+        } on Object catch (error) {
           _rows.add(
             _Row(
               work,
-              _Outcome.unsure,
-              note: '„${best.candidate.title}"?',
-              best: best,
-            ),
-          );
-        } else {
-          final result = await applyMetadata(
-            library: widget.library,
-            work: work,
-            candidate: best.candidate,
-          );
-          _rows.add(
-            _Row(
-              work,
-              _Outcome.applied,
-              note: result.coverFetched
-                  ? '${result.title} · mit Bild'
-                  : result.coverFailed
-                  ? '${result.title} · ${result.coverFailure ?? 'Bildabruf fehlgeschlagen'}'
-                  : result.title,
+              _Outcome.failed,
+              note: error is MetadataProviderException ? error.message : null,
             ),
           );
         }
-      } on Object catch (error) {
-        _rows.add(
-          _Row(
-            work,
-            _Outcome.failed,
-            note: error is MetadataProviderException ? error.message : null,
-          ),
-        );
+        if (!mounted) return;
+        setState(() => _done++);
+        widget.onChanged();
+        // The public services are free and rate-limited; a pause between works
+        // is what keeps a shelf of forty from being refused halfway through.
+        await Future<void>.delayed(const Duration(milliseconds: 350));
       }
-      if (!mounted) return;
-      setState(() => _done++);
-      widget.onChanged();
-      // The public services are free and rate-limited; a pause between works
-      // is what keeps a shelf of forty from being refused halfway through.
-      await Future<void>.delayed(const Duration(milliseconds: 350));
-    }
-    if (mounted) setState(() => _running = false);
-  }
+      if (mounted) setState(() => _running = false);
+    },
+  );
 
   Future<void> _pick(_Row row) async {
     final choice = await showMetadataDialog(

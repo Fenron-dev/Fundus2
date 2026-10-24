@@ -78,6 +78,8 @@ void main() {
   testWidgets('der Inhalt unter den Reitern ist erreichbar', (tester) async {
     await pumpPhone(tester);
 
+    await tester.drag(find.byType(NestedScrollView), const Offset(0, -200));
+    await tester.pumpAndSettle();
     final tabContext = tester.element(find.byType(TabBar));
     DefaultTabController.of(tabContext).animateTo(2);
     await tester.pumpAndSettle();
