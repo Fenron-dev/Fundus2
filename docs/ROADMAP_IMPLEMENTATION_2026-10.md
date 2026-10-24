@@ -8,7 +8,7 @@ implementiert oder ausgeliefert ist. Die Stabilisierungsabnahme #47 bleibt separ
 
 1. Update-Posteingang und Abos (#56) – implementiert, CI und drei Plattform-Builds bestanden.
 2. Intelligentes Offline-Mitnehmen (#55) – Regeln, Downloads und bestätigtes Aufräumen implementiert; Plattform-/Geräteabnahme offen.
-3. Metadatenverlauf und gezieltes Rückgängig (#57) – offen.
+3. Metadatenverlauf und gezieltes Rückgängig (#57) – Daten-/Ablagevertrag in Arbeit; noch keine Oberfläche oder automatische Erfassung.
 4. Medienwelten und Reihenfolgen (#60) – offen.
 5. Regelregale und Dashboard-Zeilen (#58) – offen.
 6. Bibliotheks-Check (#59) – offen.
@@ -271,8 +271,61 @@ Bereinigung, nicht den normalen Fortschrittsabgleich.
 
 Lokale Abnahme: Core 296, Server 45, Client 46, Design 3, App 510 bestanden
 (zusammen 900), acht App-Tests übersprungen; Analyse und Format sauber.
-CI und Plattformläufe dieses dritten Schritts stehen noch aus.
+`6108375` hat GitHub-CI 40100997358 und alle drei Plattform-Builds bestanden:
+macOS 40101296371, Windows 40101296270 und Android 40101296342.
 
 **Weiterhin offen in #55:** weitere Plattform-Erkennung für WLAN/Laden sowie
 die reale Android-Neustart-/Unterbrechungs-, Schutzwechsel- und Akkuabnahme.
 Die vollständige Roadmap und #47 bleiben offen.
+
+## Metadatenverlauf: Daten- und Ablagegrundlage
+
+**Noch keine fertige Benutzerfunktion:** Die bestehenden Bearbeiten- und
+Abgleichaktionen erfassen noch keine Historie; Rücknahme-Oberfläche und
+transaktionale Anbindung an die tatsächlichen Metadatenänderungen folgen.
+Die folgenden Core-Verträge sind als erster Schritt von #57 implementiert:
+
+- Ein Feldzustand enthält Wert bzw. ausdrückliches Fehlen, Herkunft,
+  Herkunftszeitpunkt und manuelle Sperre. Unveränderliche JSON-Kopien
+  verhindern, dass eine später veränderte Editor-Liste alte Einträge ändert.
+- Eine bestätigte Bearbeitung/Übernahme ist ein Batch mit eigener ID, Quelle,
+  Zeitpunkt und Feldänderungen über ein oder mehrere Werke. Gleiche ID mit
+  gleichen Daten ist wiederholbar; andere Daten unter gleicher ID werden
+  zurückgewiesen. Eine Rücknahme bleibt als neuer Batch auf ihren Ursprung
+  bezogen, statt den alten Verlauf umzuschreiben.
+- Die Rücknahme-Vorschau vergleicht den aktuellen Zustand mit dem damals
+  gespeicherten Nachher-Zustand einschließlich Herkunft/Sperre. Neuere
+  Korrekturen sind Konflikte. Nicht sichtbare/nicht verfügbare Felder geben
+  keine alten Inhalte preis. Der spätere Schreiber muss diesen Vergleich
+  unmittelbar in seiner Änderungstransaktion erneut ausführen.
+- Eine Positivliste erlaubt nur Metadatenfelder und eigene Eigenschaften.
+  Positionen, persönliche Stimmen, Notizen, Lesezeichen, Gerätegeheimnisse und
+  Offline-Pfade sind keine rücknehmbaren Metadatenfelder.
+- `_fundus/metadata-history.json`, Format 1, wird bei explizitem Core-Aufruf
+  seriell gelesen/ergänzt und mit dem bestehenden atomaren Sidecar-Schreiber
+  gesichert. Fehlende Dateien bedeuten leeren Verlauf; beschädigte,
+  unbekannte, übergroße oder verlinkte Dateien/Ordner werden nicht als leer
+  ersetzt. Shutdown und Backup warten auf laufende Ergänzungen. Backup/Restore
+  übernimmt den Verlauf; das reine Ergänzen verändert keine Werkdaten/Stände.
+- Vorläufige API-Standardgrenzen: 100 ganze Batches und 16 MiB, harte
+  Lesebegrenzung 32 MiB, höchstens 1.000 Batches. Ein einzelner Feldzustand
+  ist auf 256 KiB und begrenzte JSON-Tiefe beschränkt. Aufbewahrung entfernt
+  immer ganze alte Batches; ein zu großer einzelner Batch wird ausdrücklich
+  abgewiesen. Dafür gibt es noch keine Benutzereinstellung.
+
+Zwanzig gezielte Tests prüfen Modell, Vergleich, Herkunft/Sperre, Auswahl,
+Zwischenänderungen, verborgene Felder, vollständige Batch-Aufbewahrung,
+Wiederholung, ungültige Formate, paralleles Schreiben, Neustart, Schreibschutz,
+Pfadverlinkungen und echte Sicherung/Wiederherstellung. Es gibt keinen neuen
+Peer-Endpunkt und keine Datenbankschemaänderung.
+
+Lokale Gesamtprüfung mit dieser Grundlage: Core 316, Server 45, Client 46,
+Design 3 und App 510 bestanden (zusammen 920), acht App-Tests übersprungen.
+Analyse/Format sauber. GitHub-CI dieser Grundlage steht noch aus; die oben
+genannten erfolgreichen Läufe gehören zum vorigen Offline-Commit.
+
+**Offen in #57:** tatsächliche Erfassung aller bestätigten Editor-, Provider-,
+Fero-/ABS-Konflikt- und Massenänderungen, transaktionale Konsistenz zwischen
+Änderung und Verlauf, geschützte/virtualisierte Oberfläche, echtes feldweises
+und Batch-Rücknehmen, Bildversionen einschließlich Begrenzung und Bedienung
+der Aufbewahrung. Dieser Grundlagenschritt hakt diese Abnahmepunkte nicht ab.

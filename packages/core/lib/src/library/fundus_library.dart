@@ -26,6 +26,7 @@ import '../model/library_saved_view.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/metadata_import_conflict.dart';
+import '../model/metadata_history.dart';
 import '../model/person_role.dart';
 import '../model/person_profile.dart';
 import '../model/work_property.dart';
@@ -117,7 +118,82 @@ final class FundusLibrary {
   Future<void> _publicationReadQueue = Future.value();
   final Map<String, Future<PublicationManifest?>> _publicationReads = {};
   final Map<String, Future<void>> _checkpointWrites = {};
+  Future<void> _metadataHistoryOperations = Future.value();
   Object? contentUpdatesError;
+
+  File get _metadataHistoryFile =>
+      File(p.join(root.path, '_fundus', 'metadata-history.json'));
+
+  /// Private portable history, never automatically exposed by the peer API.
+  /// The caller must filter visible works and protected properties in the UI.
+  Future<MetadataHistory> loadMetadataHistory() async {
+    await _metadataHistoryOperations;
+    return _readMetadataHistory();
+  }
+
+  Future<MetadataHistory> _readMetadataHistory() async {
+    final file = _metadataHistoryFile;
+    final parentType = await FileSystemEntity.type(
+      file.parent.path,
+      followLinks: false,
+    );
+    if (parentType == FileSystemEntityType.notFound) return MetadataHistory();
+    if (parentType != FileSystemEntityType.directory ||
+        !p.equals(
+          await file.parent.resolveSymbolicLinks(),
+          p.join(await root.resolveSymbolicLinks(), '_fundus'),
+        )) {
+      throw const FormatException(
+        'Verlaufsordner ist kein verwalteter Vault-Ordner.',
+      );
+    }
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return MetadataHistory();
+    if (type != FileSystemEntityType.file) {
+      throw const FormatException('Metadatenverlauf ist keine reguläre Datei.');
+    }
+    if (await file.length() > MetadataHistory.maxBytes) {
+      throw const FormatException('Metadatenverlauf ist zu groß.');
+    }
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in file.openRead()) {
+      if (bytes.length + chunk.length > MetadataHistory.maxBytes) {
+        throw const FormatException('Metadatenverlauf ist zu groß.');
+      }
+      bytes.add(chunk);
+    }
+    return MetadataHistory.decode(utf8.decode(bytes.takeBytes()));
+  }
+
+  /// Serialized read/append/atomic replace. A failed or future-format file is
+  /// never treated as empty. Appending records is deliberately separate from
+  /// applying metadata; mutation integration must supply its actual before/after.
+  Future<void> appendMetadataHistory(
+    MetadataChangeBatch batch, {
+    int retainBatches = 100,
+    int byteBudget = 16 * 1024 * 1024,
+  }) {
+    final operation = _ioZone.run(
+      () => _metadataHistoryOperations.then((_) async {
+        _ensureWritable();
+        if (_closed) throw StateError('Die Bibliothek ist geschlossen.');
+        final history = await _readMetadataHistory();
+        final updated = history.append(
+          batch,
+          retainBatches: retainBatches,
+          byteBudget: byteBudget,
+        );
+        if (identical(history, updated)) return;
+        await _writeSidecar(_metadataHistoryFile, updated.encode());
+      }),
+    );
+    _metadataHistoryOperations = _ioZone.run(
+      () => operation.catchError((Object error) {
+        lastSidecarError = error;
+      }),
+    );
+    return operation;
+  }
 
   Future<void> _contentUpdateOperation(Future<void> Function() action) {
     final operation = _ioZone.run(
@@ -1016,6 +1092,7 @@ final class FundusLibrary {
   /// flight. Anything that has to see it — closing the vault, a test reading
   /// the file back — waits here rather than guessing at a delay.
   Future<void> flushSidecarWrites() async {
+    await _metadataHistoryOperations;
     await _contentUpdateOperations;
     await _publicationReadQueue;
     await _sidecarWrites;
