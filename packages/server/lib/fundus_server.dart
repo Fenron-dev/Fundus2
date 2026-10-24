@@ -278,6 +278,10 @@ final class FundusServerHandler {
         _saveReaderProfile,
       )
       ..get(
+        '/v1/libraries/<libraryId>/files/<fileId>/publication-manifest',
+        _publicationManifest,
+      )
+      ..get(
         '/v1/libraries/<libraryId>/progress/<workId>/revisions',
         _progressRevisions,
       )
@@ -497,6 +501,7 @@ final class FundusServerHandler {
       'playback_session_revisions',
       'annotations',
       'portable_reader_profiles',
+      'publication_manifests',
     ],
   });
 
@@ -710,6 +715,34 @@ final class FundusServerHandler {
       File(located.track.absolutePath),
       resourceId: fileId,
     );
+  }
+
+  Future<Response> _publicationManifest(
+    Request request,
+    String libraryId,
+    String fileId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    final located = entry.findTrack(fileId);
+    if (located == null || !_canViewWork(request, located.work)) {
+      return _notFound('file_not_found');
+    }
+    try {
+      final manifest = await entry.library.ensurePublicationManifest(fileId);
+      if (manifest == null) return _notFound('publication_not_supported');
+      return _json({
+        'manifest': manifest.toJson(),
+      }).change(headers: {'cache-control': 'no-store'});
+    } on FileSystemException {
+      return _json({'error': 'publication_unavailable'}, statusCode: 503);
+    } on EpubPackageException {
+      return _json({'error': 'invalid_publication'}, statusCode: 422);
+    } on FormatException {
+      return _json({'error': 'publication_limit'}, statusCode: 422);
+    } on StateError {
+      return _json({'error': 'publication_busy'}, statusCode: 503);
+    }
   }
 
   Future<Response> _comicPages(

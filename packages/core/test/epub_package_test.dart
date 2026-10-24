@@ -9,7 +9,7 @@ void main() {
     'reads metadata and nested navigation from a safe EPUB package',
     () async {
       final publication = await const EpubPackageAdapter().openBytes(
-        _epubFixture(),
+        epubFixture(),
         sourceName: 'fallback.epub',
       );
 
@@ -30,7 +30,7 @@ void main() {
 
   test('opens the same EPUB through the common publication source', () async {
     final publication = await const EpubPackageAdapter().openSource(
-      MemoryPublicationSource(_epubFixture(), name: 'source.epub'),
+      MemoryPublicationSource(epubFixture(), name: 'source.epub'),
     );
 
     expect(publication.title, 'Die Testnovel');
@@ -76,7 +76,10 @@ void main() {
   });
 }
 
-Uint8List _epubFixture() {
+Uint8List epubFixture({
+  bool includeSecond = true,
+  String firstBody = 'Erster Absatz.',
+}) {
   final archive = Archive()
     ..addFile(ArchiveFile.string('mimetype', 'application/epub+zip'))
     ..addFile(
@@ -104,11 +107,11 @@ Uint8List _epubFixture() {
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="chapter-1" href="Text/chapter-1.xhtml" media-type="application/xhtml+xml"/>
-    <item id="chapter-2" href="Text/chapter-2.xhtml" media-type="application/xhtml+xml"/>
+    ${includeSecond ? '<item id="chapter-2" href="Text/chapter-2.xhtml" media-type="application/xhtml+xml"/>' : ''}
   </manifest>
   <spine toc="ncx">
     <itemref idref="chapter-1"/>
-    <itemref idref="chapter-2"/>
+    ${includeSecond ? '<itemref idref="chapter-2"/>' : ''}
   </spine>
 </package>''',
       ),
@@ -124,10 +127,10 @@ Uint8List _epubFixture() {
     <navPoint id="chapter-1" playOrder="1">
       <navLabel><text>Kapitel Eins</text></navLabel>
       <content src="Text/chapter-1.xhtml"/>
-      <navPoint id="chapter-2" playOrder="2">
+      ${includeSecond ? '''<navPoint id="chapter-2" playOrder="2">
         <navLabel><text>Unterkapitel Zwei</text></navLabel>
         <content src="Text/chapter-2.xhtml"/>
-      </navPoint>
+      </navPoint>''' : ''}
     </navPoint>
   </navMap>
 </ncx>''',
@@ -136,7 +139,7 @@ Uint8List _epubFixture() {
     ..addFile(
       ArchiveFile.string(
         'OEBPS/Text/chapter-1.xhtml',
-        '<html><head><title>Eins</title></head><body><p>Erster Absatz.</p></body></html>',
+        '<html><head><title>Eins</title></head><body><p>$firstBody</p></body></html>',
       ),
     )
     ..addFile(

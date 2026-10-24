@@ -288,6 +288,7 @@ class TextReaderController extends ChangeNotifier {
     FundusLibrary library,
     WorkView work, {
     String? startAt,
+    String? chapterId,
   }) async {
     _failure = null;
     _library = library;
@@ -328,8 +329,22 @@ class TextReaderController extends ChangeNotifier {
       final savedVolume = target == null
           ? 0
           : _volumes.indexWhere((volume) => volume.fileId == target);
+      if (startAt != null && savedVolume < 0) {
+        throw StateError('Der gewählte Band ist nicht mehr verfügbar.');
+      }
       _volumeIndex = savedVolume < 0 ? 0 : savedVolume;
-      await _openVolume(_volumeIndex, at: saved);
+      await _openVolume(
+        _volumeIndex,
+        at: chapterId == null
+            ? saved
+            : MediaPosition(
+                kind: MediaPositionKind.epubCfi,
+                fileId: startAt,
+                chapterId: chapterId,
+                numericValue: 0,
+              ),
+        strictChapter: chapterId != null,
+      );
     } on Object catch (error) {
       _failure = error.toString();
       _busy = false;
@@ -349,7 +364,11 @@ class TextReaderController extends ChangeNotifier {
     _volumeIndex = 0;
   }
 
-  Future<void> _openVolume(int index, {MediaPosition? at}) async {
+  Future<void> _openVolume(
+    int index, {
+    MediaPosition? at,
+    bool strictChapter = false,
+  }) async {
     _busy = true;
     _failure = null;
     _chapters = const [];
@@ -374,6 +393,9 @@ class TextReaderController extends ChangeNotifier {
       final savedChapter = at?.chapterId == null
           ? 0
           : _chapters.indexWhere((chapter) => chapter.id == at!.chapterId);
+      if (strictChapter && savedChapter < 0) {
+        throw StateError('Das gewählte Kapitel ist nicht mehr verfügbar.');
+      }
       _chapterIndex = savedChapter < 0 ? 0 : savedChapter;
       final resolved = _chapters[_chapterIndex].document.resolve(
         savedChapter < 0 ? null : at,

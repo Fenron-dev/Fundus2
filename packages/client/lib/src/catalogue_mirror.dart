@@ -4,6 +4,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 
 import 'remote_client.dart';
+import 'publication_sync.dart';
 
 /// Bringing another Fundus's catalogue into this device's own index.
 ///
@@ -111,6 +112,7 @@ final class FundusCatalogueMirror {
         for (final id in library.missingRemoteCovers(sourceId))
           RemoteWorkRecord(id: id, kind: '', title: '', hasCover: true),
       ]);
+      await _publicationUpdates();
       return const RemoteMirrorReport(written: 0, removed: 0);
     }
     if (changed.length > index.length * _fetchAllAbove) return _full(index);
@@ -128,7 +130,9 @@ final class FundusCatalogueMirror {
       // The rest of the catalogue is unchanged, not gone: without this the
       // works that were not fetched would be marked missing.
       keepIds: index.keys.toSet(),
+      reconcileContentUpdates: false,
     );
+    await _publicationUpdates();
     await library.saveMirrorState(sourceId, index);
     await _covers(works);
     return report;
@@ -141,10 +145,25 @@ final class FundusCatalogueMirror {
     final report = library.mirrorRemoteCatalogue(
       sourceId: sourceId,
       works: works,
+      reconcileContentUpdates: false,
     );
+    await _publicationUpdates();
     if (index != null) await library.saveMirrorState(sourceId, index);
     await _covers(works);
     return report;
+  }
+
+  /// Hydrates subscribed EPUB metadata before advancing update baselines.
+  Future<void> _publicationUpdates() async {
+    if (library.contentSubscriptions.isEmpty) return;
+    final deferred = await hydratePublicationManifests(
+      library: library,
+      client: client,
+      sourceId: sourceId,
+      libraryId: libraryId,
+      tolerateTransientFailure: true,
+    );
+    await library.refreshContentUpdates(deferredWorkIds: deferred);
   }
 
   /// Fetches covers for works that do not have one here yet.

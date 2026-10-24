@@ -50,6 +50,7 @@ class LibraryController extends ChangeNotifier {
   bool Function(WorkView work)? hides;
   bool includeProtectedTags = true;
   void Function(FundusLibrary replacement)? onHandleRecovered;
+  Future<void> Function(Set<String> workIds)? prepareContentSubscriptions;
 
   LibraryStatus get status => _status;
   String? get error => _error;
@@ -71,6 +72,8 @@ class LibraryController extends ChangeNotifier {
   Future<void> setContentSubscription(String workId, bool subscribed) async {
     final library = _library;
     if (library == null || workById(workId) == null) return;
+    if (subscribed) await prepareContentSubscriptions?.call({workId});
+    if (!identical(_library, library)) return;
     await library.setContentSubscription(workId, subscribed);
     if (!_disposed && identical(_library, library)) notifyListeners();
   }
@@ -78,10 +81,13 @@ class LibraryController extends ChangeNotifier {
   Future<void> subscribeStartedContentWorks() async {
     final library = _library;
     if (library == null) return;
-    await library.subscribeContentWorks({
+    final ids = {
       for (final work in _works)
         if (work.hasProgress) work.id,
-    });
+    };
+    await prepareContentSubscriptions?.call(ids);
+    if (!identical(_library, library)) return;
+    await library.subscribeContentWorks(ids);
     if (!_disposed && identical(_library, library)) notifyListeners();
   }
 

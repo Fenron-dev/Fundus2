@@ -6,7 +6,7 @@ implementiert oder ausgeliefert ist. Die Stabilisierungsabnahme #47 bleibt separ
 
 ## Umfang und Reihenfolge
 
-1. Update-Posteingang und Abos (#56) – in Arbeit, erste dateibasierte Umsetzung.
+1. Update-Posteingang und Abos (#56) – in Arbeit, Datei- und EPUB-Kapitel-Updates.
 2. Intelligentes Offline-Mitnehmen (#55) – offen.
 3. Metadatenverlauf und gezieltes Rückgängig (#57) – offen.
 4. Medienwelten und Reihenfolgen (#60) – offen.
@@ -45,10 +45,13 @@ dürfen nicht unabhängig gleichzeitig denselben Vault schreibend öffnen.
 
 ### Ablage und Protokoll
 
-`_fundus/content-updates.json`, Format 1, enthält Abos, Baselines, stabile
+`_fundus/content-updates.json`, Format 2, enthält Abos, Baselines, stabile
 Ereigniskennungen und den Bearbeitungsstatus. Die bestehenden serialisierten
-Sidecar-Schreibvorgänge und der Shutdown-Vertrag werden genutzt. Der Index
-bleibt Schema 23; keine Datenbankmigration ist für diese Datei erforderlich.
+Sidecar-Schreibvorgänge und der Shutdown-Vertrag werden genutzt. Format 1 wird
+gelesen und beim nächsten Speichern übernommen; der erste Kapitelbestand ist
+eine stille Baseline. Alte Clients dürfen Format 2 nicht überschreiben.
+Der Index migriert von Schema 23 nach 24: `files.publication_manifest_json`
+ist ein abgeleiteter Cache, nicht der persönliche Fortschritt.
 Wird nur der Index neu aufgebaut, bleibt die Baseline bestehen. Bei lokalen
 Dateien ist der werkrelative Pfad maßgeblich, beim Peer dessen stabile Datei-ID.
 Dateinamen/Revisionen sind private Vault-Daten, keine Diagnoseausgabe.
@@ -61,8 +64,41 @@ Katalogdateien übertragen zusätzlich `size_bytes` und `content_revision`.
 Die Revision beruht auf dem vorhandenen Dateistand im Index, nicht auf dem
 jeweiligen Abrufzeitpunkt. Neue Clients akzeptieren ältere Kataloge ohne diese
 Felder. Alte Clients können zusätzliche Felder ignorieren. Die Größe hilft
-auch dem nachfolgenden Offline-Budget; es werden keine Medien gehasht oder
-komplett übertragen, nur um einen Update-Hinweis zu erzeugen.
+auch dem nachfolgenden Offline-Budget. Der Katalog selbst benötigt keinen
+zusätzlichen Vollabruf von Mediendateien. Für abonnierte EPUBs wird lokal bei
+einem neuen Dateistand einmalig der Kapitelbestand gelesen und gehasht.
+
+### Kapitel innerhalb bestehender EPUBs
+
+- Ein struktureller Bestand mit Reader-Kapitel-ID, Titel und Inhaltsrevision
+  erkennt neue, geänderte und entfernte lesbare Kapitel getrennt. Nicht lesbare
+  Navigationseinträge werden wie im bestehenden Textreader herausgefiltert.
+- Entpacken und Hashen laufen außerhalb des UI-/Server-Isolates. Identische
+  Anfragen teilen einen laufenden Auftrag; maximal 32 Aufträge werden seriell
+  verarbeitet. Cachetreffer lösen kein erneutes Lesen der EPUB-Datei aus.
+- Vorher-/Nachher-Prüfung von Dateigröße, Änderungszeit und Indexrevision
+  verhindert die Speicherung eines Kapitelbestands unter falscher Revision.
+- Der optionale Peer-Endpunkt `publication-manifest` transportiert nur IDs,
+  Titel und Hashes, keinen Buchtext. Schutz, Geräte- und Bibliotheksfreigaben
+  entsprechen dem Zugriff auf die Datei. Gespiegelte Quellen werden nicht
+  erneut durch einen Host weitergereicht.
+- Der Client begrenzt die gestreamte Metadatenantwort auf rund 4 MiB, auch
+  wenn ein Server eine falsche oder keine Größenangabe sendet. Maximal 10.000
+  Kapitel pro Datei; beschädigte/ungültige Bestände werden nicht übernommen.
+- Vorübergehende Fehler halten die bisherige Baseline fest. Ein unveränderter
+  Kataloglauf versucht fehlende Kapitelmetadaten erneut. Alte Server ohne
+  diese Fähigkeit liefern weiterhin ehrliche Dateiänderungs-Hinweise.
+- „Diesen Teil öffnen“ adressiert das genaue Kapitel. Ein inzwischen
+  entfallener Band oder Kapitel zeigt einen Fehler statt unbemerkt Kapitel 1.
+- Schließen/Checkpoint wartet auf bereits gestartete Kapitel- und
+  Posteingangsvorgänge; ein unveränderter Scan schreibt den Posteingang nicht.
+- Die letzten 500 bearbeiteten Hinweise bleiben erhalten. Ungelesene und
+  auf später gesetzte Hinweise werden nicht automatisch entfernt. Der
+  Posteingang ist auf 32 MiB begrenzt und weist einen Überlauf ausdrücklich ab.
+
+Bestehende Medien, Positionen und Vault-Konfigurationen werden nicht ersetzt.
+Vor Versionswechsel wie gewohnt sichern; einen einmal auf Schema 24/Format 2
+aktualisierten Vault nicht mit alten Clients schreibend öffnen.
 
 ### Abnahme und noch offene Ergänzungen
 
@@ -76,10 +112,14 @@ sauber, Core 268, Server 44, Client 36, Design 3 und App 480 erfolgreiche Tests
 (zusammen 831); acht App-Tests plattform-/zugangsdatenabhängig übersprungen.
 GitHub-CI und Plattform-Builds bleiben getrennte Freigabeschritte.
 
-Noch nicht abgeschlossen: neue Kapitel **innerhalb einer bereits vorhandenen
-EPUB-Datei** einzeln erkennen, zählen und direkt adressieren. Solche Änderungen
-erscheinen derzeit ehrlich als „Datei geändert“, nicht als erfundene Kapitelzahl.
-Hierfür muss ein wiederverwendbarer Kapitelbestand samt Peer-Transport ergänzt
-werden. Ebenso sind eine weitergehende Größen-/Aufbewahrungsregel für eine
-sehr lange Historie und weitere Fehler-/Teilscan-Abnahmen vor dem Schließen
-von #56 zu prüfen. Die Gesamt-Roadmap bleibt offen.
+Die Kapitel-Erweiterung ergänzt Tests für Schema 23→24, Format 1→2, neue,
+geänderte und entfernte eingebettete Kapitel, Index-Neuaufbau, abgebrochene
+Scans, unveränderte Sidecars, parallele Anfragen und Shutdown. Echte
+Server-/Client-Tests prüfen Metadata-only-Transport, alte Server, Fehler und
+Wiederholung bei unverändertem Katalog. Schutztests und direkte
+Reader-/Oberflächen-Einstiege ergänzen die Abnahme. Lokaler Kapitel-Zwischenstand:
+Analyse und Formatprüfung sauber; Core 278, Server 45, Client 41, Design 3,
+App 484 bestanden, zusammen 851. Acht App-Tests bleiben plattform- oder
+zugangsdatenabhängig übersprungen. Der vorherige Datei-Zwischenstand hat die
+GitHub-CI bestanden (Run 40076351630); die Kapitel-Erweiterung benötigt noch
+ihren eigenen CI-/Plattformlauf. Die Gesamt-Roadmap bleibt offen.

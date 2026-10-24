@@ -18,6 +18,7 @@ import 'playback_controller_test.dart' show FakeEngine;
 import 'reader_test.dart' show FakePageSource;
 import 'fullscreen_test.dart' show FakeFullscreen;
 import 'shell_test.dart' show waitForDisk;
+import 'text_reader_test.dart' show writeEpub;
 
 void main() {
   late Directory root;
@@ -192,4 +193,51 @@ void main() {
       expect(player.work, isNull);
     },
   );
+
+  testWidgets('an embedded EPUB update opens the advertised chapter', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final folder = Directory('${root.path}/Webnovels/Chapters')
+        ..createSync(recursive: true);
+      writeEpub(folder, 'Book.epub', ['First']);
+      await library.scan();
+      final work = library.works.firstWhere((work) => work.kind == 'webnovel');
+      await library.setContentSubscription(work.id, true);
+      writeEpub(folder, 'Book.epub', ['First', 'New chapter']);
+      await library.scan();
+      // Keep only this subscription so the action targets the EPUB notice.
+      await library.setContentSubscription(visible, false);
+      await library.setContentSubscription(hidden, false);
+      for (final event in library.library!.contentUpdates) {
+        if (event.file.workId != work.id) {
+          await library.setContentUpdateDisposition(
+            event.id,
+            ContentUpdateDisposition.hidden,
+          );
+        }
+      }
+    });
+    final scope = await pump(tester);
+    expect(find.text('Glasmeer'), findsOneWidget);
+    await tester.tap(find.byTooltip('Hinweis bearbeiten'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diesen Teil öffnen'));
+    await tester.pump();
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().isBefore(deadline) &&
+        scope.textReader.currentChapter?.title != 'New chapter' &&
+        scope.textReader.failure == null) {
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+    }
+    await tester.pumpAndSettle();
+    expect(scope.textReader.failure, isNull);
+    expect(scope.textReader.currentChapter?.title, 'New chapter');
+    expect(scope.textReader.chapterIndex, 1);
+    expect(scope.textReader.paragraphIndex, 0);
+    expect(tester.takeException(), isNull);
+  });
 }

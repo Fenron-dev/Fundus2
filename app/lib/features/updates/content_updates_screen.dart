@@ -80,6 +80,9 @@ class _ContentUpdatesScreenState extends State<ContentUpdatesScreen> {
               const Text(
                 'Neue Dateien und Änderungen seit deinem Abo. Bestandsdateien zählen nicht als neu; Fortschritte bleiben unverändert.',
               ),
+              const Text(
+                'Die letzten 500 bearbeiteten Hinweise bleiben erhalten. Neue und zurückgestellte Hinweise werden nicht automatisch entfernt.',
+              ),
               if (vault?.contentUpdatesError != null)
                 const Text(
                   'Der gespeicherte Posteingang kann nicht gelesen werden. Er bleibt unverändert erhalten; Abos können derzeit nicht bearbeitet werden.',
@@ -175,7 +178,11 @@ class _ContentUpdatesScreenState extends State<ContentUpdatesScreen> {
                             if (fileId == null) {
                               scope.navigation.go(WorkRoute(currentWork.id));
                             } else {
-                              await scope.play(currentWork, startAt: fileId);
+                              await scope.play(
+                                currentWork,
+                                startAt: fileId,
+                                chapterId: event.file.chapterId,
+                              );
                             }
                           } else {
                             final disposition = ContentUpdateDisposition.values

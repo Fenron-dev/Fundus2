@@ -10,6 +10,7 @@ resolution: workspace
 
 dependencies:
   archive: ^4.0.9
+  crypto: ^3.0.7
   epubx_kuebiko: ^4.2.1
   path: ^1.9.1
   sqlite3: ^3.1.1

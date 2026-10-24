@@ -181,6 +181,57 @@ void main() {
     });
 
     test(
+      'an update opens its exact chapter without altering saved progress',
+      () async {
+        await openWork();
+        final vault = library.library!;
+        final work = library.works.first;
+        final fileId = vault.playbackTracks(work.id).single.fileId;
+        final before = vault.loadProgress(work.id)?.position.toJson();
+        await reader.open(
+          vault,
+          work,
+          startAt: fileId,
+          chapterId: 'chapter-Kapitel zwei',
+        );
+        expect(reader.failure, isNull);
+        expect(reader.chapterIndex, 1);
+        expect(reader.currentChapter?.title, 'Kapitel zwei');
+        expect(reader.paragraphIndex, 0);
+        expect(reader.innerOffset, 0);
+        expect(vault.loadProgress(work.id)?.position.toJson(), before);
+      },
+    );
+
+    test(
+      'a removed update chapter does not silently open chapter one',
+      () async {
+        await openWork();
+        final vault = library.library!;
+        final work = library.works.first;
+        await reader.open(
+          vault,
+          work,
+          startAt: vault.playbackTracks(work.id).single.fileId,
+          chapterId: 'no-longer-present',
+        );
+        expect(reader.failure, contains('Kapitel ist nicht mehr verfügbar'));
+        expect(reader.chapters, isEmpty);
+      },
+    );
+
+    test('a removed update volume does not silently open volume one', () async {
+      await openWork();
+      await reader.open(
+        library.library!,
+        library.works.first,
+        startAt: 'no-longer-present',
+      );
+      expect(reader.failure, contains('Band ist nicht mehr verfügbar'));
+      expect(reader.chapters, isEmpty);
+    });
+
+    test(
       'das vorige Buch verschwindet, sobald ein neues geöffnet wird',
       () async {
         SlowTextSource? slow;

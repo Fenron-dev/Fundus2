@@ -83,6 +83,17 @@ final class FundusRemoteClient {
   final String token;
   final Duration timeout;
   final http.Client _http;
+  bool? _supportsPublicationManifests;
+
+  Future<bool> supportsPublicationManifests() async {
+    if (_supportsPublicationManifests != null) {
+      return _supportsPublicationManifests!;
+    }
+    final info = await _get('/v1/capabilities');
+    final capabilities = info['capabilities'];
+    return _supportsPublicationManifests =
+        capabilities is List && capabilities.contains('publication_manifests');
+  }
 
   /// Claims a pairing code and returns the token that follows from it.
   ///
@@ -160,7 +171,11 @@ final class FundusRemoteClient {
   /// the far end is kept alive by requests arriving with the token.
   Future<bool> ping() async {
     try {
-      await _get('/v1/capabilities');
+      final info = await _get('/v1/capabilities');
+      final capabilities = info['capabilities'];
+      _supportsPublicationManifests =
+          capabilities is List &&
+          capabilities.contains('publication_manifests');
       return true;
     } on FundusRemoteException {
       return false;
@@ -613,6 +628,25 @@ final class FundusRemoteClient {
     );
   }
 
+  /// Small structural metadata for explicitly followed publications. Never
+  /// downloads the book body and never trusts a manifest for another revision.
+  Future<PublicationManifest?> publicationManifest(
+    String libraryId,
+    String fileId,
+  ) async {
+    try {
+      final decoded = await _getBounded(
+        '/v1/libraries/$libraryId/files/$fileId/publication-manifest',
+        maxBytes: PublicationManifest.maxBytes + 1024,
+      );
+      return PublicationManifest.fromJson(decoded['manifest']);
+    } on FundusRemoteException catch (error) {
+      // Older servers and unreadable EPUBs retain honest file-level notices.
+      if (error.statusCode == 404 || error.statusCode == 422) return null;
+      rethrow;
+    }
+  }
+
   /// What the other side holds, as „this work, in this state".
   ///
   /// Thirty-odd bytes per work rather than the record itself, which is what
@@ -705,6 +739,45 @@ final class FundusRemoteClient {
       return _decode(response);
     }
     throw const FundusRemoteException('Die Gegenstelle antwortet nicht.');
+  }
+
+  Future<Map<String, Object?>> _getBounded(
+    String path, {
+    required int maxBytes,
+  }) async {
+    try {
+      final request = http.Request('GET', baseUri.resolve(path))
+        ..headers.addAll({..._headers, 'accept-encoding': 'identity'});
+      final response = await _http.send(request).timeout(timeout);
+      if ((response.contentLength ?? 0) > maxBytes) {
+        await response.stream.listen((_) {}).cancel();
+        throw const FundusRemoteException(
+          'Kapitelbestand überschreitet die Größenbegrenzung.',
+          statusCode: 413,
+        );
+      }
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk in response.stream.timeout(timeout)) {
+        if (bytes.length + chunk.length > maxBytes) {
+          throw const FundusRemoteException(
+            'Kapitelbestand überschreitet die Größenbegrenzung.',
+            statusCode: 413,
+          );
+        }
+        bytes.add(chunk);
+      }
+      return _decode(
+        http.Response.bytes(
+          bytes.takeBytes(),
+          response.statusCode,
+          headers: response.headers,
+        ),
+      );
+    } on FundusRemoteException {
+      rethrow;
+    } on Object catch (error) {
+      throw _unreachable(error);
+    }
   }
 
   Future<Map<String, Object?>> _put(

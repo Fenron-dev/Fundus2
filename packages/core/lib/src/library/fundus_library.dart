@@ -33,6 +33,7 @@ import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import 'remote_catalogue.dart';
 import '../publication/epub_package.dart';
+import '../publication/publication_manifest.dart';
 import '../publication/publication_engine.dart';
 import '../scan/background_scan.dart';
 import '../scan/library_scanner.dart';
@@ -112,7 +113,22 @@ final class FundusLibrary {
   final Set<String> _deletedPropertyDefinitions = {};
   bool _closed = false;
   ContentUpdates _contentUpdates = ContentUpdates();
+  Future<void> _contentUpdateOperations = Future.value();
+  Future<void> _publicationReadQueue = Future.value();
+  final Map<String, Future<PublicationManifest?>> _publicationReads = {};
   Object? contentUpdatesError;
+
+  Future<void> _contentUpdateOperation(Future<void> Function() action) {
+    final operation = _ioZone.run(
+      () => _contentUpdateOperations.then((_) => action()),
+    );
+    _contentUpdateOperations = _ioZone.run(
+      () => operation.catchError((Object error) {
+        lastSidecarError = error;
+      }),
+    );
+    return operation;
+  }
 
   List<ContentUpdateEvent> get contentUpdates => _contentUpdates.events;
   Set<String> get contentSubscriptions => _contentUpdates.subscriptions;
@@ -139,37 +155,48 @@ final class FundusLibrary {
     if (contentUpdatesError != null) {
       throw StateError('Update-Posteingang muss zuerst geprüft werden.');
     }
-    return _writeSidecar(
-      _contentUpdatesFile,
-      jsonEncode(_contentUpdates.toJson()),
-    );
+    final contents = jsonEncode(_contentUpdates.toJson());
+    if (utf8.encode(contents).length > 32 * 1024 * 1024) {
+      throw StateError(
+        'Update-Posteingang ist voll. Bitte Hinweise bearbeiten.',
+      );
+    }
+    return _writeSidecar(_contentUpdatesFile, contents);
   }
 
-  Future<void> setContentSubscription(String workId, bool subscribed) {
+  Future<void> setContentSubscription(
+    String workId,
+    bool subscribed,
+  ) => _contentUpdateOperation(() async {
     _ensureWritable();
     if (contentUpdatesError != null) return Future.error(contentUpdatesError!);
     if (workSummary(workId) == null) throw StateError('Werk nicht gefunden.');
     if (subscribed) {
+      await _ensureWorkPublicationManifests({workId});
       _contentUpdates.subscribe(workId, _database.contentUpdateFiles({workId}));
     } else {
       _contentUpdates.unsubscribe(workId);
     }
-    return _saveContentUpdates();
-  }
+    await _saveContentUpdates();
+  });
 
-  Future<void> subscribeContentWorks(Set<String> workIds) {
-    _ensureWritable();
-    if (contentUpdatesError != null) return Future.error(contentUpdatesError!);
-    final files = _database.contentUpdateFiles(workIds);
-    final grouped = <String, List<ContentUpdateFile>>{};
-    for (final file in files) {
-      grouped.putIfAbsent(file.workId, () => []).add(file);
-    }
-    for (final id in workIds) {
-      _contentUpdates.subscribe(id, grouped[id] ?? const []);
-    }
-    return _saveContentUpdates();
-  }
+  Future<void> subscribeContentWorks(Set<String> workIds) =>
+      _contentUpdateOperation(() async {
+        _ensureWritable();
+        if (contentUpdatesError != null) {
+          return Future.error(contentUpdatesError!);
+        }
+        await _ensureWorkPublicationManifests(workIds);
+        final files = _database.contentUpdateFiles(workIds);
+        final grouped = <String, List<ContentUpdateFile>>{};
+        for (final file in files) {
+          grouped.putIfAbsent(file.workId, () => []).add(file);
+        }
+        for (final id in workIds) {
+          _contentUpdates.subscribe(id, grouped[id] ?? const []);
+        }
+        await _saveContentUpdates();
+      });
 
   String? resolveContentUpdateFile(ContentUpdateEvent event) => _database
       .contentUpdateFiles({event.file.workId})
@@ -180,23 +207,128 @@ final class FundusLibrary {
   Future<void> setContentUpdateDisposition(
     String id,
     ContentUpdateDisposition disposition,
-  ) {
+  ) => _contentUpdateOperation(() async {
     _ensureWritable();
     if (contentUpdatesError != null) return Future.error(contentUpdatesError!);
     _contentUpdates.setDisposition(id, disposition);
-    return _saveContentUpdates();
-  }
+    await _saveContentUpdates();
+  });
 
-  Future<void> refreshContentUpdates() {
+  Future<void> refreshContentUpdates({
+    Set<String> deferredWorkIds = const {},
+  }) => _contentUpdateOperation(() async {
     if (isReadOnly ||
         contentUpdatesError != null ||
         contentSubscriptions.isEmpty) {
-      return Future.value();
+      return;
     }
+    await _ensureWorkPublicationManifests(contentSubscriptions);
     final changed = _contentUpdates.reconcile(
       _database.contentUpdateFiles(contentSubscriptions),
+      deferredWorkIds: deferredWorkIds,
     );
-    return changed ? _saveContentUpdates() : Future.value();
+    // A file-level v1 baseline can acquire its first chapter manifest without
+    // an event; persist that silent migration as well.
+    if (changed) await _saveContentUpdates();
+  });
+
+  PublicationManifest? cachedPublicationManifest(String fileId) {
+    final info = _database.publicationFile(fileId);
+    final manifest = _database.publicationManifest(fileId);
+    return manifest?.fileRevision == info?.revision ? manifest : null;
+  }
+
+  void saveRemotePublicationManifest(
+    String fileId,
+    PublicationManifest manifest,
+  ) {
+    _ensureWritable();
+    final info = _database.publicationFile(fileId);
+    if (info == null ||
+        info.sourceId == FundusDatabase.localSourceId ||
+        info.revision != manifest.fileRevision) {
+      throw StateError('Kapitelbestand gehört nicht zum aktuellen Dateistand.');
+    }
+    _database.savePublicationManifest(fileId, manifest);
+  }
+
+  Future<void> _ensureWorkPublicationManifests(Set<String> workIds) async {
+    for (final workId in workIds) {
+      final work = workSummary(workId);
+      if (work == null || work.sourceId != FundusDatabase.localSourceId) {
+        continue;
+      }
+      for (final file in playbackTracks(workId)) {
+        if (!file.title.toLowerCase().endsWith('.epub')) continue;
+        try {
+          await ensurePublicationManifest(file.fileId);
+        } on FileSystemException {
+          // An unavailable/changed file is not proof of deleted chapters.
+        } on EpubPackageException {
+          // Invalid books still get honest file-level update notices.
+        } on FormatException {
+          // Limits or a malformed publication cannot invent chapter counts.
+        }
+      }
+    }
+  }
+
+  Future<PublicationManifest?> ensurePublicationManifest(String fileId) {
+    final existing = _publicationReads[fileId];
+    if (existing != null) return existing;
+    final cached = cachedPublicationManifest(fileId);
+    if (cached != null) return Future.value(cached);
+    if (_publicationReads.length >= 32) {
+      return Future.error(StateError('Kapitelprüfung ausgelastet.'));
+    }
+    final operation = _ioZone.run(
+      () => _publicationReadQueue.then((_) async {
+        if (_closed) throw StateError('Bibliothek geschlossen.');
+        final info = _database.publicationFile(fileId);
+        if (info == null ||
+            info.sourceId != FundusDatabase.localSourceId ||
+            !info.path.toLowerCase().endsWith('.epub')) {
+          return null;
+        }
+        final path = p.normalize(p.join(root.path, info.path));
+        if (!p.isWithin(root.path, path)) {
+          throw const FormatException('Unsicherer Publikationspfad.');
+        }
+        final file = File(path);
+        final before = await file.stat();
+        if (before.size != info.sizeBytes ||
+            before.modified.millisecondsSinceEpoch != info.modifiedAt) {
+          throw const FileSystemException(
+            'Datei wurde geändert; bitte Bibliothek aktualisieren.',
+          );
+        }
+        final manifest = await PublicationManifest.readFile(
+          path,
+          info.revision,
+        );
+        final after = await file.stat();
+        if (_closed) throw StateError('Bibliothek geschlossen.');
+        if (before.size != after.size ||
+            before.modified != after.modified ||
+            _database.publicationFile(fileId)?.revision != info.revision) {
+          throw const FileSystemException(
+            'Datei wurde während der Kapitelprüfung geändert.',
+          );
+        }
+        if (!isReadOnly) _database.savePublicationManifest(fileId, manifest);
+        return manifest;
+      }),
+    );
+    _publicationReadQueue = _ioZone.run(
+      () => operation.then<void>((_) {}, onError: (Object error) {}),
+    );
+    final guarded = _ioZone.run(
+      () => operation.whenComplete(() {
+        _publicationReads.remove(fileId);
+      }),
+    );
+    _publicationReads[fileId] = guarded;
+    return guarded;
   }
 
   static const metadataDirectoryName = '.library';
@@ -343,6 +475,7 @@ final class FundusLibrary {
     required String sourceId,
     required List<RemoteWorkRecord> works,
     Set<String>? keepIds,
+    bool reconcileContentUpdates = true,
   }) {
     _ensureWritable();
     final report = _database.mirrorRemoteCatalogue(
@@ -353,11 +486,13 @@ final class FundusLibrary {
     for (final work in works) {
       importWorkProperties(work.id, work.properties);
     }
-    unawaited(
-      refreshContentUpdates().catchError((Object error) {
-        lastSidecarError = error;
-      }),
-    );
+    if (reconcileContentUpdates) {
+      unawaited(
+        refreshContentUpdates().catchError((Object error) {
+          lastSidecarError = error;
+        }),
+      );
+    }
     return report;
   }
 
@@ -875,7 +1010,11 @@ final class FundusLibrary {
   /// The writes are queued, so a setting made a moment ago may still be in
   /// flight. Anything that has to see it — closing the vault, a test reading
   /// the file back — waits here rather than guessing at a delay.
-  Future<void> flushSidecarWrites() => _sidecarWrites;
+  Future<void> flushSidecarWrites() async {
+    await _contentUpdateOperations;
+    await _publicationReadQueue;
+    await _sidecarWrites;
+  }
 
   /// All personal/catalogue data and application pictures, but no media and
   /// no installation secrets. The backup itself contains private information.
@@ -3191,6 +3330,8 @@ final class FundusLibrary {
 
   /// Used by application lifecycle transitions before releasing a vault.
   Future<void> shutdown() async {
+    await _contentUpdateOperations;
+    await _publicationReadQueue;
     await flushSidecarWrites();
     close();
   }

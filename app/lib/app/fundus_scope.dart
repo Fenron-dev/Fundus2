@@ -211,6 +211,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     protection.addListener(_applyProtection);
     library.hides = _hidesFromLists;
     library.includeProtectedTags = protection.isUnlocked;
+    library.prepareContentSubscriptions = _prepareContentSubscriptions;
     // A controller may already hold a catalogue before the scope mounts.
     // Apply the initial gate now, not only after the first lock transition.
     library.refresh();
@@ -545,6 +546,44 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     };
   }
 
+  Future<void> _prepareContentSubscriptions(Set<String> workIds) async {
+    final vault = library.library;
+    if (vault == null) return;
+    final bySource = <String, Set<String>>{};
+    for (final id in workIds) {
+      final work = library.workById(id);
+      if (work == null ||
+          work.summary.sourceId == FundusDatabase.localSourceId) {
+        continue;
+      }
+      final needsMetadata = vault
+          .playbackTracks(id)
+          .any(
+            (file) =>
+                file.title.toLowerCase().endsWith('.epub') &&
+                vault.cachedPublicationManifest(file.fileId) == null,
+          );
+      if (needsMetadata) {
+        bySource.putIfAbsent(work.summary.sourceId, () => {}).add(id);
+      }
+    }
+    for (final entry in bySource.entries) {
+      final peer = peerLibraries.forSource(entry.key);
+      if (peer == null) {
+        throw StateError(
+          'Für den ersten Kapitelbestand muss die Gegenstelle erreichbar sein.',
+        );
+      }
+      await hydratePublicationManifests(
+        library: vault,
+        client: peer.client,
+        sourceId: entry.key,
+        libraryId: peer.libraryId,
+        workIds: entry.value,
+      );
+    }
+  }
+
   /// Where this installation keeps its own things. Read once, because the
   /// places that need it cannot wait for an answer.
   Directory? _supportRoot;
@@ -561,6 +600,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     library.removeListener(_bump);
     library.removeListener(_offerMetadataConflict);
     library.onHandleRecovered = null;
+    library.prepareContentSubscriptions = null;
     player.removeListener(_bump);
     reader.removeListener(_bump);
     textReader.removeListener(_bump);
@@ -995,7 +1035,12 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// Without it the work opens where it was left.
   /// [at] ist die Stelle, die jemand ausdrücklich gemeint hat — eine
   /// Kapitelmarke etwa. Ohne sie entscheidet der gespeicherte Stand.
-  Future<void> play(WorkView work, {String? startAt, Duration? at}) async {
+  Future<void> play(
+    WorkView work, {
+    String? startAt,
+    Duration? at,
+    String? chapterId,
+  }) async {
     final vault = library.library;
     if (vault == null || _hidesFromLists(work)) return;
     final span = FundusLog.instance.start('open', {
@@ -1019,7 +1064,12 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     }
     if (TextReaderController.handles(work)) {
       await player.close();
-      await textReader.open(vault, work, startAt: startAt);
+      await textReader.open(
+        vault,
+        work,
+        startAt: startAt,
+        chapterId: chapterId,
+      );
       if (textReader.failure == null) library.refreshWork(work.id);
       await _fillTheScreen(work, opened: textReader.failure == null);
       span.done({'via': 'text'});

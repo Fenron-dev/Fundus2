@@ -4,6 +4,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
+import '../../core/test/epub_package_test.dart' show epubFixture;
 
 void main() {
   late Directory root;
@@ -200,6 +201,42 @@ void main() {
         'progress?since=999999999999999999',
       );
       expect(response.statusCode, 400);
+    },
+  );
+
+  test(
+    'chapter metadata uses the same protection and library gates as file content',
+    () async {
+      final book = File('${root.path}/Webnovels/Secret/Novel.epub');
+      await book.parent.create(recursive: true);
+      await book.writeAsBytes(epubFixture());
+      await library.index().drain<void>();
+      final novel = library.listWorks().firstWhere(
+        (work) => work.kind == 'webnovel',
+      );
+      await library.updateWorkMetadata(
+        workId: novel.id,
+        title: novel.title,
+        authors: novel.authors,
+        contentSensitivity: 'adult_explicit',
+      );
+      final fileId = library.playbackTracks(novel.id).single.fileId;
+      final denied = await request('GET', 'files/$fileId/publication-manifest');
+      expect(denied.statusCode, 404);
+      expect(await denied.readAsString(), isNot(contains('Kapitel Eins')));
+      final allowed = await handler(
+        Request(
+          'GET',
+          Uri.parse(
+            'https://localhost/v1/libraries/${library.manifest.libraryId}/files/$fileId/publication-manifest',
+          ),
+          headers: {'authorization': 'Bearer host'},
+        ),
+      );
+      expect(allowed.statusCode, 200);
+      final body = await allowed.readAsString();
+      expect(body, contains('Kapitel Eins'));
+      expect(body, isNot(contains('Erster Absatz.')));
     },
   );
 }

@@ -55,7 +55,7 @@ Lauffähig als Einzelplatz-Bibliothek:
 - Einstellungen mit Thema, Dichte, Bibliotheken, Geräten und Diagnose
 - Hell und Dunkel gleichwertig, Dichteumschaltung komfortabel/kompakt
 
-Datenmodell (Schema 23):
+Datenmodell (Schema 24):
 
 - `sources` — die geöffnete Bibliothek ist selbst eine Quelle
 - `availability` auf Dateien und Werken; der Pfad ist nicht mehr die Identität

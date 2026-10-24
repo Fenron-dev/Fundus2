@@ -17,6 +17,7 @@ import '../model/person_profile.dart';
 import '../model/playback_session.dart';
 import '../model/work_property.dart';
 import '../playback/library_playback.dart';
+import '../publication/publication_manifest.dart';
 import '../scan/library_scanner.dart';
 import '../scan/audio_technical_metadata.dart';
 import '../video/video_metadata.dart';
@@ -232,7 +233,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 23;
+  static const schemaVersion = 24;
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -1537,6 +1538,7 @@ final class FundusDatabase {
       final chunk = ids.skip(offset).take(400).toList();
       final rows = _database.select('''
         SELECT w.id AS work_id, w.source_id, w.source_path,
+               ${columnExists('files', 'publication_manifest_json') ? 'f.publication_manifest_json' : 'NULL'} AS publication_manifest_json,
                json_extract(w.metadata_json, '\$._remote_file_revisions') AS remote_revisions,
                f.id, f.path, f.filename, f.size, f.file_modified_at, f.content_hash
         FROM work_files wf
@@ -1558,6 +1560,12 @@ final class FundusDatabase {
                 () => _decodeRemoteRevisions(row['remote_revisions']),
               )
             : const <String, Object?>{};
+        final revision = remote
+            ? '${row['size']}:${revisions[row['id']] ?? ''}'
+            : '${row['size']}:${row['file_modified_at']}:${row['content_hash'] ?? ''}';
+        final manifest = _decodePublicationManifest(
+          row['publication_manifest_json'],
+        );
         result.add(
           ContentUpdateFile(
             workId: row['work_id'] as String,
@@ -1570,14 +1578,81 @@ final class FundusDatabase {
                 : path,
             fileId: row['id'] as String,
             title: row['filename'] as String,
-            revision: remote
-                ? '${row['size']}:${revisions[row['id']] ?? ''}'
-                : '${row['size']}:${row['file_modified_at']}:${row['content_hash'] ?? ''}',
+            revision: revision,
+            units: manifest?.fileRevision == revision && manifest!.supported
+                ? manifest.units
+                : null,
           ),
         );
       }
     }
     return result;
+  }
+
+  ({
+    String sourceId,
+    String path,
+    int sizeBytes,
+    int modifiedAt,
+    String revision,
+  })?
+  publicationFile(String fileId) {
+    final rows = _database.select(
+      '''
+      SELECT f.source_id, f.path, f.size, f.file_modified_at, f.content_hash,
+        json_extract(w.metadata_json, '\$._remote_file_revisions') AS remote_revisions
+      FROM files f JOIN work_files wf ON wf.file_id = f.id
+      JOIN works w ON w.id = wf.work_id
+      WHERE f.id = ? AND f.status = 'available' AND wf.role = 'content'
+      LIMIT 1
+    ''',
+      [fileId],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    final remote = row['source_id'] != localSourceId;
+    final revision = remote
+        ? _decodeRemoteRevisions(row['remote_revisions'])[fileId] ?? ''
+        : '${row['file_modified_at']}:${row['content_hash'] ?? ''}';
+    return (
+      sourceId: row['source_id'] as String,
+      path: row['path'] as String,
+      sizeBytes: (row['size'] as num).toInt(),
+      modifiedAt: row['file_modified_at'] as int,
+      revision: '${row['size']}:$revision',
+    );
+  }
+
+  PublicationManifest? publicationManifest(String fileId) {
+    if (!columnExists('files', 'publication_manifest_json')) return null;
+    final rows = _database.select(
+      'SELECT publication_manifest_json FROM files WHERE id = ?',
+      [fileId],
+    );
+    return rows.isEmpty
+        ? null
+        : _decodePublicationManifest(rows.first['publication_manifest_json']);
+  }
+
+  static PublicationManifest? _decodePublicationManifest(Object? value) {
+    if (value is! String || value.length > PublicationManifest.maxBytes) {
+      return null;
+    }
+    try {
+      return PublicationManifest.fromJson(jsonDecode(value));
+    } on FormatException {
+      // A derived structural cache can be rebuilt; never expose its contents
+      // as trusted chapter metadata after an invalid or future encoding.
+      return null;
+    }
+  }
+
+  void savePublicationManifest(String fileId, PublicationManifest manifest) {
+    if (!columnExists('files', 'publication_manifest_json')) return;
+    _database.execute(
+      'UPDATE files SET publication_manifest_json = ? WHERE id = ?',
+      [jsonEncode(manifest.toJson()), fileId],
+    );
   }
 
   /// Finds the owning work without scanning every work's track list.
@@ -4395,6 +4470,19 @@ final class FundusDatabase {
     if (_database.userVersion == 20 && !readOnly) _migrateToVersion21();
     if (_database.userVersion == 21 && !readOnly) _migrateToVersion22();
     if (_database.userVersion == 22 && !readOnly) _migrateToVersion23();
+    if (_database.userVersion == 23 && !readOnly) _migrateToVersion24();
+  }
+
+  void _migrateToVersion24() {
+    transaction(() {
+      if (tableExists('files') &&
+          !columnExists('files', 'publication_manifest_json')) {
+        _database.execute(
+          'ALTER TABLE files ADD COLUMN publication_manifest_json TEXT',
+        );
+      }
+      _database.userVersion = 24;
+    });
   }
 
   void _migrateToVersion23() {
