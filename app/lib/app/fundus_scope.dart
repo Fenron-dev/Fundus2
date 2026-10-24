@@ -211,6 +211,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     protection.addListener(_applyProtection);
     library.hides = _hidesFromLists;
     library.includeProtectedTags = protection.isUnlocked;
+    // A controller may already hold a catalogue before the scope mounts.
+    // Apply the initial gate now, not only after the first lock transition.
+    library.refresh();
     library.onHandleRecovered = (vault) {
       player.rebindLibrary(vault);
       reader.rebindLibrary(vault);
@@ -1008,7 +1011,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // A comic in the audio player is silence with a progress bar: pages and
       // seconds are different units, so they get different controllers.
       await player.close();
-      await reader.open(vault, work);
+      await reader.open(vault, work, startAt: startAt);
       if (reader.failure == null) library.refreshWork(work.id);
       await _fillTheScreen(work, opened: reader.failure == null);
       span.done({'via': 'reader'});
@@ -1016,7 +1019,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     }
     if (TextReaderController.handles(work)) {
       await player.close();
-      await textReader.open(vault, work);
+      await textReader.open(vault, work, startAt: startAt);
       if (textReader.failure == null) library.refreshWork(work.id);
       await _fillTheScreen(work, opened: textReader.failure == null);
       span.done({'via': 'text'});

@@ -21,6 +21,10 @@ final class DashboardRoute extends FundusRoute {
   const DashboardRoute();
 }
 
+final class ContentUpdatesRoute extends FundusRoute {
+  const ContentUpdatesRoute();
+}
+
 final class LibraryRoute extends FundusRoute {
   const LibraryRoute({
     this.mediaTypeId,

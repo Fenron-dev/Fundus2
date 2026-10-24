@@ -55,6 +55,48 @@ class LibraryController extends ChangeNotifier {
   String? get error => _error;
   List<WorkView> get works => _works;
 
+  /// Filter before handing events or counts to any UI, including snoozed and
+  /// hidden history. Never expose titles from the unfiltered portable store.
+  List<ContentUpdateEvent> get contentUpdates {
+    final visible = _works
+        .where((work) => !(hides?.call(work) ?? false))
+        .map((work) => work.id)
+        .toSet();
+    return _library?.contentUpdates
+            .where((event) => visible.contains(event.file.workId))
+            .toList(growable: false) ??
+        const [];
+  }
+
+  Future<void> setContentSubscription(String workId, bool subscribed) async {
+    final library = _library;
+    if (library == null || workById(workId) == null) return;
+    await library.setContentSubscription(workId, subscribed);
+    if (!_disposed && identical(_library, library)) notifyListeners();
+  }
+
+  Future<void> subscribeStartedContentWorks() async {
+    final library = _library;
+    if (library == null) return;
+    await library.subscribeContentWorks({
+      for (final work in _works)
+        if (work.hasProgress) work.id,
+    });
+    if (!_disposed && identical(_library, library)) notifyListeners();
+  }
+
+  Future<void> setContentUpdateDisposition(
+    String id,
+    ContentUpdateDisposition disposition,
+  ) async {
+    final library = _library;
+    if (library == null || !contentUpdates.any((event) => event.id == id)) {
+      return;
+    }
+    await library.setContentUpdateDisposition(id, disposition);
+    if (!_disposed && identical(_library, library)) notifyListeners();
+  }
+
   /// How many works each media type holds, and how many belong to no type.
   ///
   /// Worked out when the list changes rather than when something asks. The

@@ -300,4 +300,37 @@ void main() {
       LibrarySourceStatus.unreachable,
     );
   });
+
+  test(
+    'update subscriptions use server file revisions and survive unchanged catalogues',
+    () async {
+      registerPeer();
+      await mirror().run();
+      final workId = mine.listWorks().single.id;
+      await mine.setContentSubscription(workId, true);
+      expect(mine.contentUpdates, isEmpty);
+      final folder = Directory(
+        '${theirs.root.path}/Hörbücher/Karl May/Der Schacht',
+      );
+      await File(
+        '${folder.path}/03 - Neu.mp3',
+      ).writeAsBytes(List.filled(80, 3));
+      await theirs.index().drain<void>();
+      await mirror().run();
+      await mine.flushSidecarWrites();
+      final event = mine.contentUpdates.single;
+      expect(event.kind, ContentUpdateKind.added);
+      expect(event.file.title, '03 - Neu.mp3');
+      expect(mine.playbackTracks(workId).last.sizeBytes, 80);
+      await mirror().run();
+      expect(mine.contentUpdates, hasLength(1));
+      await File(
+        '${folder.path}/03 - Neu.mp3',
+      ).writeAsBytes(List.filled(90, 4));
+      await theirs.index().drain<void>();
+      await mirror().run();
+      await mine.flushSidecarWrites();
+      expect(mine.contentUpdates.first.kind, ContentUpdateKind.changed);
+    },
+  );
 }

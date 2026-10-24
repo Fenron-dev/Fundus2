@@ -298,7 +298,11 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  Future<void> open(FundusLibrary library, WorkView work) async {
+  Future<void> open(
+    FundusLibrary library,
+    WorkView work, {
+    String? startAt,
+  }) async {
     _failure = null;
     _library = library;
     _work = work;
@@ -334,10 +338,13 @@ class ReaderController extends ChangeNotifier {
       _profile = await library.loadReaderProfile(workId: work.id);
       _bookmarks = library.loadAnnotations(work.id).bookmarks;
 
-      final saved = library.loadProgress(work.id)?.position;
-      final savedVolume = saved?.fileId == null
+      final saved = startAt == null
+          ? library.loadProgress(work.id)?.position
+          : null;
+      final target = startAt ?? saved?.fileId;
+      final savedVolume = target == null
           ? 0
-          : _volumes.indexWhere((volume) => volume.fileId == saved!.fileId);
+          : _volumes.indexWhere((volume) => volume.fileId == target);
       _volumeIndex = savedVolume < 0 ? 0 : savedVolume;
       // The stored page is one-based, as it is shown; the index is not.
       final savedPage = (saved?.numericValue ?? 1).round() - 1;

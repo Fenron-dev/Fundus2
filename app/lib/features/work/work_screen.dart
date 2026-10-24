@@ -22,6 +22,7 @@ import '../library/work_poster.dart';
 import '../people/person_credits.dart';
 import '../people/person_screen.dart';
 import '../lists/add_to_list.dart';
+import '../updates/content_updates_screen.dart' show ContentSubscriptionButton;
 import 'download_choice_sheet.dart';
 import 'metadata_dialog.dart';
 import 'metadata_editor.dart';
@@ -695,6 +696,7 @@ class _Actions extends StatelessWidget {
           primary,
           _FavouriteButton(work: work),
           _ListButton(work: work),
+          ContentSubscriptionButton(workId: work.id),
           _OfflineButton(work: work),
           _LocationButton(work: work),
           _MetadataButtons(work: work),
@@ -713,6 +715,7 @@ class _Actions extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             _ListButton(work: work),
+            ContentSubscriptionButton(workId: work.id),
             _OfflineButton(work: work),
             _LocationButton(work: work),
             _MoreDetailsButton(work: work),

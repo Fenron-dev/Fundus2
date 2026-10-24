@@ -106,6 +106,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _Greeting(workCount: works.length),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () =>
+                      scope.navigation.go(const ContentUpdatesRoute()),
+                  icon: Icon(FundusIcons.activity, size: FundusIcons.sizeSm),
+                  label: Text(
+                    'Neues für dich (${scope.library.contentUpdates.where((event) => event.disposition == ContentUpdateDisposition.unread).length})',
+                  ),
+                ),
+              ),
               if (scope.library.isScanning) const _ScanBanner(),
               const UnassignedFoldersCard(),
             ],

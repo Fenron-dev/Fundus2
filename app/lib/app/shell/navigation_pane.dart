@@ -130,6 +130,19 @@ class _NavigationPaneState extends State<NavigationPane> {
         onTap: () => scope.navigation.go(const DashboardRoute()),
       ),
       NavigationEntry(
+        label: 'Neues für dich',
+        icon: FundusIcons.activity,
+        count: _formatCount(
+          scope.library.contentUpdates
+              .where(
+                (event) => event.disposition == ContentUpdateDisposition.unread,
+              )
+              .length,
+        ),
+        active: route is ContentUpdatesRoute,
+        onTap: () => scope.navigation.go(const ContentUpdatesRoute()),
+      ),
+      NavigationEntry(
         label: 'Alle Werke',
         icon: FundusIcons.lists,
         count: _formatCount(scope.library.works.length),

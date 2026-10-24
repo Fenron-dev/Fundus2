@@ -606,6 +606,10 @@ final class FundusRemoteClient {
       position: (value['position'] as num?)?.toInt() ?? fallback,
       extension: dot > 0 ? filename.substring(dot).toLowerCase() : '',
       durationMs: seconds == null ? null : (seconds * 1000).round(),
+      sizeBytes: (value['size_bytes'] as num?)?.toInt() ?? 0,
+      contentRevision: value['content_revision'] is String
+          ? value['content_revision'] as String
+          : '',
     );
   }
 

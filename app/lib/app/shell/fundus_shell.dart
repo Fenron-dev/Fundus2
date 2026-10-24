@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../features/dashboard/dashboard_screen.dart';
+import '../../features/updates/content_updates_screen.dart';
 import '../../features/downloads/downloads_screen.dart';
 import '../../features/library/library_screen.dart';
 import '../../features/library/search_screen.dart';
@@ -272,6 +273,7 @@ class ShellContent extends StatelessWidget {
     return switch (route) {
       VaultRoute() => const VaultScreen(),
       DashboardRoute() => const DashboardScreen(),
+      ContentUpdatesRoute() => const ContentUpdatesScreen(),
       LibraryRoute() => LibraryScreen(route: route),
       WorkRoute(:final workId) => WorkScreen(workId: workId),
       FileRoute(:final workId, :final fileId) => FileDetailScreen(

@@ -13,6 +13,8 @@ final class LibraryPlaybackTrack {
     this.duration,
     this.audioMetadata,
     this.episode,
+    this.sizeBytes = 0,
+    this.contentRevision = '',
   });
 
   final String fileId;
@@ -31,6 +33,8 @@ final class LibraryPlaybackTrack {
   final Duration? duration;
   final AudioTechnicalMetadata? audioMetadata;
   final VideoEpisodeIdentity? episode;
+  final int sizeBytes;
+  final String contentRevision;
 }
 
 final class LibraryPlaybackChapter {

@@ -168,6 +168,18 @@ void main() {
       await reader.open(library.library!, library.works.first);
     }
 
+    test('an explicitly selected new volume starts at its beginning', () async {
+      final folder = Directory('${root.path}/Light Novels/Glasmeer');
+      writeEpub(folder, 'Band 02.epub', ['Neues']);
+      await openWork();
+      final work = library.works.first;
+      final tracks = library.library!.playbackTracks(work.id);
+      await reader.open(library.library!, work, startAt: tracks.last.fileId);
+      expect(reader.failure, isNull);
+      expect(reader.currentVolume?.fileId, tracks.last.fileId);
+      expect(reader.chapterIndex, 0);
+    });
+
     test(
       'das vorige Buch verschwindet, sobald ein neues geöffnet wird',
       () async {

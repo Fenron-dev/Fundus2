@@ -148,6 +148,8 @@ class ShellHeader extends StatelessWidget {
         steps.add(const PathStep('Einstellungen'));
       case DownloadsRoute():
         steps.add(const PathStep('Downloads'));
+      case ContentUpdatesRoute():
+        steps.add(const PathStep('Neues für dich'));
       case SearchRoute():
         steps.add(const PathStep('Suche'));
       case PersonRoute(:final name):

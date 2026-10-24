@@ -284,7 +284,11 @@ class TextReaderController extends ChangeNotifier {
     }
   }
 
-  Future<void> open(FundusLibrary library, WorkView work) async {
+  Future<void> open(
+    FundusLibrary library,
+    WorkView work, {
+    String? startAt,
+  }) async {
     _failure = null;
     _library = library;
     _work = work;
@@ -317,10 +321,13 @@ class TextReaderController extends ChangeNotifier {
       _bookmarks = annotations.bookmarks;
       _highlights = annotations.highlights;
 
-      final saved = library.loadProgress(work.id)?.position;
-      final savedVolume = saved?.fileId == null
+      final saved = startAt == null
+          ? library.loadProgress(work.id)?.position
+          : null;
+      final target = startAt ?? saved?.fileId;
+      final savedVolume = target == null
           ? 0
-          : _volumes.indexWhere((volume) => volume.fileId == saved!.fileId);
+          : _volumes.indexWhere((volume) => volume.fileId == target);
       _volumeIndex = savedVolume < 0 ? 0 : savedVolume;
       await _openVolume(_volumeIndex, at: saved);
     } on Object catch (error) {

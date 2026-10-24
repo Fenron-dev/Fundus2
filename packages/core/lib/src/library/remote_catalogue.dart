@@ -46,6 +46,7 @@ final class RemoteFileRecord {
     this.sizeBytes = 0,
     this.durationMs,
     this.mimeType,
+    this.contentRevision = '',
   });
 
   final String id;
@@ -55,6 +56,7 @@ final class RemoteFileRecord {
   final int sizeBytes;
   final int? durationMs;
   final String? mimeType;
+  final String contentRevision;
 }
 
 /// What one pass of mirroring changed.

@@ -8,6 +8,7 @@ import '../import/document_importer.dart';
 import '../library/remote_catalogue.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
+import '../model/content_updates.dart';
 import '../model/library_playlist.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
@@ -1463,12 +1464,16 @@ final class FundusDatabase {
       int? durationMs,
       AudioTechnicalMetadata? audioMetadata,
       VideoEpisodeIdentity? episode,
+      int sizeBytes,
+      String contentRevision,
     })
   >
   playbackTracks(String workId) {
     final rows = _database.select(
       '''
       SELECT f.id, f.path, f.filename, wf.position, f.duration_ms,
+             f.size, f.file_modified_at, f.content_hash,
+             json_extract(w.metadata_json, '\$._remote_file_revisions') AS remote_revisions,
              f.source_id, f.offline_path, f.availability,
              f.container, f.audio_codec, f.codec_profile,
              f.audio_channels, f.sample_rate_hz,
@@ -1483,6 +1488,9 @@ final class FundusDatabase {
       ''',
       [workId],
     );
+    final remoteRevisions = rows.isEmpty
+        ? const <String, Object?>{}
+        : _decodeRemoteRevisions(rows.first['remote_revisions']);
     return rows
         .map(
           (row) => (
@@ -1504,9 +1512,72 @@ final class FundusDatabase {
                     sampleRateHz: row['sample_rate_hz'] as int?,
                   ),
             episode: _decodeVideoEpisode(row['video_episode_json']),
+            sizeBytes: (row['size'] as num).toInt(),
+            contentRevision: row['source_id'] != localSourceId
+                ? remoteRevisions[row['id']] as String? ?? ''
+                : '${row['file_modified_at']}:${row['content_hash'] ?? ''}',
           ),
         )
         .toList(growable: false);
+  }
+
+  static Map<String, Object?> _decodeRemoteRevisions(Object? raw) {
+    if (raw is! String) return const {};
+    final value = jsonDecode(raw);
+    return value is Map ? Map<String, Object?>.from(value) : const {};
+  }
+
+  /// Snapshots indexed content for subscriptions, without reading media bytes.
+  List<ContentUpdateFile> contentUpdateFiles(Set<String> workIds) {
+    if (workIds.isEmpty) return const [];
+    final ids = workIds.toList();
+    final result = <ContentUpdateFile>[];
+    // Stay below SQLite's bind limit and use work_files' primary index.
+    for (var offset = 0; offset < ids.length; offset += 400) {
+      final chunk = ids.skip(offset).take(400).toList();
+      final rows = _database.select('''
+        SELECT w.id AS work_id, w.source_id, w.source_path,
+               json_extract(w.metadata_json, '\$._remote_file_revisions') AS remote_revisions,
+               f.id, f.path, f.filename, f.size, f.file_modified_at, f.content_hash
+        FROM work_files wf
+        JOIN works w ON w.id = wf.work_id
+        JOIN files f ON f.id = wf.file_id
+        WHERE wf.work_id IN (${List.filled(chunk.length, '?').join(',')})
+          AND wf.role = 'content' AND f.status = 'available'
+          AND substr(f.filename, 1, 2) <> '._' AND $_notTheCover
+        ORDER BY wf.work_id, wf.position, f.filename
+      ''', chunk);
+      final revisionsByWork = <String, Map<String, Object?>>{};
+      for (final row in rows) {
+        final path = row['path'] as String;
+        final source = row['source_path'] as String;
+        final remote = row['source_id'] != localSourceId;
+        final revisions = remote
+            ? revisionsByWork.putIfAbsent(
+                row['work_id'] as String,
+                () => _decodeRemoteRevisions(row['remote_revisions']),
+              )
+            : const <String, Object?>{};
+        result.add(
+          ContentUpdateFile(
+            workId: row['work_id'] as String,
+            key: remote
+                ? row['id'] as String
+                : path.startsWith('$source/')
+                ? path.substring(source.length + 1)
+                : path == source
+                ? row['filename'] as String
+                : path,
+            fileId: row['id'] as String,
+            title: row['filename'] as String,
+            revision: remote
+                ? '${row['size']}:${revisions[row['id']] ?? ''}'
+                : '${row['size']}:${row['file_modified_at']}:${row['content_hash'] ?? ''}',
+          ),
+        );
+      }
+    }
+    return result;
   }
 
   /// Finds the owning work without scanning every work's track list.
@@ -3523,6 +3594,10 @@ final class FundusDatabase {
   void _writeRemoteWork(String sourceId, RemoteWorkRecord work, int now) {
     final metadata = <String, Object?>{
       ...work.metadata,
+      // An opaque remote change token is not a media content checksum.
+      '_remote_file_revisions': {
+        for (final file in work.files) file.id: file.contentRevision,
+      },
       'remote_has_cover': work.hasCover,
       'title': work.title,
       if (work.author != null) 'author': work.author,
@@ -3592,7 +3667,7 @@ final class FundusDatabase {
           file.sizeBytes,
           file.mimeType,
           file.durationMs,
-          now,
+          0,
           now,
         ],
       );

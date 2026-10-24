@@ -18,6 +18,7 @@ import '../import/media_areas.dart';
 import '../import/mediavault_metadata.dart';
 import '../model/device_profile.dart';
 import '../model/fundus_id.dart';
+import '../model/content_updates.dart';
 import '../model/library_configuration.dart';
 import '../model/library_manifest.dart';
 import '../model/library_playlist.dart';
@@ -110,6 +111,93 @@ final class FundusLibrary {
   Object? lastSidecarError;
   final Set<String> _deletedPropertyDefinitions = {};
   bool _closed = false;
+  ContentUpdates _contentUpdates = ContentUpdates();
+  Object? contentUpdatesError;
+
+  List<ContentUpdateEvent> get contentUpdates => _contentUpdates.events;
+  Set<String> get contentSubscriptions => _contentUpdates.subscriptions;
+
+  File get _contentUpdatesFile =>
+      File(p.join(root.path, '_fundus', 'content-updates.json'));
+
+  Future<void> _loadContentUpdates() async {
+    try {
+      if (!await _contentUpdatesFile.exists()) return;
+      if (await _contentUpdatesFile.length() > 32 * 1024 * 1024) {
+        throw const FormatException('Update-Posteingang ist zu groß.');
+      }
+      _contentUpdates = ContentUpdates.fromJson(
+        jsonDecode(await _contentUpdatesFile.readAsString()),
+      );
+    } on Object catch (error) {
+      // Preserve unknown/corrupt data. It must never be silently overwritten.
+      contentUpdatesError = error;
+    }
+  }
+
+  Future<void> _saveContentUpdates() {
+    if (contentUpdatesError != null) {
+      throw StateError('Update-Posteingang muss zuerst geprüft werden.');
+    }
+    return _writeSidecar(
+      _contentUpdatesFile,
+      jsonEncode(_contentUpdates.toJson()),
+    );
+  }
+
+  Future<void> setContentSubscription(String workId, bool subscribed) {
+    _ensureWritable();
+    if (contentUpdatesError != null) return Future.error(contentUpdatesError!);
+    if (workSummary(workId) == null) throw StateError('Werk nicht gefunden.');
+    if (subscribed) {
+      _contentUpdates.subscribe(workId, _database.contentUpdateFiles({workId}));
+    } else {
+      _contentUpdates.unsubscribe(workId);
+    }
+    return _saveContentUpdates();
+  }
+
+  Future<void> subscribeContentWorks(Set<String> workIds) {
+    _ensureWritable();
+    if (contentUpdatesError != null) return Future.error(contentUpdatesError!);
+    final files = _database.contentUpdateFiles(workIds);
+    final grouped = <String, List<ContentUpdateFile>>{};
+    for (final file in files) {
+      grouped.putIfAbsent(file.workId, () => []).add(file);
+    }
+    for (final id in workIds) {
+      _contentUpdates.subscribe(id, grouped[id] ?? const []);
+    }
+    return _saveContentUpdates();
+  }
+
+  String? resolveContentUpdateFile(ContentUpdateEvent event) => _database
+      .contentUpdateFiles({event.file.workId})
+      .where((file) => file.key == event.file.key)
+      .firstOrNull
+      ?.fileId;
+
+  Future<void> setContentUpdateDisposition(
+    String id,
+    ContentUpdateDisposition disposition,
+  ) {
+    _ensureWritable();
+    if (contentUpdatesError != null) return Future.error(contentUpdatesError!);
+    _contentUpdates.setDisposition(id, disposition);
+    return _saveContentUpdates();
+  }
+
+  Future<void> refreshContentUpdates() {
+    if (isReadOnly ||
+        contentUpdatesError != null ||
+        contentSubscriptions.isEmpty) {
+      return Future.value();
+    }
+    final changed = _contentUpdates.reconcile(
+      _database.contentUpdateFiles(contentSubscriptions),
+    );
+    return changed ? _saveContentUpdates() : Future.value();
+  }
 
   static const metadataDirectoryName = '.library';
   static const manifestFileName = 'version.json';
@@ -189,6 +277,7 @@ final class FundusLibrary {
       library._registerAsSource();
       await library._importPropertyDefinitions();
     }
+    await library._loadContentUpdates();
     return library;
   }
 
@@ -264,6 +353,11 @@ final class FundusLibrary {
     for (final work in works) {
       importWorkProperties(work.id, work.properties);
     }
+    unawaited(
+      refreshContentUpdates().catchError((Object error) {
+        lastSidecarError = error;
+      }),
+    );
     return report;
   }
 
@@ -1086,6 +1180,8 @@ final class FundusLibrary {
                 : Duration(milliseconds: track.durationMs!),
             audioMetadata: track.audioMetadata,
             episode: track.episode,
+            sizeBytes: track.sizeBytes,
+            contentRevision: track.contentRevision,
           );
         })
         .toList(growable: false);
@@ -2708,6 +2804,7 @@ final class FundusLibrary {
     // wird eine Person mit eigener Seite, statt einer Zeichenkette, die nur
     // aussieht wie eine.
     _database.derivePeopleFromMetadata();
+    await refreshContentUpdates();
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
