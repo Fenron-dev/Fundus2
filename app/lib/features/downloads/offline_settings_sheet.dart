@@ -46,6 +46,7 @@ class _OfflineSettingsState extends State<_OfflineSettings> {
   final _count = TextEditingController();
   final _budget = TextEditingController();
   bool _enabled = false, _wifi = true, _charging = false, _workSelected = false;
+  bool _removeConsumed = false;
   bool _busy = false;
   String? _error;
   String? _libraryId;
@@ -63,6 +64,7 @@ class _OfflineSettingsState extends State<_OfflineSettings> {
       _enabled = policy.enabled;
       _wifi = policy.wifiOnly;
       _charging = policy.chargingOnly;
+      _removeConsumed = policy.removeConsumed;
       _rules.addAll(widget.scope.offline.rules);
       _shelves = widget.scope.savedViews;
       _loadingShelves = _loadShelves();
@@ -107,6 +109,7 @@ class _OfflineSettingsState extends State<_OfflineSettings> {
     storageBudgetBytes: int.parse(_budget.text.trim()) * 1024 * 1024,
     wifiOnly: _wifi,
     chargingOnly: _charging,
+    removeConsumed: _removeConsumed,
   )..validate();
 
   List<OfflineRule> _selectedRules() => [
@@ -317,6 +320,22 @@ class _OfflineSettingsState extends State<_OfflineSettings> {
                     ? null
                     : (value) => setState(() {
                         _charging = value;
+                        _plan = null;
+                      }),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Konsumierte Offline-Kopien automatisch entfernen',
+                ),
+                subtitle: const Text(
+                  'Nur ausdrücklich abgeschlossene Dateien, nach bestätigtem Speichern des eigenen Abschlussstands am zuständigen Server. Geöffnete Werke, kommende Dateien und Originale bleiben erhalten. Kopien ohne verifizierte Dateirevision bleiben bestehen.',
+                ),
+                value: _removeConsumed,
+                onChanged: _busy
+                    ? null
+                    : (value) => setState(() {
+                        _removeConsumed = value;
                         _plan = null;
                       }),
               ),

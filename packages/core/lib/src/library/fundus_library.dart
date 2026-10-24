@@ -116,6 +116,7 @@ final class FundusLibrary {
   Future<void> _contentUpdateOperations = Future.value();
   Future<void> _publicationReadQueue = Future.value();
   final Map<String, Future<PublicationManifest?>> _publicationReads = {};
+  final Map<String, Future<void>> _checkpointWrites = {};
   Object? contentUpdatesError;
 
   Future<void> _contentUpdateOperation(Future<void> Function() action) {
@@ -1759,26 +1760,51 @@ final class FundusLibrary {
     // should be touched; otherwise a network vault would receive writes
     // every few seconds.
     if (checkpoint && _usesPortableSidecars(workId)) {
-      final sourcePath = _database.workSourcePath(workId);
-      if (sourcePath != null) {
-        final relativePath = playbackTracks(workId)
-            .where((track) => track.fileId == fileId)
-            .map((track) => track.relativePath)
-            .firstOrNull;
-        if (relativePath != null) {
-          final sidecar = File(
-            p.join(_workSidecarDirectory(sourcePath).path, 'progress.json'),
-          );
-          _writeSidecar(
-            sidecar,
-            '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'file_path': relativePath, 'work_file_path': p.posix.relative(relativePath, from: sourcePath), 'position': result.position.toJson(), 'finished': result.finished, 'updated_at': result.updatedAt.toUtc().toIso8601String(), 'device_id': result.deviceId, 'device_name': result.deviceName})}\n',
-          ).catchError((Object error) {
-            lastSidecarError = error;
-          });
-        }
-      }
+      unawaited(
+        persistProgressCheckpoint(result).catchError((Object error) {
+          lastSidecarError = error;
+        }),
+      );
     }
     return result;
+  }
+
+  /// Await only this checkpoint, never chapter inspection or future metadata
+  /// work. The server must not issue a durable receipt before this succeeds.
+  Future<void> persistProgressCheckpoint(LibraryPlaybackProgress result) {
+    _ensureWritable();
+    if (!result.checkpoint || !_usesPortableSidecars(result.workId)) {
+      return Future.error(StateError('Kein portabler Abschlussstand.'));
+    }
+    final key = '${result.workId}:${result.operationId}:${result.revision}';
+    final pending = _checkpointWrites[key];
+    if (pending != null) return pending;
+    final workId = result.workId;
+    final fileId = result.fileId;
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath != null) {
+      final relativePath = playbackTracks(workId)
+          .where((track) => track.fileId == fileId)
+          .map((track) => track.relativePath)
+          .firstOrNull;
+      if (relativePath != null) {
+        final sidecar = File(
+          p.join(_workSidecarDirectory(sourcePath).path, 'progress.json'),
+        );
+        final operation =
+            _writeSidecar(
+              sidecar,
+              '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'file_path': relativePath, 'work_file_path': p.posix.relative(relativePath, from: sourcePath), 'position': result.position.toJson(), 'finished': result.finished, 'updated_at': result.updatedAt.toUtc().toIso8601String(), 'device_id': result.deviceId, 'device_name': result.deviceName})}\n',
+            ).whenComplete(() {
+              _checkpointWrites.remove(key);
+            });
+        _checkpointWrites[key] = operation;
+        return operation;
+      }
+    }
+    return Future.error(
+      StateError('Portabler Abschlussstand nicht zuordenbar.'),
+    );
   }
 
   /// Wer an einem Werk beteiligt ist, mit Bild, wo eines da ist.

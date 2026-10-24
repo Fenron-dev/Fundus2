@@ -61,6 +61,8 @@ void main() {
   });
 
   tearDown(() async {
+    await library.library?.shutdown();
+    await theirs.shutdown();
     library.dispose();
     registry.close();
     await temporary.delete(recursive: true);
@@ -83,6 +85,32 @@ void main() {
     token: 'geheim',
     libraryId: libraryId,
   );
+
+  test('future cleanup receipts do not block ordinary progress sync', () async {
+    settings = AppSettings.inMemory(
+      values: {
+        'offline_policy': const OfflinePolicy(
+          enabled: true,
+          removeConsumed: true,
+        ).toJson(),
+        'offline_checkpoint_receipts': {'format_version': 99, 'receipts': []},
+      },
+    );
+    final sync = controller();
+    addTearDown(sync.dispose);
+    await settings.savePeer(peer());
+    library.library!.saveProgress(
+      workId: workId,
+      fileId: fileId,
+      position: const Duration(minutes: 12),
+      deviceId: settings.deviceKey,
+      checkpoint: true,
+    );
+    final report = await sync.syncWith(settings.peers.single);
+    expect(report!.failures, isEmpty);
+    expect(report.pushedProgress, 1);
+    expect(() => settings.offlineCheckpointReceipts, throwsFormatException);
+  });
 
   test(
     'der Abgleich findet die Bibliothek und merkt sich, welche es war',

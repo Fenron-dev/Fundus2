@@ -251,7 +251,46 @@ void main() {
 
     expect(controller.trackIndex, 1);
     expect(engine.opened, hasLength(2));
+    expect(library.finishedFiles(work.id), isEmpty);
   });
+
+  test(
+    'a confirmed natural end marks only the completed file as consumed',
+    () async {
+      await controller.open(library, work);
+      final completedFile = controller.currentSource!.fileId;
+      engine.emitDuration(const Duration(minutes: 3));
+      engine.emitPosition(const Duration(minutes: 3));
+      await Future<void>.delayed(Duration.zero);
+      engine.emitCompleted();
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (controller.trackIndex == 0 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(library.finishedFiles(work.id), {completedFile});
+    },
+  );
+
+  test(
+    'the verified final file remains finished when playback closes',
+    () async {
+      await controller.open(library, work);
+      await controller.jumpToTrack(1);
+      engine.emitDuration(const Duration(minutes: 3));
+      engine.emitPosition(const Duration(minutes: 3));
+      await Future<void>.delayed(Duration.zero);
+      engine.emitCompleted();
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (library.loadProgress(work.id)?.finished != true &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(library.loadProgress(work.id)!.finished, isTrue);
+      await controller.close();
+      expect(library.loadProgress(work.id)!.finished, isTrue);
+      expect(library.loadProgress(work.id)!.checkpoint, isTrue);
+    },
+  );
 
   test('zurück springt erst an den Dateianfang', () async {
     await controller.open(library, work);

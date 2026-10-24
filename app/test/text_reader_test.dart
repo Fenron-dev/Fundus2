@@ -333,6 +333,21 @@ void main() {
       expect(reader.innerOffset, 0);
     });
 
+    test('finishing a volume marks that file, not skipped volumes', () async {
+      writeEpub(
+        Directory('${root.path}/Light Novels/Glasmeer'),
+        'Band 02.epub',
+        ['Weiter'],
+      );
+      await openWork();
+      await reader.goToChapter(1);
+      await reader.nextChapter();
+      expect(reader.volumeIndex, 1);
+      expect(library.library!.finishedFiles(library.works.first.id), {
+        reader.volumes.first.fileId,
+      });
+    });
+
     test('hinter dem letzten Kapitel ist Schluss, nicht Absturz', () async {
       await openWork();
       await reader.goToChapter(1);
@@ -342,6 +357,21 @@ void main() {
       expect(reader.failure, isNull);
       final saved = library.library!.loadProgress(library.works.first.id);
       expect(saved?.finished, isTrue);
+      reader.close();
+      expect(
+        library.library!.loadProgress(library.works.first.id)!.finished,
+        isTrue,
+      );
+      expect(
+        library.library!.loadProgress(library.works.first.id)!.checkpoint,
+        isTrue,
+      );
+      await reader.open(library.library!, library.works.first);
+      reader.close();
+      expect(
+        library.library!.loadProgress(library.works.first.id)!.finished,
+        isTrue,
+      );
     });
 
     test('die Schrifteinstellung wird gemerkt', () async {

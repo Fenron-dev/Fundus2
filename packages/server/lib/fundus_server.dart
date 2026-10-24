@@ -1754,7 +1754,23 @@ final class FundusServerHandler {
         operationId: operationId,
       );
     }
-    return _json(_progressJson(progress));
+    final confirmCheckpoint = decoded['confirm_checkpoint'] == true;
+    if (confirmCheckpoint) {
+      if (!checkpoint ||
+          !progress.checkpoint ||
+          progress.deviceId != deviceId) {
+        return _json({'error': 'checkpoint_not_confirmable'}, statusCode: 409);
+      }
+      try {
+        await entry.library.persistProgressCheckpoint(progress);
+      } on Object {
+        return _json({'error': 'checkpoint_not_persisted'}, statusCode: 503);
+      }
+    }
+    return _json({
+      ..._progressJson(progress),
+      if (confirmCheckpoint) 'checkpoint_persisted': true,
+    });
   }
 
   Response _progressRevisions(
@@ -2095,6 +2111,7 @@ final class FundusServerHandler {
     'revision': progress.revision,
     'updated_at': progress.updatedAt.toUtc().toIso8601String(),
     'device_id': progress.deviceId,
+    'checkpoint': progress.checkpoint,
     'device_name': progress.deviceName.trim().isEmpty
         ? _deviceName(progress.deviceId)
         : progress.deviceName,

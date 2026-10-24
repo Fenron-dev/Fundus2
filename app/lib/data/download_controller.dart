@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -140,6 +141,7 @@ class DownloadController extends ChangeNotifier {
   final Map<String, DownloadJob> _jobs = {};
   final Map<String, Future<bool> Function()> _transferGuards = {};
   final Map<String, int> _generations = {};
+  final Set<String> _removingFiles = {};
   var _generation = 0;
 
   /// Where a work's bytes come from, by the source it belongs to.
@@ -296,6 +298,7 @@ class DownloadController extends ChangeNotifier {
         if (only == null || only.contains(file.fileId)) file,
     ];
     if (files.isEmpty) return;
+    if (files.any((file) => _removingFiles.contains(file.fileId))) return;
 
     _wanted[work.id] = {for (final file in files) file.fileId};
     _generations[work.id] = ++_generation;
@@ -333,22 +336,123 @@ class DownloadController extends ChangeNotifier {
 
   /// Throws a copy away and gives the work back to the network.
   Future<void> remove(String workId) async {
-    final vault = library.library;
-    if (vault == null) return;
     cancel(workId);
-    for (final file in vault.contentFiles(workId)) {
-      final path = file.offlinePath;
-      if (path != null) {
-        final copy = File(path);
-        if (await copy.exists()) await copy.delete();
-      }
-      vault.clearOfflineCopy(file.fileId);
+    await removeFiles(workId);
+  }
+
+  /// Delete only exact managed cache paths, never an arbitrary offline_path
+  /// from an imported index. Automatic cleanup additionally verifies revision
+  /// markers and rechecks consent/confirmation immediately before deletion.
+  Future<int> removeFiles(
+    String workId, {
+    Set<String>? only,
+    bool verifyRevision = false,
+    bool Function(String fileId)? mayRemove,
+  }) async {
+    final vault = library.library;
+    if (vault == null || vault.isReadOnly) return 0;
+    final work = vault.workSummary(workId);
+    final source = vault
+        .listSources()
+        .where((source) => source.id == work?.sourceId)
+        .firstOrNull;
+    if (source?.kind != LibrarySourceKind.peer ||
+        !FundusId.isSafe(source!.libraryId)) {
+      return 0;
     }
-    _jobs.remove(workId);
-    _wanted.remove(workId);
-    library.refreshWork(workId);
+    final storage = await storageRoot();
+    final root = Directory(p.join(storage.path, 'offline'));
+    final folder = Directory(p.join(root.path, source.libraryId));
+    if (!identical(library.library, vault) || _disposed) return 0;
+    var removed = 0;
+    for (final file in vault.contentFiles(workId)) {
+      if (!identical(library.library, vault) || _disposed) break;
+      if (only != null && !only.contains(file.fileId)) continue;
+      if (!(mayRemove?.call(file.fileId) ?? true)) continue;
+      if (!_removingFiles.add(file.fileId)) continue;
+      try {
+        final path = file.offlinePath;
+        if (path != null) {
+          final copy = File(path);
+          final expected = p.join(
+            folder.path,
+            '${file.fileId}${p.extension(file.filename)}',
+          );
+          if (!FundusId.isSafe(file.fileId) ||
+              !p.equals(
+                p.normalize(copy.absolute.path),
+                p.normalize(File(expected).absolute.path),
+              ) ||
+              await FileSystemEntity.type(root.path, followLinks: false) !=
+                  FileSystemEntityType.directory ||
+              await FileSystemEntity.type(folder.path, followLinks: false) !=
+                  FileSystemEntityType.directory) {
+            continue;
+          }
+          final type = await FileSystemEntity.type(
+            copy.path,
+            followLinks: false,
+          );
+          if (type != FileSystemEntityType.file &&
+              type != FileSystemEntityType.notFound) {
+            continue;
+          }
+          if (type == FileSystemEntityType.file) {
+            final realStorage = await storage.resolveSymbolicLinks();
+            final realRoot = await root.resolveSymbolicLinks();
+            final realFolder = await folder.resolveSymbolicLinks();
+            final realPath = await copy.resolveSymbolicLinks();
+            if (!p.equals(realRoot, p.join(realStorage, 'offline')) ||
+                !p.equals(realFolder, p.join(realRoot, source.libraryId)) ||
+                !p.isWithin(realRoot, realPath)) {
+              continue;
+            }
+            if (verifyRevision) {
+              final marker = File('${copy.path}.meta');
+              if (await marker.length() > 4096) continue;
+              final value = jsonDecode(await marker.readAsString());
+              final track = vault
+                  .playbackTracks(workId)
+                  .where((track) => track.fileId == file.fileId)
+                  .firstOrNull;
+              if (track == null ||
+                  track.contentRevision.isEmpty ||
+                  value is! Map ||
+                  value['revision'] != track.contentRevision ||
+                  value['length'] != await copy.length()) {
+                continue;
+              }
+            }
+            if (!identical(library.library, vault) ||
+                _disposed ||
+                queuedFileIds.contains(file.fileId) ||
+                !(mayRemove?.call(file.fileId) ?? true)) {
+              continue;
+            }
+            await copy.delete();
+            removed++;
+            final marker = File('${copy.path}.meta');
+            if (await FileSystemEntity.type(marker.path, followLinks: false) ==
+                FileSystemEntityType.file) {
+              await marker.delete();
+            }
+          }
+        }
+        if (identical(library.library, vault)) {
+          vault.clearOfflineCopy(file.fileId);
+        }
+      } on FileSystemException {
+        // Keep a failed/unverified copy registered.
+      } on FormatException {
+        // Invalid cache markers never authorize deletion.
+      } finally {
+        _removingFiles.remove(file.fileId);
+      }
+    }
+    if (identical(library.library, vault)) library.refreshWork(workId);
     notifyListeners();
     unawaited(measureStorage());
+    return removed;
   }
 
   /// Takes a work out of the queue. What is already fetched stays — half a

@@ -148,6 +148,7 @@ class TextReaderController extends ChangeNotifier {
 
   FundusLibrary? _library;
   WorkView? _work;
+  String? _finishedPositionKey;
 
   /// The readable files of the work — for a series one per volume.
   List<LibraryPlaybackTrack> _volumes = const [];
@@ -293,6 +294,7 @@ class TextReaderController extends ChangeNotifier {
     _failure = null;
     _library = library;
     _work = work;
+    _finishedPositionKey = null;
     _open = true;
     _chrome = true;
     _busy = true;
@@ -322,8 +324,12 @@ class TextReaderController extends ChangeNotifier {
       _bookmarks = annotations.bookmarks;
       _highlights = annotations.highlights;
 
-      final saved = startAt == null
-          ? library.loadProgress(work.id)?.position
+      final savedProgress = startAt == null
+          ? library.loadProgress(work.id)
+          : null;
+      final saved = savedProgress?.position;
+      _finishedPositionKey = savedProgress?.finished == true
+          ? savedProgress!.position.withFileId(savedProgress.fileId).syncKey
           : null;
       final target = startAt ?? saved?.fileId;
       final savedVolume = target == null
@@ -465,6 +471,7 @@ class TextReaderController extends ChangeNotifier {
       return goToChapter(_chapterIndex + 1);
     }
     if (_volumeIndex + 1 < _volumes.length) {
+      _markCurrentFileFinished();
       await _openVolume(_volumeIndex + 1);
       saveProgress();
       return;
@@ -723,17 +730,44 @@ class TextReaderController extends ChangeNotifier {
     if (library == null || work == null || volume == null) return;
     if (library.isReadOnly || _chapters.isEmpty) return;
     try {
+      final position = _position();
+      _finishedPositionKey =
+          finished || _finishedPositionKey == position.syncKey
+          ? position.syncKey
+          : null;
+      if (finished) _markCurrentFileFinished();
       library.saveMediaProgress(
         workId: work.id,
         fileId: volume.fileId,
-        position: _position(),
-        finished: finished,
+        position: position,
+        finished: _finishedPositionKey == position.syncKey,
         deviceId: deviceId,
         deviceName: deviceName,
         checkpoint: checkpoint,
       );
     } on Object {
       // Losing one autosave is not worth interrupting reading for.
+    }
+  }
+
+  void _markCurrentFileFinished() {
+    final library = _library;
+    final work = _work;
+    final volume = currentVolume;
+    if (library == null ||
+        work == null ||
+        volume == null ||
+        library.isReadOnly) {
+      return;
+    }
+    try {
+      library.setFileFinished(
+        workId: work.id,
+        fileId: volume.fileId,
+        finished: true,
+      );
+    } on Object {
+      /* Missing completion evidence must keep the copy. */
     }
   }
 

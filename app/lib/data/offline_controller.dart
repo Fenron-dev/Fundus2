@@ -30,6 +30,7 @@ class OfflineController extends ChangeNotifier {
   final DownloadController downloads;
   final Future<OfflineConditions> Function() _conditions;
   final bool scheduleAutomatically;
+  Set<String> Function()? inUseWorkIds;
   bool _foreground = true;
   bool _disposed = false;
   bool _running = false;
@@ -117,32 +118,8 @@ class OfflineController extends ChangeNotifier {
     final vault = library.library;
     if (vault == null) throw StateError('Keine Bibliothek geöffnet.');
     final policy = policyOverride ?? settings.offlinePolicy;
-    final selectedRules = rulesOverride ?? rules;
+    final counts = await _selectedCounts(vault, rulesOverride ?? rules);
     final visible = {for (final work in library.works) work.id: work};
-    final shelves = {
-      for (final shelf in await vault.loadSavedViews()) shelf.id: shelf,
-    };
-    final counts = <String, int>{};
-    // Specific work rules take precedence over overlapping shelf defaults.
-    for (final rule in selectedRules.where(
-      (rule) => rule.scope == OfflineRuleScope.work,
-    )) {
-      if (visible.containsKey(rule.targetId)) {
-        counts[rule.targetId] = rule.nextFiles;
-      }
-    }
-    for (final rule in selectedRules.where(
-      (rule) => rule.scope == OfflineRuleScope.shelf,
-    )) {
-      final shelf = shelves[rule.targetId];
-      if (shelf == null) continue;
-      for (final work in LibraryWorkSearch.apply(
-        visible.values.map((work) => work.summary).toList(),
-        shelf.query,
-      )) {
-        counts.putIfAbsent(work.id, () => rule.nextFiles);
-      }
-    }
     final queued = downloads.queuedFileIds;
     final here = <String>{};
     var reserved = 0;
@@ -161,16 +138,18 @@ class OfflineController extends ChangeNotifier {
     }
     final targets = <OfflineTarget>[];
     for (final entry in counts.entries) {
-      final work = visible[entry.key]!;
-      if (work.summary.sourceId == FundusDatabase.localSourceId) continue;
+      final work = visible[entry.key];
+      if (work == null ||
+          work.summary.sourceId == FundusDatabase.localSourceId) {
+        continue;
+      }
       final progress = vault.loadProgress(entry.key);
       targets.add(
         OfflineTarget(
           workId: entry.key,
+          finishedFileIds: vault.finishedFiles(entry.key),
           tracks: [
             for (final track in vault.playbackTracks(entry.key))
-              // The index can still name an offline copy somebody deleted
-              // outside Fundus. Preserve the owner without mutating a preview.
               if (!track.isRemote && !here.contains(track.fileId))
                 LibraryPlaybackTrack(
                   fileId: track.fileId,
@@ -199,8 +178,6 @@ class OfflineController extends ChangeNotifier {
       p.join((await downloads.storageRoot()).path, 'offline'),
     );
     if (await offline.exists()) {
-      // Count even hidden/orphaned copies and partial transfers. Do not follow
-      // symlinks, and do not walk original media directories.
       await for (final entity in offline.list(
         recursive: true,
         followLinks: false,
@@ -227,6 +204,129 @@ class OfflineController extends ChangeNotifier {
       storedBytes: bytes,
       reservedBytes: reserved,
     );
+  }
+
+  Future<Map<String, int>> _selectedCounts(
+    FundusLibrary vault,
+    List<OfflineRule> selectedRules,
+  ) async {
+    final visible = {for (final work in library.works) work.id: work};
+    final shelves = {
+      for (final shelf in await vault.loadSavedViews()) shelf.id: shelf,
+    };
+    final counts = <String, int>{};
+    // Specific work rules take precedence over overlapping shelf defaults.
+    for (final rule in selectedRules.where(
+      (rule) => rule.scope == OfflineRuleScope.work,
+    )) {
+      if (visible.containsKey(rule.targetId)) {
+        counts[rule.targetId] = rule.nextFiles;
+      }
+    }
+    for (final rule in selectedRules.where(
+      (rule) => rule.scope == OfflineRuleScope.shelf,
+    )) {
+      final shelf = shelves[rule.targetId];
+      if (shelf == null) continue;
+      for (final work in LibraryWorkSearch.apply(
+        visible.values.map((work) => work.summary).toList(),
+        shelf.query,
+      )) {
+        counts.putIfAbsent(work.id, () => rule.nextFiles);
+      }
+    }
+    return counts;
+  }
+
+  Future<void> _cleanup(FundusLibrary vault) async {
+    if (vault.isReadOnly || !settings.offlinePolicy.removeConsumed) return;
+    final revision = _configurationRevision;
+    final counts = await _selectedCounts(vault, rules);
+    final receipts = settings.offlineCheckpointReceipts;
+    final sources = {
+      for (final source in vault.listSources()) source.id: source,
+    };
+    for (final entry in counts.entries) {
+      if (!identical(library.library, vault) ||
+          !_foreground ||
+          _disposed ||
+          revision != _configurationRevision ||
+          !settings.offlinePolicy.enabled ||
+          !settings.offlinePolicy.removeConsumed) {
+        return;
+      }
+      if (inUseWorkIds?.call().contains(entry.key) ?? false) continue;
+      final work = library.workById(entry.key);
+      final progress = vault.loadProgress(entry.key);
+      final source = sources[work?.summary.sourceId];
+      if (work == null ||
+          progress == null ||
+          source?.kind != LibrarySourceKind.peer ||
+          vault.progressChoice(entry.key) != null) {
+        continue;
+      }
+      final receipt = receipts
+          .where(
+            (receipt) =>
+                receipt.vaultId == vault.manifest.libraryId &&
+                receipt.sourceId == source!.id &&
+                receipt.peerLibraryId == source.libraryId &&
+                settings.peers.any(
+                  (peer) =>
+                      peer.serverId == receipt.peerServerId &&
+                      peer.certificateFingerprint ==
+                          receipt.peerCertificatePin &&
+                      peer.baseUrl == source.baseUrl,
+                ) &&
+                receipt.matches(progress, currentDeviceId: settings.deviceKey),
+          )
+          .firstOrNull;
+      if (receipt == null) continue;
+      final candidates = OfflineCleanup.candidates(
+        checkpointConfirmed: true,
+        tracks: vault.playbackTracks(entry.key),
+        finishedFileIds: vault.finishedFiles(entry.key),
+        offlineFileIds: {
+          for (final file in vault.contentFiles(entry.key))
+            if (file.offlinePath != null) file.fileId,
+        },
+        currentFileId: progress.fileId,
+        currentFileFinished: progress.finished,
+        nextFiles: entry.value,
+        inUse: downloads.queuedFileIds,
+      );
+      if (candidates.isEmpty) continue;
+      await downloads.removeFiles(
+        entry.key,
+        only: candidates,
+        verifyRevision: true,
+        mayRemove: (fileId) {
+          if (!_foreground ||
+              _disposed ||
+              !identical(library.library, vault) ||
+              revision != _configurationRevision ||
+              !settings.offlinePolicy.enabled ||
+              !settings.offlinePolicy.removeConsumed ||
+              library.workById(entry.key) == null ||
+              library.workById(entry.key)?.summary.sourceId !=
+                  receipt.sourceId ||
+              !settings.peers.any(
+                (peer) =>
+                    peer.serverId == receipt.peerServerId &&
+                    peer.baseUrl == source!.baseUrl &&
+                    peer.certificateFingerprint == receipt.peerCertificatePin,
+              ) ||
+              (inUseWorkIds?.call().contains(entry.key) ?? false)) {
+            return false;
+          }
+          final current = vault.loadProgress(entry.key);
+          return current != null &&
+              receipt.matches(current, currentDeviceId: settings.deviceKey) &&
+              vault.progressChoice(entry.key) == null &&
+              vault.finishedFiles(entry.key).contains(fileId);
+        },
+      );
+    }
   }
 
   /// The same gate protects every body chunk. Expensive platform queries are
@@ -272,6 +372,7 @@ class OfflineController extends ChangeNotifier {
         );
       }
       final vault = library.library;
+      if (vault != null) await _cleanup(vault);
       final plan = await preview();
       lastPlan = plan;
       failure = null;

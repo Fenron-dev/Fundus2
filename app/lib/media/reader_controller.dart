@@ -55,6 +55,7 @@ class ReaderController extends ChangeNotifier {
 
   FundusLibrary? _library;
   WorkView? _work;
+  String? _finishedPositionKey;
 
   /// The readable files of the work — for a manga one entry per volume.
   List<LibraryPlaybackTrack> _volumes = const [];
@@ -306,6 +307,7 @@ class ReaderController extends ChangeNotifier {
     _failure = null;
     _library = library;
     _work = work;
+    _finishedPositionKey = null;
     _open = true;
     _chrome = true;
     _busy = true;
@@ -338,8 +340,12 @@ class ReaderController extends ChangeNotifier {
       _profile = await library.loadReaderProfile(workId: work.id);
       _bookmarks = library.loadAnnotations(work.id).bookmarks;
 
-      final saved = startAt == null
-          ? library.loadProgress(work.id)?.position
+      final savedProgress = startAt == null
+          ? library.loadProgress(work.id)
+          : null;
+      final saved = savedProgress?.position;
+      _finishedPositionKey = savedProgress?.finished == true
+          ? savedProgress!.position.withFileId(savedProgress.fileId).syncKey
           : null;
       final target = startAt ?? saved?.fileId;
       final savedVolume = target == null
@@ -451,6 +457,23 @@ class ReaderController extends ChangeNotifier {
       return;
     }
     if (index >= _pages.length) {
+      final library = _library;
+      final work = _work;
+      final volume = currentVolume;
+      if (library != null &&
+          work != null &&
+          volume != null &&
+          !library.isReadOnly) {
+        try {
+          library.setFileFinished(
+            workId: work.id,
+            fileId: volume.fileId,
+            finished: true,
+          );
+        } on Object {
+          /* Missing completion evidence must keep the copy. */
+        }
+      }
       if (_volumeIndex + 1 >= _volumes.length) {
         saveProgress(finished: true);
         return;
@@ -652,11 +675,23 @@ class ReaderController extends ChangeNotifier {
     if (library.isReadOnly) return;
     if (_pages.isEmpty) return;
     try {
+      final position = _positionOfCurrentPage();
+      _finishedPositionKey =
+          finished || _finishedPositionKey == position.syncKey
+          ? position.syncKey
+          : null;
+      if (finished) {
+        library.setFileFinished(
+          workId: work.id,
+          fileId: volume.fileId,
+          finished: true,
+        );
+      }
       library.saveMediaProgress(
         workId: work.id,
         fileId: volume.fileId,
-        position: _positionOfCurrentPage(),
-        finished: finished,
+        position: position,
+        finished: _finishedPositionKey == position.syncKey,
         deviceId: deviceId,
         deviceName: deviceName,
         checkpoint: checkpoint,

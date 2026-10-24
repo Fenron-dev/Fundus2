@@ -8,6 +8,7 @@ final class OfflinePolicy {
     this.storageBudgetBytes = 1024 * 1024 * 1024,
     this.wifiOnly = true,
     this.chargingOnly = false,
+    this.removeConsumed = false,
   });
 
   final bool enabled;
@@ -15,6 +16,7 @@ final class OfflinePolicy {
   final int storageBudgetBytes;
   final bool wifiOnly;
   final bool chargingOnly;
+  final bool removeConsumed;
 
   void validate() {
     if (nextFiles < 1 || nextFiles > 500 || storageBudgetBytes < 1) {
@@ -31,6 +33,7 @@ final class OfflinePolicy {
     'storage_budget_bytes': storageBudgetBytes,
     'wifi_only': wifiOnly,
     'charging_only': chargingOnly,
+    'remove_consumed': removeConsumed,
   };
 
   static OfflinePolicy fromJson(Object? value) {
@@ -40,7 +43,9 @@ final class OfflinePolicy {
         value['next_files'] is! int ||
         value['storage_budget_bytes'] is! int ||
         value['wifi_only'] is! bool ||
-        value['charging_only'] is! bool) {
+        value['charging_only'] is! bool ||
+        (value.containsKey('remove_consumed') &&
+            value['remove_consumed'] is! bool)) {
       throw const FormatException('Nicht unterstützte Offline-Regel.');
     }
     final policy = OfflinePolicy(
@@ -49,6 +54,7 @@ final class OfflinePolicy {
       storageBudgetBytes: value['storage_budget_bytes'] as int,
       wifiOnly: value['wifi_only'] as bool,
       chargingOnly: value['charging_only'] as bool,
+      removeConsumed: value['remove_consumed'] == true,
     );
     policy.validate();
     return policy;
@@ -73,6 +79,7 @@ final class OfflineTarget {
     this.startFileId,
     this.startFileFinished = false,
     this.nextFiles,
+    this.finishedFileIds = const {},
   });
 
   final String workId;
@@ -80,6 +87,7 @@ final class OfflineTarget {
   final String? startFileId;
   final bool startFileFinished;
   final int? nextFiles;
+  final Set<String> finishedFileIds;
 }
 
 enum OfflineDeferral {
@@ -167,6 +175,12 @@ final class OfflinePlan {
       // window. Re-running a rule must not keep fetching the next N forever.
       final window = tracks
           .skip(start)
+          .where(
+            (track) =>
+                !target.finishedFileIds.contains(track.fileId) ||
+                (track.fileId == target.startFileId &&
+                    !target.startFileFinished),
+          )
           .where((track) => distinct.add(track.fileId))
           .take(count);
       for (final track in window) {

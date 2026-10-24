@@ -214,6 +214,13 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     peerLibraries.addListener(_bump);
     downloads.addListener(_bump);
     offline.addListener(_bump);
+    offline.inUseWorkIds = () => {
+      if (player.work != null) player.work!.id,
+      if (reader.isOpen && reader.work != null) reader.work!.id,
+      if (textReader.isOpen && textReader.work != null) textReader.work!.id,
+      if (photos.isOpen && photos.work != null) photos.work!.id,
+    };
+    sync.onCheckpointsConfirmed = () => unawaited(offline.run());
     photos.addListener(_bump);
     protection.addListener(_applyProtection);
     library.hides = _hidesFromLists;
@@ -619,6 +626,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     peerLibraries.removeListener(_bump);
     downloads.removeListener(_bump);
     offline.removeListener(_bump);
+    sync.onCheckpointsConfirmed = null;
     offline.dispose();
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);

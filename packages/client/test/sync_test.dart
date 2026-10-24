@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -20,10 +21,12 @@ void main() {
   late FundusRemoteClient client;
   late String workId;
   late String fileId;
+  var omitReceipts = false;
 
   Uri baseUri() => Uri.parse('http://localhost:${socket.port}');
 
   setUp(() async {
+    omitReceipts = false;
     temporary = await Directory.systemTemp.createTemp('fundus-sync-');
 
     final source = Directory('${temporary.path}/meine');
@@ -43,15 +46,35 @@ void main() {
       serverName: 'Der andere Rechner',
       registry: registry,
     );
-    socket = await shelf_io.serve(handler.handler, 'localhost', 0);
+    socket = await shelf_io.serve(
+      (request) async {
+        if (!omitReceipts) return handler.handler(request);
+        final response = await handler.handler(
+          request.change(
+            headers: {...request.headers, 'accept-encoding': 'identity'},
+          ),
+        );
+        if (request.method != 'PUT' ||
+            !request.url.path.contains('/progress/')) {
+          return response;
+        }
+        final value =
+            jsonDecode(await response.readAsString()) as Map<String, dynamic>;
+        value.remove('checkpoint_persisted');
+        return response.change(body: jsonEncode(value));
+      },
+      'localhost',
+      0,
+    );
     client = FundusRemoteClient(baseUri: baseUri(), token: 'geheim');
   });
 
   tearDown(() async {
     client.close();
     await socket.close(force: true);
+    await mine.shutdown();
+    await theirs.shutdown();
     registry.close();
-    mine.close();
     await temporary.delete(recursive: true);
   });
 
@@ -60,6 +83,113 @@ void main() {
     client: client,
     libraryId: theirs.manifest.libraryId,
     deviceId: 'mein-geraet',
+  );
+
+  FundusSync confirming() => FundusSync(
+    library: mine,
+    client: client,
+    libraryId: theirs.manifest.libraryId,
+    deviceId: 'mein-geraet',
+    checkpointConfirmationsRequired: {workId},
+  );
+
+  test(
+    'explicit confirmation waits for the portable checkpoint and proves the exact local write',
+    () async {
+      final own = mine.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 12),
+        deviceId: 'mein-geraet',
+        checkpoint: true,
+      );
+      final report = await confirming().run();
+      expect(report.failures, isEmpty);
+      expect(report.confirmedCheckpoints[workId]?.revision, own.revision);
+      final file = File(
+        '${theirs.root.path}/Hörbücher/Karl May/Der Schacht/_fundus/progress.json',
+      );
+      expect(await file.exists(), isTrue);
+      expect(jsonDecode(await file.readAsString())['device_id'], 'mein-geraet');
+    },
+  );
+
+  test(
+    'same-position autosave still needs a durable closing checkpoint',
+    () async {
+      mine.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 12),
+        deviceId: 'mein-geraet',
+        checkpoint: true,
+      );
+      theirs.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 12),
+        deviceId: 'mein-geraet',
+      );
+      final report = await confirming().run();
+      expect(report.pushedProgress, 1);
+      expect(report.confirmedCheckpoints, contains(workId));
+      expect(theirs.loadProgress(workId)!.checkpoint, isTrue);
+    },
+  );
+
+  test(
+    'legacy success without durable receipt never authorizes deleting a copy',
+    () async {
+      omitReceipts = true;
+      mine.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 12),
+        deviceId: 'mein-geraet',
+        checkpoint: true,
+      );
+      final report = await confirming().run();
+      expect(report.pushedProgress, 1);
+      expect(report.confirmedCheckpoints, isEmpty);
+    },
+  );
+
+  test(
+    'an autosave or another device is never an own closing confirmation',
+    () async {
+      mine.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 12),
+        deviceId: 'anderes-geraet',
+        checkpoint: true,
+      );
+      final report = await confirming().run();
+      expect(report.confirmedCheckpoints, isEmpty);
+    },
+  );
+
+  test(
+    'a sidecar write failure returns no durable receipt despite a DB write',
+    () async {
+      await theirs.flushSidecarWrites();
+      final folder = Directory(
+        '${theirs.root.path}/Hörbücher/Karl May/Der Schacht/_fundus',
+      );
+      await folder.rename('${folder.path}-held');
+      await File(folder.path).writeAsString('blocked test directory');
+      mine.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: const Duration(minutes: 12),
+        deviceId: 'mein-geraet',
+        checkpoint: true,
+      );
+      final report = await confirming().run();
+      expect(report.failures, isNotEmpty);
+      expect(report.confirmedCheckpoints, isEmpty);
+      expect(theirs.loadProgress(workId)!.checkpoint, isTrue);
+    },
   );
 
   test('die Gegenstelle nennt ihre Bibliotheken und Werke', () async {

@@ -7,7 +7,7 @@ implementiert oder ausgeliefert ist. Die Stabilisierungsabnahme #47 bleibt separ
 ## Umfang und Reihenfolge
 
 1. Update-Posteingang und Abos (#56) – implementiert, CI und drei Plattform-Builds bestanden.
-2. Intelligentes Offline-Mitnehmen (#55) – Regeln, Oberfläche und Download-Anbindung in Arbeit.
+2. Intelligentes Offline-Mitnehmen (#55) – Regeln, Downloads und bestätigtes Aufräumen implementiert; Plattform-/Geräteabnahme offen.
 3. Metadatenverlauf und gezieltes Rückgängig (#57) – offen.
 4. Medienwelten und Reihenfolgen (#60) – offen.
 5. Regelregale und Dashboard-Zeilen (#58) – offen.
@@ -210,12 +210,69 @@ nun auf `vault.shutdown`, bevor der temporäre Hörbuchordner entfernt wird;
 zuvor konnte ein noch laufender Checkpoint dessen Löschung überholen.
 Die automatische Auslösung und die reine Auswahlberechnung sind getrennt
 getestet, damit ein Timer nicht unbemerkt eine Vorschau-Prüfung verändert.
-GitHub-CI und Android-Kompilierung der neuen Systemabfrage stehen für diesen
-Schritt noch aus; erfolgreiche Builds des vorigen Schritts ersetzen das nicht.
+GitHub-CI (40080736340) und die Plattformläufe für `2b0629e` sind erfolgreich:
+Android 40081021280, Windows 40081021226, macOS 40081021231. Das bestätigt
+Kompilierung und automatische Tests, nicht das Laufzeit-/Akkuverhalten auf
+einem Android-Gerät.
 
-**Weiterhin offen in #55:** ausdrücklich erlaubtes Aufräumen konsumierter
+**Zum Ende dieses zweiten Schritts noch offen:** ausdrücklich erlaubtes Aufräumen konsumierter
 Kopien erst nach bestätigtem Fortschrittsabgleich und geprüftem verwaltetem
 Dateipfad (keine Originale/externen Pfade), weitere Plattform-Erkennung
 für WLAN/Laden, Neustart-/Unterbrechungs- und Schutzwechsel-Abnahmen sowie
 Android-Laufzeit-/Akkuprüfung auf einem Gerät. Keine automatische Löschung ist
 mit diesem Schritt aktiviert; Originalmedien bleiben unangetastet.
+
+### Dritter Schritt: bestätigtes, ausdrücklich erlaubtes Aufräumen
+
+Die neue Option „Konsumierte Offline-Kopien automatisch entfernen“ ist
+standardmäßig **aus**. Sie setzt aktivierte Werk-/Regalregeln voraus und läuft
+nur im Vordergrund. Die folgenden Voraussetzungen gelten gemeinsam:
+
+- Nur ausdrücklich als fertig markierte physische Dateien gelten als
+  konsumiert. Eine Position weiter hinten beweist nicht, dass davor liegende
+  Kapitel gelesen wurden. Natürliches Audio-/Video-Ende mit bekannter Dauer
+  und Reader-Wechsel hinter die letzte Seite/das letzte Kapitel markieren die
+  tatsächlich beendete Datei, nicht übersprungene Dateien.
+- Ein eigener Abschluss-Checkpoint muss vom zuständigen Server bestätigt
+  sein. Dafür kann der vorhandene Fortschritts-PUT `confirm_checkpoint`
+  anfordern. Der Server bestätigt erst nach erfolgreichem, abgewartetem
+  Schreiben des portablen `progress.json` mit Flush und atomarem Ersetzen.
+  Ein gleicher Autosave-Stand, ein fremder Gerätefortschritt oder ein alter
+  Server ohne diese Bestätigung berechtigt nicht zum Aufräumen. Fehler beim
+  Sidecar ergeben keine Bestätigung, auch wenn der Index schon aktualisiert ist.
+- Die installationsgebundene Bestätigung enthält nur IDs, Peer-Fingerprint,
+  Zeitpunkt und einen Hash des exakten lokalen Checkpoints; keine Titel,
+  Dateipfade, Texte oder Zugangstokens. Vault, Quelle, Server, Bibliothek und
+  Geräte-ID müssen übereinstimmen. Schon ein neuer lokaler Stand entwertet
+  die alte Bestätigung. Höchstens 5.000 Bestätigungen werden behalten; entfernte
+  alte Belege führen nur zum Behalten/erneuten Bestätigen von Kopien.
+- Ungelöste Fortschrittskonflikte, aktive Player/Reader, versteckte Werke,
+  laufende Downloads, die aktuelle unfertige Datei und das nächste ungelesene
+  Vorausladefenster werden gehalten. Fertige kommende Dateien erzeugen keine
+  endlose Folge von Entfernen und erneutem Herunterladen.
+- Entfernt werden ausschließlich exakt zugeordnete verwaltete Cachedateien
+  mit passendem Dateinamen, ID, Länge und Ressourcenrevision. Normalisierte
+  und kanonische Pfade werden geprüft; Symlinks/Junctions und externe
+  `offline_path`-Werte berechtigen nie zur Löschung von Originalen.
+  Alte Kopien ohne Revisionsbeleg bleiben erhalten. Freigabe, Vordergrund,
+  Vault, Konfiguration und Checkpoint werden vor dem Entfernen nochmals geprüft.
+  Positionen, Bewertungen und Originalmedien werden dabei nicht gelöscht.
+
+Die Auswahl und echte Server-/Clientbestätigung haben eigene Tests, inklusive
+fehlgeschlagenem Sidecar-Schreiben, alten Servern ohne Beleg, fremden Geräten,
+geändertem Checkpoint, aktivem/verstecktem Werk, Konflikten, veralteter Revision,
+externem Originalpfad, symbolischem Link und nachträglich entzogener Erlaubnis.
+Abschlusszustände bleiben beim Schließen und erneuten Öffnen erhalten; ein
+bewusstes Zurückgehen zum erneuten Lesen beendet diesen Zustand wieder.
+Die Bestätigungsauswahl arbeitet nur auf den ohnehin synchronisierten Werken,
+nicht mit einer zusätzlichen Einzelabfrage pro Werk des gesamten Katalogs.
+Ein unbekanntes zukünftiges Bestätigungsformat blockiert nur die optionale
+Bereinigung, nicht den normalen Fortschrittsabgleich.
+
+Lokale Abnahme: Core 296, Server 45, Client 46, Design 3, App 510 bestanden
+(zusammen 900), acht App-Tests übersprungen; Analyse und Format sauber.
+CI und Plattformläufe dieses dritten Schritts stehen noch aus.
+
+**Weiterhin offen in #55:** weitere Plattform-Erkennung für WLAN/Laden sowie
+die reale Android-Neustart-/Unterbrechungs-, Schutzwechsel- und Akkuabnahme.
+Die vollständige Roadmap und #47 bleiben offen.

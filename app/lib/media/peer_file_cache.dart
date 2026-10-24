@@ -235,6 +235,7 @@ final class PeerFileCache {
         await marker.writeAsString(
           jsonEncode({
             'length': received,
+            'revision': track.contentRevision,
             'etag': ?etag,
             'last_modified': ?lastModified,
           }),

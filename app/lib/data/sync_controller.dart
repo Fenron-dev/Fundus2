@@ -39,6 +39,57 @@ class SyncController extends ChangeNotifier {
   bool get isBusy => _busy;
   String? get failure => _failure;
   List<PeerConnection> get peers => settings.peers;
+  VoidCallback? onCheckpointsConfirmed;
+
+  Set<String> _confirmationTargets(
+    FundusLibrary vault,
+    PeerConnection peer,
+    Iterable<String> targetIds,
+  ) {
+    try {
+      return _requiredConfirmations(vault, peer, targetIds);
+    } on FormatException {
+      // An optional/future cleanup format must not block progress syncing.
+      return const {};
+    }
+  }
+
+  Set<String> _requiredConfirmations(
+    FundusLibrary vault,
+    PeerConnection peer,
+    Iterable<String> targetIds,
+  ) {
+    final policy = settings.offlinePolicy;
+    if (!policy.enabled || !policy.removeConsumed) return const {};
+    final receipts = settings.offlineCheckpointReceipts;
+    final sources = {
+      for (final source in vault.listSources()) source.id: source,
+    };
+    final visible = {for (final work in library.works) work.id: work};
+    return {
+      for (final id in targetIds)
+        if (visible[id] case final work?)
+          if (sources[work.summary.sourceId]?.kind == LibrarySourceKind.peer &&
+              sources[work.summary.sourceId]?.baseUrl == peer.baseUrl)
+            if (vault.loadProgress(work.id) case final progress?
+                when progress.deviceId == settings.deviceKey &&
+                    progress.checkpoint)
+              if (!receipts.any(
+                (receipt) =>
+                    receipt.vaultId == vault.manifest.libraryId &&
+                    receipt.sourceId == work.summary.sourceId &&
+                    receipt.peerServerId == peer.serverId &&
+                    receipt.peerLibraryId ==
+                        sources[work.summary.sourceId]?.libraryId &&
+                    receipt.peerCertificatePin == peer.certificateFingerprint &&
+                    receipt.matches(
+                      progress,
+                      currentDeviceId: settings.deviceKey,
+                    ),
+              ))
+                work.id,
+    };
+  }
 
   /// Pairs with the Fundus a code came from.
   ///
@@ -127,6 +178,12 @@ class SyncController extends ChangeNotifier {
         return null;
       }
 
+      final targetIds = (await _worthSyncing(
+        vault,
+        peer,
+        client,
+        libraryId,
+      )).toList();
       final report = await FundusSync(
         library: vault,
         client: client,
@@ -135,8 +192,13 @@ class SyncController extends ChangeNotifier {
         deviceName: settings.deviceName,
         peerName: peer.name,
         baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
-      ).run(workIds: await _worthSyncing(vault, peer, client, libraryId));
-      await _record(vault, peer, report);
+        checkpointConfirmationsRequired: _confirmationTargets(
+          vault,
+          peer,
+          targetIds,
+        ),
+      ).run(workIds: targetIds);
+      await _record(vault, peer, report, libraryId: libraryId);
 
       await settings.savePeer(
         peer.copyWith(
@@ -358,8 +420,11 @@ class SyncController extends ChangeNotifier {
           deviceName: settings.deviceName,
           peerName: peer.name,
           baseline: SyncBaseline(await vault.loadSyncBaseline(peer.serverId)),
+          checkpointConfirmationsRequired: _confirmationTargets(vault, peer, [
+            workId,
+          ]),
         ).run(workIds: [workId]);
-        await _record(vault, peer, report);
+        await _record(vault, peer, report, libraryId: libraryId);
       } on Object {
         // Silence is the right answer here. This runs on the way out of a
         // player; a machine that is switched off is not news, and the manual
@@ -639,10 +704,50 @@ class SyncController extends ChangeNotifier {
   Future<void> _record(
     FundusLibrary vault,
     PeerConnection peer,
-    SyncReport report,
-  ) async {
+    SyncReport report, {
+    required String libraryId,
+  }) async {
     if (vault.isReadOnly) return;
     await vault.saveSyncBaseline(peer.serverId, report.agreedMarks);
+    if (report.confirmedCheckpoints.isNotEmpty &&
+        identical(library.library, vault) &&
+        settings.offlinePolicy.removeConsumed) {
+      final sources = {
+        for (final source in vault.listSources()) source.id: source,
+      };
+      final confirmed = <OfflineCheckpointReceipt>[];
+      for (final entry in report.confirmedCheckpoints.entries) {
+        final work = library.workById(entry.key);
+        final current = vault.loadProgress(entry.key);
+        final source = sources[work?.summary.sourceId];
+        if (work == null ||
+            current == null ||
+            source?.kind != LibrarySourceKind.peer ||
+            source!.baseUrl != peer.baseUrl ||
+            source.libraryId != libraryId ||
+            OfflineCheckpointReceipt.fingerprintOf(current) !=
+                OfflineCheckpointReceipt.fingerprintOf(entry.value)) {
+          continue;
+        }
+        confirmed.add(
+          OfflineCheckpointReceipt(
+            vaultId: vault.manifest.libraryId,
+            sourceId: source.id,
+            peerServerId: peer.serverId,
+            peerCertificatePin: peer.certificateFingerprint,
+            peerLibraryId: libraryId,
+            deviceId: settings.deviceKey,
+            workId: entry.key,
+            fingerprint: OfflineCheckpointReceipt.fingerprintOf(current),
+            confirmedAt: DateTime.now().toUtc(),
+          ),
+        );
+      }
+      if (confirmed.isNotEmpty) {
+        await settings.saveOfflineCheckpointReceipts(confirmed);
+        onCheckpointsConfirmed?.call();
+      }
+    }
     if (report.entries.isEmpty) return;
     final previous = await vault.loadSyncJournal(peer.serverId);
     await vault.saveSyncJournal(peer.serverId, [

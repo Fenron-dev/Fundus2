@@ -320,6 +320,7 @@ final class FundusRemoteClient {
     String? operationId,
     DateTime? updatedAt,
     bool checkpoint = false,
+    bool confirmCheckpoint = false,
   }) async {
     final decoded = await _put(
       '/v1/libraries/$libraryId/progress/$workId',
@@ -338,6 +339,7 @@ final class FundusRemoteClient {
         // Historie stehen.
         'operation_id': operationId ?? FundusId.generate(),
         'checkpoint': checkpoint,
+        if (confirmCheckpoint) 'confirm_checkpoint': true,
       },
     );
     return RemoteProgress.fromJson(decoded);
@@ -903,6 +905,7 @@ final class RemoteProgress {
     this.deviceId = '',
     this.deviceName = '',
     this.checkpoint = false,
+    this.checkpointPersisted = false,
   });
 
   factory RemoteProgress.fromJson(Map<String, Object?> value) {
@@ -925,6 +928,7 @@ final class RemoteProgress {
       deviceId: '${value['device_id'] ?? ''}',
       deviceName: '${value['device_name'] ?? ''}',
       checkpoint: value['checkpoint'] == true,
+      checkpointPersisted: value['checkpoint_persisted'] == true,
     );
   }
 
@@ -937,6 +941,7 @@ final class RemoteProgress {
   final String deviceId;
   final String deviceName;
   final bool checkpoint;
+  final bool checkpointPersisted;
 }
 
 /// The marks and notes the other side keeps for a work.

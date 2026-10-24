@@ -13,6 +13,8 @@ export 'src/library/work_annotations.dart';
 export 'src/model/device_profile.dart';
 export 'src/model/content_updates.dart';
 export 'src/model/offline_plan.dart';
+export 'src/model/offline_checkpoint_receipt.dart';
+export 'src/model/offline_cleanup.dart';
 export 'src/model/offline_rule.dart';
 export 'src/model/episode_naming.dart';
 export 'src/model/fundus_id.dart';

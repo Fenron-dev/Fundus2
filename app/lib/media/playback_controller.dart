@@ -205,6 +205,7 @@ class PlaybackController extends ChangeNotifier {
   /// der Musik passierte: Schluss, und weiter ging es nur noch über
   /// „Fortsetzen" auf dem Dashboard.
   bool _ended = false;
+  String? _finishedPositionKey;
 
   /// Wie oft dieselbe abgerissene Stelle schon wieder aufgesetzt wurde, und
   /// wo sie lag. Läuft es danach wieder eine Weile, war es ein einzelner
@@ -448,6 +449,12 @@ class PlaybackController extends ChangeNotifier {
     _resumeTries = 0;
     _library = library;
     _work = work;
+    final completed = startAt == null && at == null
+        ? library.loadProgress(work.id)
+        : null;
+    _finishedPositionKey = completed?.finished == true
+        ? completed!.position.withFileId(completed.fileId).syncKey
+        : null;
     // Starting a title opens the player; minimising is the deliberate step.
     _expanded = autoplay;
     _chrome = true;
@@ -1014,8 +1021,30 @@ class PlaybackController extends ChangeNotifier {
     }
     _resumeTries = 0;
     final target = _nextIndex();
+    final library = _library;
+    final work = _work;
+    final source = currentSource;
+    final verifiedEnd =
+        _duration != null &&
+        _duration! > Duration.zero &&
+        _duration! - _position <= const Duration(seconds: 3);
+    if (verifiedEnd &&
+        library != null &&
+        work != null &&
+        source != null &&
+        !library.isReadOnly) {
+      try {
+        library.setFileFinished(
+          workId: work.id,
+          fileId: source.fileId,
+          finished: true,
+        );
+      } on Object {
+        /* Missing completion evidence must keep the copy. */
+      }
+    }
     if (target == null) {
-      saveProgress();
+      saveProgress(finished: verifiedEnd);
       _ended = true;
       _endPlaybackRequest();
       notifyListeners();
@@ -1225,14 +1254,28 @@ class PlaybackController extends ChangeNotifier {
     final source = currentSource;
     if (library == null || work == null || source == null) return;
     if (library.isReadOnly) return;
-    if (_position <= Duration.zero && !finished) return;
+    final key = MediaPosition(
+      kind: MediaPositionKind.time,
+      numericValue: _position.inMilliseconds / 1000,
+      fileId: source.fileId,
+    ).syncKey;
+    _finishedPositionKey = finished || _finishedPositionKey == key ? key : null;
+    final effectiveFinished = _finishedPositionKey == key;
+    if (_position <= Duration.zero && !effectiveFinished) return;
     try {
+      if (finished) {
+        library.setFileFinished(
+          workId: work.id,
+          fileId: source.fileId,
+          finished: true,
+        );
+      }
       library.saveProgress(
         workId: work.id,
         fileId: source.fileId,
         position: _position,
         duration: _duration,
-        finished: finished,
+        finished: effectiveFinished,
         deviceId: deviceId,
         deviceName: deviceName,
         checkpoint: checkpoint,
@@ -1241,7 +1284,7 @@ class PlaybackController extends ChangeNotifier {
       // Der Stand des Werks zeigt immer nur auf eine — wer zwischen zwei
       // Folgen wechselt, verlöre sonst jedes Mal die andere.
       if (work.mediaType?.keepsPositionPerFile ?? false) {
-        if (finished) {
+        if (effectiveFinished) {
           library.clearFilePosition(workId: work.id, fileId: source.fileId);
           _perFile = {..._perFile}..remove(source.fileId);
         } else {

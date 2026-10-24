@@ -14,6 +14,7 @@ final class SyncReport {
     this.failures = const [],
     this.entries = const [],
     this.agreedMarks = const {},
+    this.confirmedCheckpoints = const {},
   });
 
   final int pulledProgress;
@@ -36,6 +37,7 @@ final class SyncReport {
 
   /// Where both sides ended up, per work — the baseline for the next run.
   final Map<String, String> agreedMarks;
+  final Map<String, LibraryPlaybackProgress> confirmedCheckpoints;
 
   bool get changedAnything =>
       pulledProgress > 0 ||
@@ -75,6 +77,7 @@ final class SyncReport {
     failures: [...failures, ?failure],
     entries: [...entries, ?entry],
     agreedMarks: agreedMarks,
+    confirmedCheckpoints: confirmedCheckpoints,
   );
 }
 
@@ -100,12 +103,15 @@ final class FundusSync {
     this.deviceName = '',
     this.peerName = '',
     this.baseline = const SyncBaseline({}),
+    this.checkpointConfirmationsRequired = const {},
   }) : _agreed = Map.of(baseline.marks);
 
   /// What both sides agreed on last time, per work. Without it a comparison
   /// of two positions cannot tell „the other one moved" from „both moved".
   final SyncBaseline baseline;
   final Map<String, String> _agreed;
+  final Set<String> checkpointConfirmationsRequired;
+  final Map<String, LibraryPlaybackProgress> _confirmed = {};
 
   final FundusLibrary library;
   final FundusRemoteClient client;
@@ -158,6 +164,7 @@ final class FundusSync {
       failures: report.failures,
       entries: report.entries,
       agreedMarks: Map.unmodifiable(_agreed),
+      confirmedCheckpoints: Map.unmodifiable(_confirmed),
     );
   }
 
@@ -200,6 +207,18 @@ final class FundusSync {
 
     // The same write coming back is not a change.
     if (_samePlace(mine, theirs)) {
+      // An autosave at this position does not prove the closing checkpoint
+      // was saved. Explicit cleanup opt-in requests a durable acknowledgement.
+      if (checkpointConfirmationsRequired.contains(workId) &&
+          mine.checkpoint &&
+          mine.deviceId == deviceId) {
+        await _push(workId, mine);
+        _remember(workId, mine);
+        return report._add(
+          pushedProgress: 1,
+          entry: _entry(workId, SyncDecision.pushed, mine: mine),
+        );
+      }
       _remember(workId, mine);
       return report;
     }
@@ -428,18 +447,34 @@ final class FundusSync {
     );
   }
 
-  Future<void> _push(String workId, LibraryPlaybackProgress mine) =>
-      client.saveProgress(
-        libraryId: libraryId,
-        workId: workId,
-        fileId: mine.fileId ?? '',
-        position: mine.position,
-        finished: mine.finished,
-        deviceId: deviceId,
-        deviceName: deviceName,
-        updatedAt: mine.updatedAt,
-        checkpoint: mine.checkpoint,
-      );
+  Future<void> _push(String workId, LibraryPlaybackProgress mine) async {
+    final confirm =
+        checkpointConfirmationsRequired.contains(workId) &&
+        mine.checkpoint &&
+        mine.deviceId == deviceId;
+    final acknowledged = await client.saveProgress(
+      libraryId: libraryId,
+      workId: workId,
+      fileId: mine.fileId ?? '',
+      position: mine.position,
+      finished: mine.finished,
+      deviceId: deviceId,
+      deviceName: deviceName,
+      updatedAt: mine.updatedAt,
+      checkpoint: mine.checkpoint,
+      confirmCheckpoint: confirm,
+    );
+    if (confirm &&
+        acknowledged != null &&
+        acknowledged.checkpointPersisted &&
+        acknowledged.checkpoint &&
+        acknowledged.deviceId == deviceId &&
+        acknowledged.workId == workId &&
+        acknowledged.revision > 0 &&
+        _samePlace(mine, acknowledged)) {
+      _confirmed[workId] = mine;
+    }
+  }
 
   Future<SyncReport> _syncMarks(String workId, SyncReport report) async {
     final mine = library.loadAnnotations(workId);

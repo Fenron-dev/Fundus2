@@ -126,11 +126,15 @@ void main() {
       expect(reader.volumeIndex, 1);
       expect(reader.pageIndex, 0);
       expect(reader.volumes[1].title, contains('Band 02'));
+      expect(library.library!.finishedFiles(library.works.first.id), {
+        reader.volumes.first.fileId,
+      });
     });
 
     test('vor der ersten Seite steht das Ende des vorigen Bands', () async {
       await openWork();
       await reader.openVolume(1);
+      expect(library.library!.finishedFiles(library.works.first.id), isEmpty);
       await reader.previousPage();
 
       expect(reader.volumeIndex, 0);
@@ -145,6 +149,27 @@ void main() {
       expect(reader.pageIndex, 0);
       expect(reader.failure, isNull);
     });
+
+    test(
+      'a completed book remains finished on close and can be re-read',
+      () async {
+        await openWork();
+        final work = library.works.first;
+        await reader.openVolume(1);
+        await reader.goToPage(19);
+        await reader.nextPage();
+        expect(library.library!.loadProgress(work.id)!.finished, isTrue);
+        reader.close();
+        expect(library.library!.loadProgress(work.id)!.finished, isTrue);
+        expect(library.library!.loadProgress(work.id)!.checkpoint, isTrue);
+        await reader.open(library.library!, work);
+        reader.close();
+        expect(library.library!.loadProgress(work.id)!.finished, isTrue);
+        await reader.open(library.library!, work);
+        await reader.goToPage(0);
+        expect(library.library!.loadProgress(work.id)!.finished, isFalse);
+      },
+    );
 
     test(
       'entpackt wird die Seite und ihre Nachbarin, nicht der Band',

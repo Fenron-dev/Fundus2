@@ -5,7 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Color, ThemeMode;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fundus_design/fundus_design.dart';
-import 'package:fundus_core/fundus_core.dart' show OfflinePolicy, OfflineRule;
+import 'package:fundus_core/fundus_core.dart'
+    show OfflinePolicy, OfflineRule, OfflineCheckpointReceipt;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -212,6 +213,37 @@ class AppSettings extends ChangeNotifier {
   OfflinePolicy get offlinePolicy => _values['offline_policy'] == null
       ? const OfflinePolicy()
       : OfflinePolicy.fromJson(_values['offline_policy']);
+
+  List<OfflineCheckpointReceipt> get offlineCheckpointReceipts {
+    final raw = _values['offline_checkpoint_receipts'];
+    if (raw == null) return const [];
+    if (raw is! Map ||
+        raw['format_version'] != 1 ||
+        raw['receipts'] is! List ||
+        (raw['receipts'] as List).length > 5000) {
+      throw const FormatException('Nicht unterstützte Offline-Bestätigungen.');
+    }
+    return (raw['receipts'] as List)
+        .map(OfflineCheckpointReceipt.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<void> saveOfflineCheckpointReceipts(
+    Iterable<OfflineCheckpointReceipt> additions,
+  ) {
+    final byKey = <String, OfflineCheckpointReceipt>{};
+    for (final receipt in [...offlineCheckpointReceipts, ...additions]) {
+      final validated = OfflineCheckpointReceipt.fromJson(receipt.toJson());
+      byKey['${validated.vaultId}:${validated.workId}:${validated.deviceId}'] =
+          validated;
+    }
+    final recent = byKey.values.toList()
+      ..sort((a, b) => b.confirmedAt.compareTo(a.confirmedAt));
+    return _set('offline_checkpoint_receipts', {
+      'format_version': 1,
+      'receipts': recent.take(5000).map((receipt) => receipt.toJson()).toList(),
+    });
+  }
 
   Future<void> setOfflinePolicy(OfflinePolicy policy) {
     offlinePolicy;

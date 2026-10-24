@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/data/download_controller.dart';
 import 'package:fundus/data/offline_controller.dart';
+import 'package:fundus/data/sync_controller.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/peer_connection.dart';
 import 'package:fundus/data/peer_library.dart';
@@ -103,10 +105,16 @@ void main() {
     bool wifi = true,
     int next = 1,
     int budget = 1048576,
+    bool cleanup = false,
   }) async {
     await settings.setOfflineConfiguration(
       library.library!.manifest.libraryId,
-      OfflinePolicy(enabled: true, nextFiles: next, storageBudgetBytes: budget),
+      OfflinePolicy(
+        enabled: true,
+        nextFiles: next,
+        storageBudgetBytes: budget,
+        removeConsumed: cleanup,
+      ),
       [
         OfflineRule(
           scope: OfflineRuleScope.work,
@@ -125,6 +133,209 @@ void main() {
     addTearDown(controller.dispose);
     return controller;
   }
+
+  Future<
+    ({
+      OfflineController offline,
+      SyncController sync,
+      String first,
+      String last,
+      String path,
+    })
+  >
+  cleanupScenario() async {
+    final offline = await smart(cleanup: true);
+    await downloads.download(theWork());
+    await settle();
+    final vault = library.library!;
+    final files = vault.contentFiles(theWork().id);
+    vault.setFileFinished(
+      workId: theWork().id,
+      fileId: files.first.fileId,
+      finished: true,
+    );
+    vault.saveProgress(
+      workId: theWork().id,
+      fileId: files.last.fileId,
+      position: const Duration(seconds: 30),
+      deviceId: settings.deviceKey,
+      checkpoint: true,
+    );
+    await settings.savePeer(
+      PeerConnection(
+        serverId: 'server-test',
+        name: 'Mac',
+        baseUrl: 'http://localhost:${socket.port}',
+        token: 'geheim',
+        libraryId: theirs.manifest.libraryId,
+      ),
+    );
+    final sync = SyncController(settings: settings, library: library);
+    addTearDown(sync.dispose);
+    return (
+      offline: offline,
+      sync: sync,
+      first: files.first.fileId,
+      last: files.last.fileId,
+      path: files.first.offlinePath!,
+    );
+  }
+
+  test(
+    'consumed copy is retained until its own checkpoint has a durable server receipt',
+    () async {
+      final scenario = await cleanupScenario();
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isTrue);
+      final before = OfflineCheckpointReceipt.fingerprintOf(
+        library.library!.loadProgress(theWork().id)!,
+      );
+      final report = await scenario.sync.syncWith(settings.peers.single);
+      expect(report!.failures, isEmpty);
+      expect(settings.offlineCheckpointReceipts, hasLength(1));
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isFalse);
+      expect(downloads.offlineFileCount(theWork().id), 1);
+      expect(
+        OfflineCheckpointReceipt.fingerprintOf(
+          library.library!.loadProgress(theWork().id)!,
+        ),
+        before,
+      );
+      expect(
+        await File(
+          theirs.playbackTracks(theWork().id).first.absolutePath,
+        ).exists(),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'a newer local checkpoint invalidates a previous cleanup receipt',
+    () async {
+      final scenario = await cleanupScenario();
+      await scenario.sync.syncWith(settings.peers.single);
+      library.library!.saveProgress(
+        workId: theWork().id,
+        fileId: scenario.last,
+        position: const Duration(seconds: 45),
+        deviceId: settings.deviceKey,
+        checkpoint: true,
+      );
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isTrue);
+    },
+  );
+
+  test('removal permission is rechecked after filesystem validation', () async {
+    final scenario = await cleanupScenario();
+    var checks = 0;
+    final removed = await downloads.removeFiles(
+      theWork().id,
+      only: {scenario.first},
+      verifyRevision: true,
+      mayRemove: (_) => ++checks == 1,
+    );
+    expect(checks, 2);
+    expect(removed, 0);
+    expect(await File(scenario.path).exists(), isTrue);
+    expect(downloads.offlineFileCount(theWork().id), 2);
+  });
+
+  test(
+    'active, hidden and backgrounded works are not automatically cleaned',
+    () async {
+      final scenario = await cleanupScenario();
+      await scenario.sync.syncWith(settings.peers.single);
+      final id = theWork().id;
+      scenario.offline.inUseWorkIds = () => {id};
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isTrue);
+      scenario.offline.inUseWorkIds = () => {};
+      library.hides = (_) => true;
+      library.refresh();
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isTrue);
+      library.hides = null;
+      library.refresh();
+      scenario.offline.setForeground(false);
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isTrue);
+    },
+  );
+
+  test(
+    'an unresolved position choice or stale media revision keeps the copy',
+    () async {
+      final scenario = await cleanupScenario();
+      await scenario.sync.syncWith(settings.peers.single);
+      final vault = library.library!;
+      vault.recordProgressChoice(
+        LibraryProgressChoice(
+          workId: theWork().id,
+          position: MediaPosition(
+            kind: MediaPositionKind.time,
+            numericValue: 10,
+            fileId: scenario.last,
+          ),
+          fileId: scenario.last,
+          finished: false,
+          deviceId: 'other',
+          deviceName: 'Other',
+          updatedAt: DateTime.now(),
+          recordedAt: DateTime.now(),
+        ),
+      );
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isTrue);
+      vault.clearProgressChoice(theWork().id);
+      final marker = File('${scenario.path}.meta');
+      final value =
+          jsonDecode(await marker.readAsString()) as Map<String, dynamic>;
+      value['revision'] = 'outdated';
+      await marker.writeAsString(jsonEncode(value));
+      await scenario.offline.run(force: true);
+      expect(await File(scenario.path).exists(), isTrue);
+    },
+  );
+
+  test(
+    'neither manual nor automatic removal deletes an original outside the managed cache',
+    () async {
+      final scenario = await cleanupScenario();
+      await scenario.sync.syncWith(settings.peers.single);
+      final original = File('${temporary.path}/original.mp3');
+      await original.writeAsBytes([9, 8, 7]);
+      library.library!.setOfflineCopy(
+        fileId: scenario.first,
+        path: original.path,
+      );
+      await scenario.offline.run(force: true);
+      expect(await original.readAsBytes(), [9, 8, 7]);
+      await downloads.remove(theWork().id);
+      expect(await original.readAsBytes(), [9, 8, 7]);
+    },
+  );
+
+  test(
+    'a symlinked cache directory cannot authorize deleting a linked original',
+    () async {
+      final scenario = await cleanupScenario();
+      await scenario.sync.syncWith(settings.peers.single);
+      final folder = File(scenario.path).parent;
+      await folder.rename('${folder.path}-held');
+      final originals = Directory('${temporary.path}/originals');
+      await originals.create();
+      final original = File(
+        '${originals.path}/${File(scenario.path).uri.pathSegments.last}',
+      );
+      await original.writeAsBytes([9, 8, 7]);
+      await Link(folder.path).create(originals.path);
+      await scenario.offline.run(force: true);
+      expect(await original.readAsBytes(), [9, 8, 7]);
+    },
+  );
 
   test(
     'offline rules are installation-local, versioned and separated by vault',
