@@ -34,6 +34,7 @@ import '../../media/track_preference.dart';
 import 'settings_catalog.dart';
 import 'maintenance_page.dart';
 import 'settings_shell.dart';
+import 'speech_settings_page.dart';
 import '../library/metadata_import_conflict_dialog.dart';
 
 /// Settings, with the scope of each one visible.
@@ -54,6 +55,7 @@ class SettingsScreen extends StatelessWidget {
       'darstellung' => const _Appearance(),
       'wiedergabe' => const _Playback(),
       'reader' => const _Reader(),
+      'tts' => const SpeechSettingsPage(),
       'suche' => const _Search(),
       'wartung' => const MaintenancePage(),
       'bibliotheken' => const _Libraries(),

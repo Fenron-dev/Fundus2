@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' hide RepeatMode;
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
+import 'package:fundus_design/fundus_design.dart' show FundusOrigin;
 
 import '../app/fundus_log.dart';
 import '../data/work_view.dart';
@@ -554,6 +555,7 @@ class PlaybackController extends ChangeNotifier {
     required String fileId,
     required String title,
     required String path,
+    Uri? streamUri,
     double? rate,
   }) async {
     if (speechSessionId != null && _speechSessionId != speechSessionId) {
@@ -571,7 +573,15 @@ class PlaybackController extends ChangeNotifier {
     _library = null;
     _work = work;
     _sources = [
-      LocalFileSource(fileId: 'speech:$fileId', title: title, path: path),
+      if (streamUri != null)
+        RemoteFileSource(
+          fileId: 'speech:$fileId',
+          title: title,
+          uri: streamUri,
+          origin: FundusOrigin.local,
+        )
+      else
+        LocalFileSource(fileId: 'speech:$fileId', title: title, path: path),
     ];
     _owners = [work];
     _resume = const [];
@@ -1123,6 +1133,13 @@ class PlaybackController extends ChangeNotifier {
       await seek(chapter.position);
     }
     notifyListeners();
+  }
+
+  /// Per-work TTS speed must never overwrite the user's audiobook/music habit.
+  Future<void> setSpeechRate(double value) async {
+    if (isSpeechSessionActive || isPlayingSpeech) {
+      await _engineOrNull?.setRate(value.clamp(0.5, 2.5));
+    }
   }
 
   Future<void> setRate(double value) async {

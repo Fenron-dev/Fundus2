@@ -13,7 +13,7 @@ import '../../media/text_reader_controller.dart';
 import '../../media/playback_preference.dart';
 import '../../media/phonon_model_store.dart';
 import '../../media/text_speech_controller.dart';
-import 'speech_model_status.dart';
+import '../settings/speech_settings_page.dart';
 
 /// The reader for running text, laid over the shell.
 ///
@@ -53,6 +53,12 @@ class TextReaderScreen extends StatelessWidget {
                 ),
               ),
             const Expanded(child: _TextSurface()),
+            ListenableBuilder(
+              listenable: scope.textSpeech,
+              builder: (context, _) => scope.textSpeech.isActive
+                  ? const _SpeechTransport()
+                  : const SizedBox.shrink(),
+            ),
             // Die Leiste unten ist der Daumenbereich, wie beim Manga-Leser:
             // das Kapitel davor, wo man steht, das Kapitel danach. Am Fuß
             // eines Kapitels steht dasselbe noch einmal — dort aber erst,
@@ -177,7 +183,7 @@ class _TextReaderBar extends StatelessWidget {
               );
             },
           ),
-          if (Platform.isAndroid) const _TextSleepTimerButton(),
+          const _TextSleepTimerButton(),
           if (scope.textSpeech.isActive &&
               scope.textSpeech.state != TextSpeechState.failed)
             IconButton(
@@ -209,6 +215,11 @@ class _TextReaderBar extends StatelessWidget {
               color: ink,
             ),
             tooltip: 'Schrift und Satz',
+          ),
+          IconButton(
+            onPressed: () => _showSpeechOptions(context),
+            icon: Icon(Icons.record_voice_over_outlined, color: ink),
+            tooltip: 'Sprachprofil und Vorlesetempo',
           ),
           // Kein Vollbild-Knopf mehr: der Leser geht ohnehin ins Vollbild,
           // sobald die Leiste weg ist. An seiner Stelle das, was beim Lesen
@@ -280,14 +291,331 @@ class _TextSleepTimerButton extends StatelessWidget {
   }
 }
 
+class _SpeechTransport extends StatelessWidget {
+  const _SpeechTransport();
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final speech = scope.textSpeech;
+    final paused = speech.state == TextSpeechState.paused;
+    return SafeArea(
+      top: false,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: FundusSpeechMetrics.transportWidth,
+          ),
+          child: Material(
+            color: context.fundus.surface,
+            borderRadius: FundusRadius.lgAll,
+            child: Padding(
+              padding: const EdgeInsets.all(FundusSpace.x2),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: FundusSpace.x2,
+                children: [
+                  TextButton(
+                    onPressed: () => speech.skipSentences(-2),
+                    child: const Text('−2 Sätze'),
+                  ),
+                  IconButton(
+                    onPressed: () => speech.skipSentences(-1),
+                    icon: const Icon(Icons.skip_previous_rounded),
+                    tooltip: 'Einen Satz zurück',
+                  ),
+                  IconButton.filled(
+                    onPressed: paused ? speech.resume : speech.pause,
+                    icon: Icon(
+                      paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                    ),
+                    tooltip: paused
+                        ? 'Vorlesen fortsetzen'
+                        : 'Vorlesen pausieren',
+                  ),
+                  IconButton(
+                    onPressed: speech.stop,
+                    icon: const Icon(Icons.stop_rounded),
+                    tooltip: 'Vorlesen beenden',
+                  ),
+                  IconButton(
+                    onPressed: () => speech.skipSentences(1),
+                    icon: const Icon(Icons.skip_next_rounded),
+                    tooltip: 'Einen Satz weiter',
+                  ),
+                  TextButton(
+                    onPressed: () => _showSpeechOptions(context),
+                    child: Text(
+                      '${scope.settings.speechRate(scope.textReader.work!.id).toStringAsFixed(2)}×',
+                    ),
+                  ),
+                  const _TextSleepTimerButton(),
+                  IconButton(
+                    onPressed: () => _showSpeechDictionary(context),
+                    icon: const Icon(Icons.menu_book_outlined),
+                    tooltip: 'Aussprachewörterbuch',
+                  ),
+                  IconButton(
+                    onPressed: () => _showSpeechOptions(context),
+                    icon: const Icon(Icons.record_voice_over_outlined),
+                    tooltip: 'Sprachprofil auswählen',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showSpeechOptions(BuildContext context) async {
+  final scope = FundusScope.of(context);
+  final workId = scope.textReader.work?.id;
+  if (workId == null) return;
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheet) => ListenableBuilder(
+      listenable: Listenable.merge([scope.settings, scope.textSpeech]),
+      builder: (sheet, _) {
+        final selected = scope.settings.speechProfileId(workId);
+        final profiles = scope.settings.speechProfiles;
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(FundusSpace.x6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Vorlesen', style: Theme.of(sheet).textTheme.titleLarge),
+                const SizedBox(height: FundusSpace.x3),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('$selected:${profiles.length}'),
+                  initialValue: profiles.any((p) => p.id == selected)
+                      ? selected
+                      : '',
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Sprach- und Stimmprofil',
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text('Automatisch nach Sprache'),
+                    ),
+                    for (final profile in profiles)
+                      DropdownMenuItem(
+                        value: profile.id,
+                        child: Text(profile.name),
+                      ),
+                  ],
+                  onChanged: (id) async {
+                    final running = scope.textSpeech.isActive;
+                    if (running) await scope.textSpeech.stop();
+                    await scope.settings.setSpeechProfileId(
+                      workId,
+                      id == '' ? null : id,
+                    );
+                    if (running && sheet.mounted) {
+                      unawaited(_toggleTextSpeech(sheet));
+                    }
+                  },
+                ),
+                const SizedBox(height: FundusSpace.x3),
+                Text(
+                  'Vorlesetempo · ${scope.settings.speechRate(workId).toStringAsFixed(2)}×',
+                ),
+                Slider(
+                  value: scope.settings.speechRate(workId),
+                  min: .5,
+                  max: 2.5,
+                  divisions: 20,
+                  onChanged: (value) async {
+                    await scope.settings.setSpeechRate(workId, value);
+                    await scope.textSpeech.setRate(value);
+                  },
+                ),
+                TextButton.icon(
+                  onPressed: () => _showSpeechDictionary(sheet),
+                  icon: const Icon(Icons.menu_book_outlined),
+                  label: const Text('Aussprache ansehen / hinzufügen'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => showDialog<void>(
+                    context: sheet,
+                    builder: (dialog) => Dialog(
+                      child: SizedBox(
+                        width: FundusSpeechMetrics.dialogWidth,
+                        height: FundusSpeechMetrics.settingsHeight,
+                        child: Column(
+                          children: [
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: IconButton(
+                                onPressed: () => Navigator.pop(dialog),
+                                icon: const Icon(Icons.close),
+                                tooltip: 'Einstellungen schließen',
+                              ),
+                            ),
+                            const Expanded(child: SpeechSettingsPage()),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.settings_outlined),
+                  label: const Text('Profile und Wörterbücher verwalten'),
+                ),
+                if (profiles.isEmpty)
+                  const Text(
+                    'Dein bisheriger Modellordner bleibt verwendbar. Für mehrere Sprachen oder separate Stimmenordner erstelle hier ein Profil.',
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
+Future<void> _showSpeechDictionary(BuildContext context, {String? word}) async {
+  final scope = FundusScope.of(context);
+  final workId = scope.textReader.work?.id;
+  if (workId == null) return;
+  Future<void> edit(
+    BuildContext dialog, {
+    String? source,
+    String? spoken,
+  }) async {
+    final entry = await editSpeechPronunciation(
+      dialog,
+      source: source,
+      spoken: spoken,
+    );
+    if (entry == null) return;
+    final entries = {...scope.settings.speechPronunciations(workId)};
+    if (source != null) entries.remove(source);
+    entries[entry.key] = entry.value;
+    await scope.settings.setSpeechPronunciations(workId, entries);
+    final language =
+        scope.textReader.resolveSpeechLanguage()?.language ??
+        SpeechLanguage.english;
+    final profile = scope.settings.speechProfileFor(
+      workId,
+      SpeechLanguageResolver.code(language),
+    );
+    scope.textSpeech.updatePronunciations(
+      scope.settings.effectiveSpeechPronunciations(workId, profile),
+    );
+  }
+
+  if (word != null) {
+    await edit(context, source: word);
+    return;
+  }
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheet) => ListenableBuilder(
+      listenable: scope.settings,
+      builder: (sheet, _) {
+        final language =
+            scope.textReader.resolveSpeechLanguage()?.language ??
+            SpeechLanguage.english;
+        final profile = scope.settings.speechProfileFor(
+          workId,
+          SpeechLanguageResolver.code(language),
+        );
+        final own = scope.settings.speechPronunciations(workId);
+        final effective = scope.settings.effectiveSpeechPronunciations(
+          workId,
+          profile,
+        );
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.all(FundusSpace.x6),
+            children: [
+              Text(
+                'Aussprache für dieses Werk',
+                style: Theme.of(sheet).textTheme.titleLarge,
+              ),
+              const Text(
+                'Tippe auf einen Eintrag, um ihn für dieses Werk anzupassen. Bereits gepufferte Sätze verwenden noch die vorige Aussprache.',
+              ),
+              for (final entry in effective.entries)
+                ListTile(
+                  title: Text(entry.key),
+                  subtitle: Text(
+                    '${entry.value}${own.containsKey(entry.key) ? ' · dieses Werk' : ' · Profil-Wörterbuch'}',
+                  ),
+                  onTap: () =>
+                      edit(sheet, source: entry.key, spoken: entry.value),
+                  trailing: own.containsKey(entry.key)
+                      ? IconButton(
+                          tooltip: 'Werkaussprache entfernen',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            final entries = {...own}..remove(entry.key);
+                            await scope.settings.setSpeechPronunciations(
+                              workId,
+                              entries,
+                            );
+                            scope.textSpeech.updatePronunciations(
+                              scope.settings.effectiveSpeechPronunciations(
+                                workId,
+                                profile,
+                              ),
+                            );
+                          },
+                        )
+                      : null,
+                ),
+              TextButton.icon(
+                onPressed: () => edit(sheet),
+                icon: const Icon(Icons.add),
+                label: const Text('Wort hinzufügen'),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+}
+
 Future<void> _toggleTextSpeech(BuildContext context) async {
   final scope = FundusScope.of(context);
   final requestedWorkId = scope.textReader.work?.id;
   final requestedVolume = scope.textReader.volumeIndex;
   final requestedChapter = scope.textReader.chapterIndex;
-  var modelDirectory = scope.settings.phononModelDirectory;
+  final resolvedLanguage = scope.textReader
+      .resolveSpeechLanguage(
+        workOverride: requestedWorkId == null
+            ? null
+            : scope.settings.speechLanguageOverride(requestedWorkId),
+      )
+      ?.language;
+  final profile = requestedWorkId == null
+      ? null
+      : scope.settings.speechProfileFor(
+          requestedWorkId,
+          resolvedLanguage == null
+              ? ''
+              : SpeechLanguageResolver.code(resolvedLanguage),
+        );
+  var modelDirectory =
+      profile?.modelDirectory ?? scope.settings.phononModelDirectory;
   if (modelDirectory != null && Platform.isMacOS) {
     await scope.vaultAccess.unlock(modelDirectory);
+    if (profile?.voicesDirectory case final voicesDirectory?) {
+      await scope.vaultAccess.unlock(voicesDirectory);
+    }
     if (!context.mounted) return;
   }
   if (!scope.textSpeech.isActive &&
@@ -314,9 +642,9 @@ Future<void> _toggleTextSpeech(BuildContext context) async {
   }
   final workId = scope.textReader.work?.id;
   final rate = workId == null ? 1.0 : scope.settings.speechRate(workId);
-  final workOverride = workId == null
-      ? null
-      : scope.settings.speechLanguageOverride(workId);
+  final workOverride =
+      profile?.language ??
+      (workId == null ? null : scope.settings.speechLanguageOverride(workId));
   final language = scope.textReader
       .resolveSpeechLanguage(workOverride: workOverride)
       ?.language;
@@ -327,72 +655,17 @@ Future<void> _toggleTextSpeech(BuildContext context) async {
     rate: rate,
     pronunciations: workId == null
         ? const {}
-        : scope.settings.speechPronunciations(workId),
-    voice: workId == null || language == null
-        ? null
-        : scope.settings.speechVoice(
-            workId,
-            SpeechLanguageResolver.code(language),
-          ),
+        : scope.settings.effectiveSpeechPronunciations(workId, profile),
+    voicesDirectory: profile?.voicesDirectory,
+    voice:
+        profile?.voice ??
+        (workId == null || language == null
+            ? null
+            : scope.settings.speechVoice(
+                workId,
+                SpeechLanguageResolver.code(language),
+              )),
   );
-}
-
-String _speechLanguageLabel(SpeechLanguage language) => switch (language) {
-  SpeechLanguage.english => 'English',
-  SpeechLanguage.german => 'Deutsch',
-  SpeechLanguage.french => 'Französisch',
-  SpeechLanguage.spanish => 'Spanisch',
-  SpeechLanguage.portuguese => 'Portugiesisch',
-};
-
-Future<MapEntry<String, String>?> _editSpeechPronunciation(
-  BuildContext context, {
-  String? source,
-  String? spoken,
-}) async {
-  final sourceController = TextEditingController(text: source);
-  final spokenController = TextEditingController(text: spoken);
-  final result = await showDialog<MapEntry<String, String>>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(
-        source == null ? 'Aussprache hinzufügen' : 'Aussprache ändern',
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: sourceController,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Wort im Buch'),
-          ),
-          const SizedBox(height: FundusSpace.x2),
-          TextField(
-            controller: spokenController,
-            decoration: const InputDecoration(labelText: 'So aussprechen'),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Abbrechen'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final word = sourceController.text.trim();
-            final pronunciation = spokenController.text.trim();
-            if (word.isEmpty || pronunciation.isEmpty) return;
-            Navigator.pop(dialogContext, MapEntry(word, pronunciation));
-          },
-          child: const Text('Speichern'),
-        ),
-      ],
-    ),
-  );
-  sourceController.dispose();
-  spokenController.dispose();
-  return result;
 }
 
 Future<void> _chooseTextSpeechModel(
@@ -853,6 +1126,19 @@ class _ParagraphState extends State<_Paragraph> {
           buttonItems: [
             if (selected)
               ContextMenuButtonItem(
+                label: 'Aussprache hinzufügen',
+                onPressed: () {
+                  final word = text
+                      .substring(selection.start, selection.end)
+                      .trim();
+                  state.hideToolbar();
+                  if (word.isNotEmpty) {
+                    _showSpeechDictionary(context, word: word);
+                  }
+                },
+              ),
+            if (selected)
+              ContextMenuButtonItem(
                 label: 'Markieren',
                 onPressed: () {
                   reader.addHighlight(
@@ -1015,90 +1301,6 @@ class _ChapterFoot extends StatelessWidget {
 Future<void> _showTextSettings(BuildContext context) {
   final scope = FundusScope.of(context);
   final reader = scope.textReader;
-  final workId = reader.work?.id;
-  var selectedSpeechLanguage = workId == null
-      ? SpeechLanguage.english
-      : SpeechLanguageResolver.parse(
-              scope.settings.speechLanguageOverride(workId),
-            ) ??
-            reader.resolveSpeechLanguage()?.language ??
-            SpeechLanguage.english;
-  var selectedSpeechVoice = workId == null
-      ? null
-      : scope.settings.speechVoice(
-          workId,
-          SpeechLanguageResolver.code(selectedSpeechLanguage),
-        );
-  var selectedSpeechRate = workId == null
-      ? 1.0
-      : scope.settings.speechRate(workId);
-  var pronunciations = workId == null
-      ? <String, String>{}
-      : scope.settings.speechPronunciations(workId);
-  var supportedSpeechLanguages = <SpeechLanguage>[];
-  var availableSpeechVoices = <String>[];
-  var loadingSpeechVoices = false;
-  String? speechOptionsError;
-
-  Future<void> loadSpeechVoices(
-    BuildContext sheetContext,
-    void Function(void Function()) setSheetState,
-  ) async {
-    final directory = scope.settings.phononModelDirectory;
-    if (directory == null) {
-      setSheetState(
-        () => speechOptionsError = 'Wähle zuerst ein Phonon-Modell.',
-      );
-      return;
-    }
-    setSheetState(() {
-      loadingSpeechVoices = true;
-      speechOptionsError = null;
-    });
-    try {
-      if (Platform.isMacOS) await scope.vaultAccess.unlock(directory);
-      final languages = await scope.textSpeech.availableLanguages(
-        modelDirectory: directory,
-        language: selectedSpeechLanguage,
-      );
-      final voices = await scope.textSpeech.availableVoices(
-        modelDirectory: directory,
-        language: selectedSpeechLanguage,
-      );
-      if (!sheetContext.mounted) return;
-      setSheetState(() {
-        supportedSpeechLanguages = languages;
-        availableSpeechVoices = voices;
-        if (selectedSpeechVoice != null &&
-            !voices.contains(selectedSpeechVoice)) {
-          selectedSpeechVoice = null;
-        }
-        selectedSpeechVoice ??= voices.contains('default')
-            ? 'default'
-            : voices.isNotEmpty
-            ? voices.first
-            : null;
-      });
-      if (workId != null && selectedSpeechVoice != null) {
-        await scope.settings.setSpeechVoice(
-          workId,
-          SpeechLanguageResolver.code(selectedSpeechLanguage),
-          selectedSpeechVoice,
-        );
-      }
-    } on Object catch (error) {
-      if (!sheetContext.mounted) return;
-      setSheetState(() {
-        speechOptionsError = error.toString().replaceFirst('Bad state: ', '');
-        supportedSpeechLanguages = [];
-        availableSpeechVoices = [];
-      });
-    } finally {
-      if (sheetContext.mounted) {
-        setSheetState(() => loadingSpeechVoices = false);
-      }
-    }
-  }
 
   return showModalBottomSheet<void>(
     context: context,
@@ -1206,261 +1408,6 @@ Future<void> _showTextSettings(BuildContext context) {
                     color: context.fundus.textFaint,
                   ),
                 ),
-                const SizedBox(height: FundusSpace.x6),
-                Text(
-                  'Vorlesen',
-                  style: Theme.of(sheetContext).textTheme.labelSmall,
-                ),
-                const SizedBox(height: FundusSpace.x2),
-                DropdownButtonFormField<SpeechLanguage>(
-                  initialValue: selectedSpeechLanguage,
-                  decoration: const InputDecoration(labelText: 'Sprache'),
-                  items: [
-                    for (final language in SpeechLanguage.values)
-                      DropdownMenuItem(
-                        value: language,
-                        child: Text(_speechLanguageLabel(language)),
-                      ),
-                  ],
-                  onChanged: (language) async {
-                    if (language == null) return;
-                    selectedSpeechLanguage = language;
-                    selectedSpeechVoice = null;
-                    availableSpeechVoices = [];
-                    supportedSpeechLanguages = [];
-                    setSheetState(() {});
-                    if (workId != null) {
-                      await scope.settings.setSpeechLanguageOverride(
-                        workId,
-                        SpeechLanguageResolver.code(language),
-                      );
-                    }
-                    if (sheetContext.mounted &&
-                        scope.settings.phononModelDirectory != null) {
-                      await loadSpeechVoices(sheetContext, setSheetState);
-                    }
-                  },
-                ),
-                const SizedBox(height: FundusSpace.x2),
-                Text(
-                  scope.settings.phononModelDirectory == null
-                      ? Platform.isAndroid
-                            ? 'Fundus lädt das Vorlesemodell vom gekoppelten Server und speichert es für unterwegs. Am Server muss ein CPU-Modell mit Stimme eingerichtet sein. Novels ohne Sprachangabe werden auf Englisch vorgelesen.'
-                            : 'Noch kein lokales Phonon-Modell ausgewählt. Novels ohne Sprachangabe werden auf Englisch vorgelesen.'
-                      : 'Modellordner: ${scope.settings.phononModelDirectory!.split(Platform.pathSeparator).last}',
-                  style: Theme.of(sheetContext).textTheme.bodySmall,
-                ),
-                const SizedBox(height: FundusSpace.x2),
-                Text(
-                  'Modelle werden nicht mit Fundus ausgeliefert und bleiben '
-                  'auf diesem Gerät. Laut Phonon-Projekt steht phonon-31m-en '
-                  'unter Apache 2.0; phonon-40m-Modelle einschließlich Englisch '
-                  'unter CC BY-NC 4.0. Bitte Lizenz und Herkunft des gewählten '
-                  'Archivs prüfen. Importierte Modelle werden lokal auf '
-                  'Dateiveränderungen geprüft; das ist kein Echtheitsnachweis.',
-                  style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
-                    color: context.fundus.textFaint,
-                  ),
-                ),
-                const SizedBox(height: FundusSpace.x2),
-                if (Platform.isAndroid) ...[
-                  const SpeechModelStatus(),
-                  const SizedBox(height: FundusSpace.x2),
-                ],
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    await _chooseTextSpeechModel(sheetContext);
-                    if (sheetContext.mounted) {
-                      setSheetState(() {});
-                      await loadSpeechVoices(sheetContext, setSheetState);
-                    }
-                  },
-                  icon: const Icon(Icons.folder_open_outlined),
-                  label: Text(
-                    Platform.isAndroid
-                        ? 'Modellarchiv importieren'
-                        : 'Modellordner wählen',
-                  ),
-                ),
-                const SizedBox(height: FundusSpace.x2),
-                OutlinedButton.icon(
-                  onPressed: loadingSpeechVoices
-                      ? null
-                      : () => loadSpeechVoices(sheetContext, setSheetState),
-                  icon: loadingSpeechVoices
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.record_voice_over_outlined),
-                  label: const Text('Stimmen dieses Modells anzeigen'),
-                ),
-                if (supportedSpeechLanguages.isNotEmpty &&
-                    !supportedSpeechLanguages.contains(selectedSpeechLanguage))
-                  Padding(
-                    padding: const EdgeInsets.only(top: FundusSpace.x2),
-                    child: Text(
-                      'Das Modell unterstützt ${_speechLanguageLabel(selectedSpeechLanguage)} nicht.',
-                      style: Theme.of(sheetContext).textTheme.bodySmall
-                          ?.copyWith(
-                            color: Theme.of(sheetContext).colorScheme.error,
-                          ),
-                    ),
-                  ),
-                if (availableSpeechVoices.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: FundusSpace.x2),
-                    child: DropdownButtonFormField<String>(
-                      initialValue: selectedSpeechVoice,
-                      decoration: const InputDecoration(labelText: 'Stimme'),
-                      items: [
-                        for (final voice in availableSpeechVoices)
-                          DropdownMenuItem(value: voice, child: Text(voice)),
-                      ],
-                      onChanged: (voice) async {
-                        selectedSpeechVoice = voice;
-                        setSheetState(() {});
-                        if (workId != null) {
-                          await scope.settings.setSpeechVoice(
-                            workId,
-                            SpeechLanguageResolver.code(selectedSpeechLanguage),
-                            voice,
-                          );
-                        }
-                      },
-                    ),
-                  ),
-                if (workId != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: FundusSpace.x2),
-                    child: Text(
-                      'Für dieses Werk aktiv: '
-                      '${_speechLanguageLabel(selectedSpeechLanguage)}'
-                      '${selectedSpeechVoice == null ? '' : ' · $selectedSpeechVoice'}',
-                      style: Theme.of(sheetContext).textTheme.bodySmall,
-                    ),
-                  ),
-                const SizedBox(height: FundusSpace.x2),
-                Text(
-                  'Vorlesetempo · ${selectedSpeechRate.toStringAsFixed(2)}×',
-                  style: Theme.of(sheetContext).textTheme.labelSmall,
-                ),
-                Slider(
-                  min: 0.5,
-                  max: 2.5,
-                  divisions: 20,
-                  value: selectedSpeechRate,
-                  label: '${selectedSpeechRate.toStringAsFixed(2)}×',
-                  onChanged: workId == null
-                      ? null
-                      : (value) async {
-                          setSheetState(() => selectedSpeechRate = value);
-                          await scope.settings.setSpeechRate(workId, value);
-                        },
-                ),
-                OutlinedButton.icon(
-                  onPressed:
-                      loadingSpeechVoices ||
-                          scope.settings.phononModelDirectory == null ||
-                          reader.work == null
-                      ? null
-                      : () async {
-                          speechOptionsError = null;
-                          setSheetState(() {});
-                          await scope.textSpeech.preview(
-                            modelDirectory:
-                                scope.settings.phononModelDirectory!,
-                            language: selectedSpeechLanguage,
-                            voice: selectedSpeechVoice,
-                            rate: selectedSpeechRate,
-                          );
-                          if (!sheetContext.mounted) return;
-                          setSheetState(() {
-                            speechOptionsError = scope.textSpeech.failure;
-                          });
-                        },
-                  icon: const Icon(Icons.volume_up_outlined),
-                  label: const Text('Stimme probehören'),
-                ),
-                if (workId != null) ...[
-                  const SizedBox(height: FundusSpace.x4),
-                  Text(
-                    'Aussprache für dieses Werk',
-                    style: Theme.of(sheetContext).textTheme.labelSmall,
-                  ),
-                  Text(
-                    'Gilt nur beim Vorlesen; der Originaltext bleibt unverändert.',
-                    style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
-                      color: context.fundus.textFaint,
-                    ),
-                  ),
-                  for (final entry in pronunciations.entries)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(entry.key),
-                      subtitle: Text('Wird gesprochen als: ${entry.value}'),
-                      onTap: () async {
-                        final revised = await _editSpeechPronunciation(
-                          sheetContext,
-                          source: entry.key,
-                          spoken: entry.value,
-                        );
-                        if (revised == null || !sheetContext.mounted) return;
-                        final next = Map<String, String>.from(pronunciations)
-                          ..remove(entry.key)
-                          ..[revised.key] = revised.value;
-                        await scope.settings.setSpeechPronunciations(
-                          workId,
-                          next,
-                        );
-                        setSheetState(() => pronunciations = next);
-                      },
-                      trailing: IconButton(
-                        tooltip: 'Aussprache entfernen',
-                        onPressed: () async {
-                          final next = Map<String, String>.from(pronunciations)
-                            ..remove(entry.key);
-                          await scope.settings.setSpeechPronunciations(
-                            workId,
-                            next,
-                          );
-                          if (sheetContext.mounted) {
-                            setSheetState(() => pronunciations = next);
-                          }
-                        },
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ),
-                  TextButton.icon(
-                    onPressed: () async {
-                      final added = await _editSpeechPronunciation(
-                        sheetContext,
-                      );
-                      if (added == null || !sheetContext.mounted) return;
-                      final next = Map<String, String>.from(pronunciations)
-                        ..[added.key] = added.value;
-                      await scope.settings.setSpeechPronunciations(
-                        workId,
-                        next,
-                      );
-                      setSheetState(() => pronunciations = next);
-                    },
-                    icon: const Icon(Icons.add),
-                    label: const Text('Aussprache hinzufügen'),
-                  ),
-                ],
-                if (speechOptionsError case final error?)
-                  Padding(
-                    padding: const EdgeInsets.only(top: FundusSpace.x2),
-                    child: Text(
-                      error,
-                      style: Theme.of(sheetContext).textTheme.bodySmall
-                          ?.copyWith(
-                            color: Theme.of(sheetContext).colorScheme.error,
-                          ),
-                    ),
-                  ),
                 const SizedBox(height: FundusSpace.x6),
                 _Measure(
                   label: 'Schriftgröße',

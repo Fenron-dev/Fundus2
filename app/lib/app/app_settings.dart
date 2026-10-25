@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import '../data/peer_connection.dart';
 import '../data/protection.dart';
 import 'device_name.dart';
+import '../media/speech_profile.dart';
 
 /// A library path the local Fundus server should expose.
 ///
@@ -155,6 +156,84 @@ class AppSettings extends ChangeNotifier {
       }, ephemeral: true);
 
   String get deviceKey => _values['device_key'] as String? ?? '';
+
+  List<SpeechProfile> get speechProfiles {
+    final raw = _values['speech_profiles'];
+    if (raw is! List) return const [];
+    final result = <SpeechProfile>[];
+    for (final value in raw.whereType<Map>()) {
+      try {
+        result.add(SpeechProfile.fromJson(value));
+      } on Object {
+        /* Preserve other valid profiles. */
+      }
+    }
+    return result;
+  }
+
+  Future<void> setSpeechProfiles(List<SpeechProfile> values) =>
+      _set('speech_profiles', [for (final value in values) value.toJson()]);
+
+  String? speechProfileId(String workId) {
+    final values = _values['speech_profile_by_work'];
+    final value = values is Map ? values[workId] : null;
+    return value is String ? value : null;
+  }
+
+  SpeechProfile? speechProfileFor(String workId, String language) {
+    final profiles = speechProfiles;
+    final selected = speechProfileId(workId);
+    for (final profile in profiles) {
+      if (profile.id == selected) return profile;
+    }
+    for (final profile in profiles) {
+      if (profile.language == language) return profile;
+    }
+    return null;
+  }
+
+  Future<void> setSpeechProfileId(String workId, String? id) {
+    final raw = _values['speech_profile_by_work'];
+    final values = raw is Map
+        ? Map<String, Object?>.from(raw)
+        : <String, Object?>{};
+    if (id == null) {
+      values.remove(workId);
+    } else {
+      values[workId] = id;
+    }
+    return _set('speech_profile_by_work', values);
+  }
+
+  List<SpeechDictionary> get speechDictionaries {
+    final raw = _values['speech_dictionaries'];
+    if (raw is! List) return const [];
+    final result = <SpeechDictionary>[];
+    for (final value in raw.whereType<Map>()) {
+      try {
+        result.add(SpeechDictionary.fromJson(value));
+      } on Object {
+        /* Keep valid dictionaries. */
+      }
+    }
+    return result;
+  }
+
+  Future<void> setSpeechDictionaries(List<SpeechDictionary> values) =>
+      _set('speech_dictionaries', [for (final value in values) value.toJson()]);
+
+  Map<String, String> effectiveSpeechPronunciations(
+    String workId,
+    SpeechProfile? profile,
+  ) => {
+    for (final dictionary in speechDictionaries)
+      if (profile != null &&
+          profile.dictionaryIds.contains(dictionary.id) &&
+          (dictionary.language == null ||
+              dictionary.language == profile.language))
+        ...dictionary.entries,
+    ...speechPronunciations(workId),
+  };
 
   /// Local Phonon checkpoint folder selected on this installation. Model
   /// files are kept out of the shared vault and device sync.

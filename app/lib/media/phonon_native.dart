@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -9,6 +10,7 @@ import 'package:fundus_core/fundus_core.dart';
 
 import 'phonon_wave.dart';
 import 'speech_engine.dart';
+import 'phonon_voice_catalog.dart';
 
 /// A long-lived, serial worker for the official Phonon C interface. Neither
 /// model loading nor synthesis is allowed on Flutter's UI isolate.
@@ -34,6 +36,7 @@ final class PhononNativeEngine implements TextSpeechEngine {
   static Future<PhononNativeEngine> open({
     required String modelDirectory,
     required SpeechLanguage language,
+    String? voicesDirectory,
   }) async {
     final engine = PhononNativeEngine._();
     try {
@@ -42,6 +45,7 @@ final class PhononNativeEngine implements TextSpeechEngine {
         'command': 'open',
         'directory': modelDirectory,
         'language': SpeechLanguageResolver.code(language),
+        'voices': await PhononVoiceCatalog.read(voicesDirectory),
       });
       final rawLanguages = reply['languages'];
       if (rawLanguages is List) {
@@ -208,6 +212,10 @@ typedef _FrameNative = Uint8 Function(Pointer<Float>, Size, Pointer<Void>);
 typedef _NewNative =
     Pointer<Void> Function(Pointer<Utf8>, Uint32, Pointer<Utf8>);
 typedef _NewDart = Pointer<Void> Function(Pointer<Utf8>, int, Pointer<Utf8>);
+typedef _NewVoicesNative =
+    Pointer<Void> Function(Pointer<Utf8>, Uint32, Pointer<Utf8>, Pointer<Utf8>);
+typedef _NewVoicesDart =
+    Pointer<Void> Function(Pointer<Utf8>, int, Pointer<Utf8>, Pointer<Utf8>);
 typedef _SpeakNative =
     Uint8 Function(
       Pointer<Void>,
@@ -247,6 +255,10 @@ final class _PttsResult extends Struct {
 final class _Bindings {
   _Bindings(DynamicLibrary library)
     : create = library.lookupFunction<_NewNative, _NewDart>('ptts_new'),
+      createWithVoices = library
+          .lookupFunction<_NewVoicesNative, _NewVoicesDart>(
+            'ptts_new_with_voices',
+          ),
       speak = library.lookupFunction<_SpeakNative, _SpeakDart>('ptts_speak'),
       setVoice = library.lookupFunction<_SetNative, _SetDart>('ptts_set_voice'),
       setLanguage = library.lookupFunction<_SetNative, _SetDart>(
@@ -264,6 +276,7 @@ final class _Bindings {
       free = library.lookupFunction<_FreeNative, _FreeDart>('ptts_free');
 
   final _NewDart create;
+  final _NewVoicesDart createWithVoices;
   final _SpeakDart speak;
   final _SetDart setVoice;
   final _SetDart setLanguage;
@@ -280,7 +293,7 @@ List<String> _nulNames(Pointer<Utf8> pointer) {
   var start = 0;
   // The native contract ends with two NUL bytes; the cap protects against
   // malformed output from a mismatched library ABI.
-  for (var index = 0; index < 4096; index++) {
+  for (var index = 0; index < 1024 * 1024; index++) {
     if (bytes[index] != 0) continue;
     if (index == start) return names;
     names.add((bytes + start).cast<Utf8>().toDartString());
@@ -338,11 +351,20 @@ void _phononWorker(SendPort host) async {
             }
             final path = directory.toNativeUtf8();
             final lang = language.toNativeUtf8();
+            final catalogue = jsonEncode(
+              message['voices'] ?? [],
+            ).toNativeUtf8();
             try {
-              handle = api.create(path, Platform.isMacOS ? 2 : 0, lang);
+              handle = api.createWithVoices(
+                path,
+                Platform.isMacOS ? 2 : 0,
+                lang,
+                catalogue,
+              );
             } finally {
               calloc.free(path);
               calloc.free(lang);
+              calloc.free(catalogue);
             }
             if (handle == nullptr) {
               final message = api.lastError(nullptr);

@@ -48,6 +48,9 @@ jobs:
           path: .build/phonon
           persist-credentials: false
 
+      - name: Add external Phonon voice catalogue support
+        run: python3 tools/patch_phonon_voices.py .build/phonon
+
       - name: Build Phonon for macOS
         working-directory: .build/phonon
         run: cargo build --release -p ptts-ffi --locked

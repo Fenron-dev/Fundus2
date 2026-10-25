@@ -345,6 +345,26 @@ final class MediaKitEngine implements PlaybackEngine {
   @override
   Future<void> open(Uri uri, {Duration start = Duration.zero}) async {
     await _nativeTuning;
+    // Streaming speech has a short, bounded producer queue. Network-file
+    // read-ahead/probing must not wait for megabytes before output can start.
+    final native = _player.platform;
+    if (native is NativePlayer) {
+      final speech =
+          uri.host == '127.0.0.1' && uri.path.endsWith('/speech.wav');
+      await native.setProperty('cache', speech ? 'no' : 'yes');
+      await native.setProperty(
+        'stream-buffer-size',
+        speech
+            ? '64KiB'
+            : _isWindows
+            ? '4MiB'
+            : '128KiB',
+      );
+      await native.setProperty(
+        'demuxer-lavf-probesize',
+        speech ? '32768' : '0',
+      );
+    }
     final resume = start > Duration.zero ? start : null;
     await _player.open(Media(uri.toString(), start: resume), play: false);
     if (_isWindows) {

@@ -93,3 +93,9 @@ abstract final class FundusShellMetrics {
   /// mobile layout with a bottom bar.
   static const compactBreakpoint = 900.0;
 }
+
+abstract final class FundusSpeechMetrics {
+  static const dialogWidth = 640.0;
+  static const settingsHeight = 720.0;
+  static const transportWidth = 720.0;
+}

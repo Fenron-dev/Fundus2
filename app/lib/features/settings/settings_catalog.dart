@@ -51,6 +51,13 @@ abstract final class SettingsAreas {
       description: 'Ordner, Medienarten und was noch nicht zugeordnet ist.',
     ),
     SettingsArea(
+      key: 'tts',
+      label: 'Vorlesen / TTS',
+      icon: FundusIcons.play,
+      description:
+          'Sprachprofile, Modell- und Stimmenordner, Aussprachewörterbücher.',
+    ),
+    SettingsArea(
       key: 'metadaten',
       label: 'Metadaten & Quellen',
       icon: FundusIcons.search,

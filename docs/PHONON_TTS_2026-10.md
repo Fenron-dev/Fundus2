@@ -4,6 +4,64 @@ Issue [#64](https://github.com/Fenron-dev/Fundus2/issues/64) ergänzt die
 bereits freigegebene Roadmap, ersetzt oder schließt sie aber nicht. Diese Datei
 trennt implementierte Grundlage von noch nicht ausgelieferter Sprachausgabe.
 
+## Update 25.10.2026 – Issue #65
+
+[Issue #65](https://github.com/Fenron-dev/Fundus2/issues/65) behebt die beim
+Windows-Test gemeldeten Lücken. Dieser Abschnitt ersetzt den älteren
+Einzel-WAV-/Einzelmodell-Stand und dessen offene Puffer-/Wörterbuchpunkte unten.
+
+- **Einstellungen → Vorlesen / TTS** verwaltet benannte Profile mit Sprache,
+  Modellordner, optional separatem Stimmenordner, Stimme und Wörterbüchern.
+  Englisch und Deutsch sind gleichrangig. Alte Einstellungen bleiben lesbar.
+- Modelle und Stimmen werden referenziert. Für den vorhandenen Phonon-Aufbau
+  wählt man z. B. `models/phonon-31m-en` und separat `voices/` mit
+  `voices.jsonl`, ggf. `custom.jsonl` und den relativen Stimmdateien. Mehrere
+  Profile teilen dieselben Ordner ohne Kopien. Katalogpfade müssen innerhalb
+  des ausdrücklich gewählten Stimmenordners bleiben.
+- Die gepinnte native Engine wird ausschließlich im GitHub-Build durch
+  `tools/patch_phonon_voices.py` um `ptts_new_with_voices` ergänzt. Der Adapter
+  bricht bei geänderter Quellstruktur ab. CPU-Modelle laden externe Stimmen
+  über den offiziellen SynthBuilder. macOS kann nun ebenfalls CPU-Checkpoints
+  verwenden. Core-ML-Bundles behalten den beschleunigten Pfad; sie benötigen
+  bereits projizierte `emb`-Stimmen. Studio-Kataloge mit `speaker_wavs` erfordern
+  den CPU-Checkpoint und dessen Sprecherprojektion. Keine Gewichte im Repo.
+- Der Reader zeigt unten eine zentrierte Steuerung: Pause/Fortsetzen, Stop,
+  ein/zwei Sätze zurück, einen Satz vor, laufend veränderbares Tempo,
+  Profilwahl, Wörterbuch und Sleep-Timer. Der Timer ist jetzt **auch auf Desktop**
+  sichtbar; seine Android-Schüttelverlängerung bleibt bestehen.
+- Ein Kapitel läuft durch **einen** kontinuierlichen 24-kHz-PCM/WAV-Stream im
+  gemeinsamen Player statt Stop/Open nach jedem Satz. Ein zufälliger
+  Loopback-Endpunkt ist nur auf diesem Gerät erreichbar, wird nicht gecacht
+  und nach Ende/Stop geschlossen. Vier ungehörte Sätze plus eine laufende
+  Synthese begrenzen den Puffer. Zwei Sätze bzw. acht Sekunden werden
+  vorgefüllt. Lange Stille wird mit Sprachrand/Fade gekürzt; definierte
+  Satz-/Absatzpausen bleiben. mpv nutzt dafür kleine Lese-/Probegrößen.
+- Textfortschritt folgt dem **Audio-Positionssignal**, niemals dem Vorausladen.
+  Pause/Stop sichern nur gehörte Sätze; Zurückspringen invalidiert die alte
+  Queue vor dem Textsprung. Tempo und Aussprache ändern keine Originalanker.
+  Es gibt weiter keine Wort-Zeitmarken.
+- Benannte Wörterbücher gelten je Sprache/allgemein und sind Profilen
+  zuweisbar. Werkbezogene Einträge haben Vorrang. Ein markiertes Reader-Wort
+  bietet „Aussprache hinzufügen“. Im Player können die wirksamen Einträge
+  angesehen und werkbezogen übersteuert werden. Bereits gepufferte Sätze
+  verwenden noch die vorige Aussprache; neue Synthese übernimmt Änderungen.
+- Profile und Wörterbücher sind lokale Geräteeinstellungen. Android bezieht
+  weiterhin das bereits angebotene einzelne Server-CPU-Modell bzw. importiert
+  zusätzliche Modell-ZIPs. Ein Mehrprofil-Modellkatalog des Servers mit
+  separatem Stimmen-Download ist damit noch nicht eingeführt.
+
+Regressionen prüfen begrenzten Puffer, einen durchgehenden WAV-Header,
+Abbruch/Backpressure, keine Fortschritte durch Vorausladen, ein komplettes
+Kapitel über einen Player-Open, Katalog-Pfadgrenzen, Profil-/Wörterbuch-Roundtrip,
+Satzrücksprung und Wiederöffnen. Native Übersetzung erfolgt nur in GitHub;
+hörbare Flüssigkeit, Modell-/Stimmkompatibilität und gesperrte
+Android-Wiedergabe bleiben echte Geräteabnahmen.
+
+Lokaler Prüfstand: 1.008 Tests bestanden, acht bestehende App-Tests
+übersprungen; statische Analyse, Formatprüfung und Diff-Prüfung sauber.
+Der native Adapter wurde gegen die exakten gepinnten Quelldateien angewendet;
+ein lokaler nativer Build wurde entsprechend Projektvorgabe nicht ausgeführt.
+
 ## Ziel und Fortschrittsvertrag
 
 Ein Buch oder Novel hat **einen textuellen Medienstand**, gleichgültig ob der

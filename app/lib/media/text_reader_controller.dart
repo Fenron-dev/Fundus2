@@ -220,6 +220,36 @@ class TextReaderController extends ChangeNotifier {
     );
   }
 
+  void skipSpeechSentences(int count) {
+    final chapter = currentChapter;
+    final volume = currentVolume;
+    if (!_open || chapter == null || volume == null || count == 0) return;
+    final sentences = SpeechTextPlan(
+      document: chapter.document,
+      fileId: volume.fileId,
+      chapterId: chapter.id,
+      at: null,
+    ).segments.toList();
+    if (sentences.isEmpty) return;
+    final cursor =
+        (chapter.document.paragraphs[_paragraphIndex].text.length *
+                _innerOffset)
+            .round();
+    var current = sentences.indexWhere(
+      (part) =>
+          part.paragraphIndex > _paragraphIndex ||
+          part.paragraphIndex == _paragraphIndex && part.end > cursor,
+    );
+    if (current < 0) current = sentences.length;
+    final target = sentences[(current + count).clamp(0, sentences.length - 1)];
+    final resolved = chapter.document.resolve(target.startPosition);
+    _paragraphIndex = resolved.paragraphIndex;
+    _innerOffset = resolved.innerOffset;
+    _jump++;
+    notifyListeners();
+    checkpointSpeech();
+  }
+
   /// Resolve the normalization language before selecting a Phonon model.
   /// Unknown metadata is not interpreted as German; the speech UI must ask.
   SpeechLanguageSelection? resolveSpeechLanguage({

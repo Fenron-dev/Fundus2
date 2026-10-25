@@ -370,6 +370,27 @@ void main() {
     });
 
     test(
+      'sentence rewind crosses paragraph boundaries and survives reopening',
+      () async {
+        await openWork();
+        reader.reportPosition(2, 0);
+        reader.skipSpeechSentences(-2);
+        expect(reader.paragraphIndex, 1);
+        final savedOffset = reader.innerOffset;
+        final savedParagraph = reader.paragraphIndex;
+        await library.library!.flushSidecarWrites();
+        final again = TextReaderController(
+          openSource: (path, name) =>
+              FakeTextSource(name, const ['Kapitel eins', 'Kapitel zwei']),
+        );
+        addTearDown(again.dispose);
+        await again.open(library.library!, library.works.first);
+        expect(again.paragraphIndex, savedParagraph);
+        expect(again.innerOffset, closeTo(savedOffset, .001));
+      },
+    );
+
+    test(
       'nur abgespielte Vorleseabschnitte verschieben den Lesestand',
       () async {
         await openWork();

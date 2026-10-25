@@ -212,6 +212,9 @@ void main() {
       );
       expect(engine.rate, 1.4);
       expect(controller.habits.rate, 1);
+      await controller.setSpeechRate(1.8);
+      expect(engine.rate, 1.8);
+      expect(controller.habits.rate, 1);
       engine.emitCompleted();
       await playback;
       expect(engine.rate, 1);

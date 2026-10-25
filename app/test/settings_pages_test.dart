@@ -87,4 +87,21 @@ void main() {
 
     expect(find.textContaining('gibt es nicht'), findsOneWidget);
   });
+
+  testWidgets('TTS exposes profile and dictionary management on desktop', (
+    tester,
+  ) async {
+    await pumpArea(tester, 'tts');
+    expect(find.text('Sprach- und Stimmprofile'), findsOneWidget);
+    expect(find.text('Aussprachewörterbücher'), findsOneWidget);
+    expect(find.text('Profil hinzufügen'), findsOneWidget);
+    expect(find.text('Wörterbuch hinzufügen'), findsOneWidget);
+    await tester.tap(find.text('Profil hinzufügen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sprachprofil erstellen'), findsOneWidget);
+    expect(find.text('Separaten Stimmenordner wählen'), findsOneWidget);
+    expect(find.text('Sprachen und Stimmen laden'), findsOneWidget);
+    expect(find.text('Stimme probehören'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
