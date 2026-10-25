@@ -379,6 +379,11 @@ final class TextSpeechController extends ChangeNotifier {
         }
       }
     } finally {
+      if (token == _runId && player.isSpeechFileLoaded) {
+        // A settings preview must not leave a mini-player pointing at a WAV
+        // that is about to be deleted, or close another playback started later.
+        await player.close();
+      }
       try {
         if (file != null && await file.exists()) await file.delete();
       } on FileSystemException {

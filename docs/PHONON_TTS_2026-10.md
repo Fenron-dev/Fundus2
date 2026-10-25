@@ -40,6 +40,8 @@ Einzel-WAV-/Einzelmodell-Stand und dessen offene Puffer-/Wörterbuchpunkte unten
   Pause/Stop sichern nur gehörte Sätze; Zurückspringen invalidiert die alte
   Queue vor dem Textsprung. Tempo und Aussprache ändern keine Originalanker.
   Es gibt weiter keine Wort-Zeitmarken.
+- Hörproben aus der Profilverwaltung funktionieren auch ohne geöffnetes Buch;
+  nach Ende wird der temporäre Player geschlossen, ohne Buchstände anzutasten.
 - Benannte Wörterbücher gelten je Sprache/allgemein und sind Profilen
   zuweisbar. Werkbezogene Einträge haben Vorrang. Ein markiertes Reader-Wort
   bietet „Aussprache hinzufügen“. Im Player können die wirksamen Einträge

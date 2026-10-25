@@ -59,6 +59,7 @@ void main() {
         reader: reader,
         player: player,
         engineFactory: (directory, language) async => tts,
+        tempDirectory: () async => root,
       );
       final client = HttpClient();
       StreamSubscription<bool>? playing;
@@ -110,6 +111,24 @@ void main() {
       final progress = library.library!.loadProgress(library.works.first.id)!;
       expect(progress.position.kind, MediaPositionKind.epubCfi);
       expect(progress.position.chapterId, reader.currentChapter!.id);
+      final beforePreview = progress.position.numericValue;
+      engine.onOpen = () async {};
+      final previewPlaying = engine.playingStream.listen((playing) {
+        if (playing) engine.emitCompleted();
+      });
+      await speech.preview(
+        modelDirectory: root.path,
+        language: SpeechLanguage.english,
+      );
+      await previewPlaying.cancel();
+      expect(player.work, isNull);
+      expect(
+        library.library!
+            .loadProgress(library.works.first.id)!
+            .position
+            .numericValue,
+        beforePreview,
+      );
     },
   );
 }
