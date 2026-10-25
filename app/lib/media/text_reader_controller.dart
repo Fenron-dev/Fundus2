@@ -149,6 +149,7 @@ class TextReaderController extends ChangeNotifier {
   FundusLibrary? _library;
   WorkView? _work;
   String? _finishedPositionKey;
+  DateTime? _lastSpeechCheckpointAt;
 
   /// The readable files of the work — for a series one per volume.
   List<LibraryPlaybackTrack> _volumes = const [];
@@ -275,13 +276,31 @@ class TextReaderController extends ChangeNotifier {
     _innerOffset = next.innerOffset;
     _jump++;
     notifyListeners();
-    _scheduleSave();
+    // Only audio that has actually completed advances the position. The local
+    // database receives each sentence immediately; sidecar and peer checkpoints
+    // are throttled in saveSpokenProgress to avoid frequent vault writes.
+    saveSpokenProgress();
     return true;
   }
 
   /// A pause, stop or app lifecycle boundary persists the actually heard
   /// position using the same checkpoint/journal path as ordinary reading.
-  void checkpointSpeech() => saveProgress(checkpoint: true);
+  void checkpointSpeech() {
+    _lastSpeechCheckpointAt = DateTime.now().toUtc();
+    saveProgress(checkpoint: true);
+  }
+
+  /// Every completed sentence is written to the local progress database. The
+  /// portable sidecar and peer journal are checkpointed at most every 15
+  /// seconds, plus immediately at pause/stop/lifecycle boundaries.
+  void saveSpokenProgress() {
+    final now = DateTime.now().toUtc();
+    final last = _lastSpeechCheckpointAt;
+    final checkpoint =
+        last == null || now.difference(last) >= const Duration(seconds: 15);
+    saveProgress(checkpoint: checkpoint);
+    if (checkpoint) _lastSpeechCheckpointAt = now;
+  }
 
   ReflowReaderProfile get profile => _profile;
   List<LibraryBookmark> get bookmarks => _bookmarks;
@@ -373,6 +392,7 @@ class TextReaderController extends ChangeNotifier {
     _library = library;
     _work = work;
     _finishedPositionKey = null;
+    _lastSpeechCheckpointAt = null;
     _open = true;
     _chrome = true;
     _busy = true;
@@ -527,9 +547,15 @@ class TextReaderController extends ChangeNotifier {
 
   void _scheduleSave() {
     if (_saveTimer?.isActive ?? false) return;
-    final interval =
+    final configured =
         _work?.mediaType?.progressKind.saveInterval ??
         const Duration(minutes: 2);
+    // Text positions are small writes, and two minutes is long enough to lose
+    // a noticeable stretch when Android reclaims the reader without a final
+    // lifecycle callback. Keep the scroll-path write throttled, but bounded.
+    final interval = configured < const Duration(seconds: 15)
+        ? configured
+        : const Duration(seconds: 15);
     _saveTimer = Timer(interval, saveProgress);
   }
 

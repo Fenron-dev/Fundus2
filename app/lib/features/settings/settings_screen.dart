@@ -1646,6 +1646,22 @@ class _Playback extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(height: FundusSpace.x2),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: habits.shakeToExtendSleepTimer,
+                onChanged: (value) => scope.setPlaybackHabits(
+                  habits.copyWith(shakeToExtendSleepTimer: value),
+                ),
+                title: const Text('Schütteln verlängert den Sleep-Timer'),
+                subtitle: Text(
+                  'Ein bewusstes Doppelschütteln fügt fünf Minuten hinzu. '
+                  'Der Sensor läuft nur, solange ein Timer aktiv ist, auf Android.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.textMuted,
+                  ),
+                ),
+              ),
             ],
           ),
         ),

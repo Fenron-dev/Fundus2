@@ -126,6 +126,10 @@ class PlaybackController extends ChangeNotifier {
   int _loadEpoch = 0;
   bool _disposed = false;
   Completer<void>? _speechCompletion;
+  int _speechSessionRevision = 0;
+  int? _speechSessionId;
+  Future<void> Function()? stopSpeechForSleepTimer;
+  Future<void> Function()? resumeSpeechFromMediaControl;
 
   @override
   void notifyListeners() {
@@ -137,6 +141,7 @@ class PlaybackController extends ChangeNotifier {
   bool get isPlaybackRequested => _playbackRequested;
   bool get isLoadingTrack => _loadingTrack;
   bool get isPlayingSpeech => _speechCompletion != null;
+  bool get isSpeechSessionActive => _speechSessionId != null;
   bool get isSpeechFileLoaded =>
       currentSource?.fileId.startsWith('speech:') ?? false;
   Future<bool> Function()? requestAudioFocus;
@@ -544,13 +549,17 @@ class PlaybackController extends ChangeNotifier {
   /// It uses the normal audio-focus and background-session path, but never
   /// writes this temporary WAV as a media-file progress record.
   Future<void> playSpeechFile({
+    int? speechSessionId,
     required WorkView work,
     required String fileId,
     required String title,
     required String path,
     double? rate,
   }) async {
-    await _stopWhatIsPlaying();
+    if (speechSessionId != null && _speechSessionId != speechSessionId) {
+      throw const SpeechPlaybackInterrupted();
+    }
+    await _stopWhatIsPlaying(preserveSpeechSessionId: speechSessionId);
     final previousRate = _rate;
     final speechRate = rate?.clamp(0.5, 3.0);
     var rateApplied = false;
@@ -603,6 +612,68 @@ class PlaybackController extends ChangeNotifier {
         _speechCompletion = null;
       }
     }
+  }
+
+  /// Holds Android's media foreground service and audio focus across Phonon
+  /// synthesis gaps. Otherwise Android can suspend the app between sentences,
+  /// while the next short WAV is being generated.
+  Future<int> beginSpeechSession(WorkView work) async {
+    await _stopWhatIsPlaying();
+    final sessionId = ++_speechSessionRevision;
+    _speechSessionId = sessionId;
+    _work = work;
+    _owners = [work];
+    _sources = const [];
+    _library = null;
+    _failure = null;
+    _ended = false;
+    bool granted;
+    try {
+      granted = await requestAudioFocus?.call() ?? true;
+    } on Object catch (error) {
+      _speechSessionId = null;
+      _endPlaybackRequest();
+      _failure = 'Die Audio-Sitzung konnte nicht aktiviert werden.';
+      FundusLog.instance.warn('audio.focus.failed', {'error': '$error'});
+      notifyListeners();
+      rethrow;
+    }
+    if (!granted) {
+      _speechSessionId = null;
+      _endPlaybackRequest();
+      _failure =
+          'Kein Audio-Fokus verfügbar. Bitte beende zuerst die andere Wiedergabe.';
+      notifyListeners();
+      throw StateError(_failure!);
+    }
+    _playbackRequested = true;
+    notifyListeners();
+    return sessionId;
+  }
+
+  /// Releases the media foreground service only after the whole reading
+  /// session ends, not in the gap between generated sentences.
+  Future<void> endSpeechSession(int sessionId) async {
+    if (_speechSessionId != sessionId) return;
+    _speechSessionId = null;
+    _cancelSpeechCompletion();
+    _endPlaybackRequest();
+    _playing = false;
+    await _engineOrNull?.stop();
+    _work = null;
+    _owners = const [];
+    _sources = const [];
+    _setPosition(Duration.zero);
+    _duration = null;
+    notifyListeners();
+  }
+
+  /// Stops at the next actual chapter boundary when the sleep timer has
+  /// elapsed while reading aloud.
+  Future<bool> completeSpeechChapter() async {
+    if (!_sleepingAtChapterEnd || !isSpeechSessionActive) return false;
+    await _sleepNow();
+    return true;
   }
 
   void _cancelSpeechCompletion() {
@@ -679,11 +750,15 @@ class PlaybackController extends ChangeNotifier {
   /// Vor jedem Öffnen: erst danach gehören Titel, Bild und Stand dem neuen
   /// Werk. Die Reihenfolge ist der Punkt — den Stand des alten Werks unter
   /// dem neuen Namen zu speichern wäre schlimmer als ihn zu verlieren.
-  Future<void> _stopWhatIsPlaying() async {
+  Future<void> _stopWhatIsPlaying({int? preserveSpeechSessionId}) async {
     _loadEpoch++;
     if (_work == null && _sources.isEmpty) return;
+    final preserveSpeechSession =
+        preserveSpeechSessionId != null &&
+        _speechSessionId == preserveSpeechSessionId;
+    if (!preserveSpeechSession) _speechSessionId = null;
     _cancelSpeechCompletion();
-    _endPlaybackRequest();
+    if (!preserveSpeechSession) _endPlaybackRequest();
     saveProgress(checkpoint: true);
     _saveTimer?.cancel();
     _clearBetweenEpisodes();
@@ -1082,7 +1157,9 @@ class PlaybackController extends ChangeNotifier {
     if (speech != null) {
       _speechCompletion = null;
       _ended = true;
-      _endPlaybackRequest();
+      // Keep the Android media session in its foreground state while Phonon
+      // prepares the next sentence. The complete book session will release it.
+      if (!isSpeechSessionActive) _endPlaybackRequest();
       if (!speech.isCompleted) speech.complete();
       notifyListeners();
       return;
@@ -1251,6 +1328,7 @@ class PlaybackController extends ChangeNotifier {
   /// chapter it lands in, rather than cutting a sentence in half.
   void startSleepTimer([Duration? after]) {
     _sleepTimer?.cancel();
+    _sleepingAtChapterEnd = false;
     final span = after ?? habits.sleepTimer;
     _sleepEndsAt = DateTime.now().add(span);
     _sleepTimer = Timer(span, _fallAsleep);
@@ -1271,6 +1349,14 @@ class PlaybackController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Adds time to an active timer; if it has already reached a chapter-end
+  /// wait, shaking starts a fresh five-minute interval.
+  void extendSleepTimer([Duration by = const Duration(minutes: 5)]) {
+    final remaining = sleepRemaining;
+    if (remaining == null && !_sleepingAtChapterEnd) return;
+    startSleepTimer((remaining ?? Duration.zero) + by);
+  }
+
   /// How long the sleep timer still has to run, or null when it is off.
   Duration? get sleepRemaining {
     final ends = _sleepEndsAt;
@@ -1283,6 +1369,15 @@ class PlaybackController extends ChangeNotifier {
   bool get isSleepingAtChapterEnd => _sleepingAtChapterEnd;
 
   Future<void> _fallAsleep() async {
+    if (isSpeechSessionActive) {
+      if (habits.sleepAtChapterEnd) {
+        _sleepingAtChapterEnd = true;
+        notifyListeners();
+        return;
+      }
+      await _sleepNow();
+      return;
+    }
     if (habits.sleepAtChapterEnd && _chapterEndsLater) {
       _sleepingAtChapterEnd = true;
       notifyListeners();
@@ -1294,6 +1389,10 @@ class PlaybackController extends ChangeNotifier {
   Future<void> _sleepNow() async {
     cancelSleepTimer();
     saveProgress();
+    if (isSpeechSessionActive) {
+      await stopSpeechForSleepTimer?.call();
+      return;
+    }
     if (_engineOrNull != null) await pause();
   }
 
@@ -1318,6 +1417,7 @@ class PlaybackController extends ChangeNotifier {
     _loadEpoch++;
     _loadingTrack = false;
     _cancelSpeechCompletion();
+    _speechSessionId = null;
     saveProgress();
     await pause();
     await _engineOrNull?.stop();

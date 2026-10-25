@@ -15,6 +15,8 @@ import 'text_reader_controller.dart';
 
 enum TextSpeechState { idle, preparing, synthesizing, playing, paused, failed }
 
+typedef _SpeechPreparation = ({PhononAudio? audio, Object? error});
+
 typedef TextSpeechEngineFactory =
     Future<TextSpeechEngine> Function(
       String modelDirectory,
@@ -33,6 +35,8 @@ final class TextSpeechController extends ChangeNotifier {
        _tempDirectory = tempDirectory ?? getTemporaryDirectory {
     reader.addListener(_readerChanged);
     player.addListener(_playerChanged);
+    player.stopSpeechForSleepTimer = stop;
+    player.resumeSpeechFromMediaControl = resume;
   }
 
   final TextReaderController reader;
@@ -88,6 +92,20 @@ final class TextSpeechController extends ChangeNotifier {
   }
 
   void _playerChanged() {
+    var mediaPauseObserved = false;
+    // Lock-screen controls call the shared player directly. Remember a pause
+    // even if it happened during Phonon's synthesis gap (there is then no WAV
+    // loaded); the next sentence must wait for an explicit resume.
+    if (player.isSpeechSessionActive &&
+        !player.isPlaybackRequested &&
+        !_pauseRequested &&
+        _state != TextSpeechState.idle &&
+        _state != TextSpeechState.failed) {
+      _pauseRequested = true;
+      _state = TextSpeechState.paused;
+      mediaPauseObserved = true;
+      reader.checkpointSpeech();
+    }
     if ((_state == TextSpeechState.playing ||
             _state == TextSpeechState.preparing ||
             _state == TextSpeechState.paused) &&
@@ -98,6 +116,8 @@ final class TextSpeechController extends ChangeNotifier {
         (false, _) when player.isLoadingTrack => TextSpeechState.preparing,
         _ => TextSpeechState.paused,
       };
+      notifyListeners();
+    } else if (mediaPauseObserved) {
       notifyListeners();
     }
   }
@@ -125,9 +145,19 @@ final class TextSpeechController extends ChangeNotifier {
     _failure = null;
     _state = TextSpeechState.preparing;
     notifyListeners();
+    int? speechSessionId;
     try {
+      speechSessionId = await player.beginSpeechSession(work);
       await _ensureEngine(modelDirectory, selection.language);
-      await _read(token, work, selection.language, voice, rate, pronunciations);
+      await _read(
+        token,
+        speechSessionId,
+        work,
+        selection.language,
+        voice,
+        rate,
+        pronunciations,
+      );
       if (token == _runId) {
         _state = TextSpeechState.idle;
         _runningWorkId = null;
@@ -150,6 +180,13 @@ final class TextSpeechController extends ChangeNotifier {
         }
       }
     } finally {
+      if (speechSessionId case final sessionId?) {
+        try {
+          await player.endSpeechSession(sessionId);
+        } on Object {
+          // Preserve the original synthesis/player result.
+        }
+      }
       if (token == _runId) notifyListeners();
     }
   }
@@ -270,12 +307,15 @@ final class TextSpeechController extends ChangeNotifier {
 
   Future<void> _read(
     int token,
+    int speechSessionId,
     WorkView work,
     SpeechLanguage language,
     String? voice,
     double rate,
     Map<String, String> pronunciations,
   ) async {
+    SpeechTextSegment? prefetchedSegment;
+    Future<_SpeechPreparation>? prefetchedAudio;
     while (token == _runId && reader.isOpen) {
       await _waitUntilResumed(token);
       if (token != _runId || !reader.isOpen) return;
@@ -284,6 +324,10 @@ final class TextSpeechController extends ChangeNotifier {
       final segments = plan.segments;
       final segment = segments.isEmpty ? null : segments.first;
       if (segment == null) {
+        if (await player.completeSpeechChapter()) {
+          reader.checkpointSpeech();
+          return;
+        }
         final volume = reader.volumeIndex;
         final chapter = reader.chapterIndex;
         await reader.nextChapter();
@@ -297,14 +341,31 @@ final class TextSpeechController extends ChangeNotifier {
       _state = TextSpeechState.synthesizing;
       notifyListeners();
       final speechSegment = SpeechTextTransform.apply(segment, pronunciations);
-      final audio = await _engine!.synthesize(
-        speechSegment,
-        language: language,
-        voice: voice,
-      );
+      final prepared = _sameSegment(prefetchedSegment, segment)
+          ? await prefetchedAudio!
+          : await _synthesize(speechSegment, language: language, voice: voice);
+      prefetchedSegment = null;
+      prefetchedAudio = null;
+      if (prepared.error case final error?) throw error;
+      final audio = prepared.audio!;
       if (token != _runId || !reader.isOpen) return;
       await _waitUntilResumed(token);
       if (token != _runId || !reader.isOpen) return;
+
+      // Phonon has its own serial worker. Queue one next segment while this
+      // sentence is playing; only the current sentence and one bounded WAV
+      // can be resident, while the next playback is usually ready at EOF.
+      final iterator = segments.iterator;
+      iterator.moveNext();
+      if (iterator.moveNext()) {
+        final next = iterator.current;
+        prefetchedSegment = next;
+        prefetchedAudio = _synthesize(
+          SpeechTextTransform.apply(next, pronunciations),
+          language: language,
+          voice: voice,
+        );
+      }
 
       final temp = await _tempDirectory();
       final path = '${temp.path}/fundus-speech-${++_runIdCounter}.wav';
@@ -315,6 +376,7 @@ final class TextSpeechController extends ChangeNotifier {
         notifyListeners();
         final currentChapter = reader.currentChapter;
         await player.playSpeechFile(
+          speechSessionId: speechSessionId,
           work: work,
           fileId: '${reader.currentVolume?.fileId ?? work.id}:${segment.start}',
           title: currentChapter == null
@@ -334,10 +396,39 @@ final class TextSpeechController extends ChangeNotifier {
       if (!reader.completeSpokenSegment(segment)) {
         // Someone moved the reading position while this sentence was playing.
         // Stop rather than speaking stale text or moving the position back.
+        reader.checkpointSpeech();
         return;
       }
     }
   }
+
+  Future<_SpeechPreparation> _synthesize(
+    SpeechTextSegment segment, {
+    required SpeechLanguage language,
+    required String? voice,
+  }) async {
+    try {
+      return (
+        audio: await _engine!.synthesize(
+          segment,
+          language: language,
+          voice: voice,
+        ),
+        error: null,
+      );
+    } on Object catch (error) {
+      // Prefetch may be discarded if the reader moves or playback is stopped.
+      // Resolve its failure as data so it cannot become an unhandled future.
+      return (audio: null, error: error);
+    }
+  }
+
+  bool _sameSegment(SpeechTextSegment? left, SpeechTextSegment right) =>
+      left != null &&
+      left.startPosition.fileId == right.startPosition.fileId &&
+      left.startPosition.chapterId == right.startPosition.chapterId &&
+      left.start == right.start &&
+      left.end == right.end;
 
   static int _runIdCounter = 0;
 
@@ -439,6 +530,8 @@ final class TextSpeechController extends ChangeNotifier {
   void dispose() {
     reader.removeListener(_readerChanged);
     player.removeListener(_playerChanged);
+    player.stopSpeechForSleepTimer = null;
+    player.resumeSpeechFromMediaControl = null;
     _runId++;
     _pauseRequested = false;
     _resumeGate?.complete();

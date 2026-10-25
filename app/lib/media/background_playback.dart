@@ -150,8 +150,14 @@ final class FundusAudioHandler extends BaseAudioHandler {
   }
 
   @override
-  Future<void> play() =>
-      _player.isPlaybackRequested ? Future.value() : _player.playOrPause();
+  Future<void> play() {
+    if (_player.isPlaybackRequested) return Future.value();
+    if (_player.isSpeechSessionActive) {
+      return _player.resumeSpeechFromMediaControl?.call() ??
+          _player.playOrPause();
+    }
+    return _player.playOrPause();
+  }
 
   @override
   Future<void> pause() => _player.pause();

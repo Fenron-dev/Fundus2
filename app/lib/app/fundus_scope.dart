@@ -29,6 +29,7 @@ import '../media/remote_comic_source.dart';
 import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
+import '../media/shake_sleep_timer_controller.dart';
 import '../media/text_reader_controller.dart';
 import '../media/text_speech_controller.dart';
 import '../media/speech_model_controller.dart';
@@ -154,6 +155,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     reader: textReader,
     player: player,
   );
+  late final ShakeSleepTimerController shakeSleepTimer =
+      ShakeSleepTimerController(player);
   late final SpeechModelController speechModels = SpeechModelController(
     settings: settings,
     servers: () {
@@ -218,6 +221,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    shakeSleepTimer;
     navigation.addListener(_bump);
     settings.addListener(_bump);
     settings.addListener(_syncDeviceName);
@@ -672,6 +676,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     textReader.removeListener(_syncWhenClosed);
     // TTS owns the shared player while it is active; stop it before disposing
     // that player and the reader it checkpoints against.
+    shakeSleepTimer.dispose();
     textSpeech.dispose();
     speechModels.removeListener(_bump);
     speechModels.dispose();

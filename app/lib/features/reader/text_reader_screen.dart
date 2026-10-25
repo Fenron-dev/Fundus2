@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../app/fundus_scope.dart';
 import '../../media/text_reader_controller.dart';
+import '../../media/playback_preference.dart';
 import '../../media/phonon_model_store.dart';
 import '../../media/text_speech_controller.dart';
 import 'speech_model_status.dart';
@@ -176,6 +177,7 @@ class _TextReaderBar extends StatelessWidget {
               );
             },
           ),
+          if (Platform.isAndroid) const _TextSleepTimerButton(),
           if (scope.textSpeech.isActive &&
               scope.textSpeech.state != TextSpeechState.failed)
             IconButton(
@@ -220,6 +222,60 @@ class _TextReaderBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Sleep timer is available without leaving the book. The same shared player
+/// owns it, so the setting behaves identically for TTS and audiobooks.
+class _TextSleepTimerButton extends StatelessWidget {
+  const _TextSleepTimerButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final player = FundusScope.of(context).player;
+    final ink = _foreground(
+      context,
+      FundusScope.of(context).textReader.profile.theme,
+    );
+    return ListenableBuilder(
+      listenable: player,
+      builder: (context, _) {
+        final remaining = player.sleepRemaining;
+        final waiting = player.isSleepingAtChapterEnd;
+        final active = remaining != null || waiting;
+        final label = waiting
+            ? 'Kapitelende'
+            : remaining == null
+            ? 'Sleep-Timer'
+            : remaining.inMinutes > 0
+            ? 'Noch ${remaining.inMinutes} min'
+            : 'Noch ${remaining.inSeconds} s';
+        return MenuAnchor(
+          menuChildren: [
+            for (final minutes in PlaybackPreference.sleepChoices)
+              MenuItemButton(
+                onPressed: () =>
+                    player.startSleepTimer(Duration(minutes: minutes)),
+                child: Text('$minutes Minuten'),
+              ),
+            if (active)
+              MenuItemButton(
+                onPressed: player.cancelSleepTimer,
+                child: const Text('Timer abbrechen'),
+              ),
+          ],
+          builder: (context, controller, child) => IconButton(
+            onPressed: controller.isOpen ? controller.close : controller.open,
+            icon: Icon(
+              FundusIcons.sleepTimer,
+              size: FundusIcons.sizeLg,
+              color: active ? context.fundus.accent : ink,
+            ),
+            tooltip: label,
+          ),
+        );
+      },
     );
   }
 }
@@ -556,14 +612,14 @@ class _TextSurfaceState extends State<_TextSurface> {
   /// further and looks again — each step builds more of the list, so it
   /// converges. The step count is bounded: a chapter that will not cooperate
   /// costs a wrong position, never a locked-up reader.
-  void _travelTo(int target, int paragraphCount) {
-    if (target <= 0 || paragraphCount <= 1) {
+  void _travelTo(int target, double innerOffset, int paragraphCount) {
+    if ((target <= 0 && innerOffset <= 0) || paragraphCount <= 0) {
       // Changing chapters keeps the same ScrollController. Without an
       // explicit reset it retains the old chapter's offset, so the next
       // chapter opens at its bottom even though the controller correctly
       // reports paragraph zero. Keep reporting paused until the new list has
       // laid out, then move the viewport to its real beginning.
-      _travellingTo = target <= 0 ? 0 : null;
+      _travellingTo = target <= 0 && innerOffset <= 0 ? 0 : null;
       if (_travellingTo == 0) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || _travellingTo != 0) return;
@@ -586,11 +642,11 @@ class _TextSurfaceState extends State<_TextSurface> {
       if (extent > 0) {
         _scroll.jumpTo((extent * (target / paragraphCount)).clamp(0.0, extent));
       }
-      _stepTowards(target);
+      _stepTowards(target, innerOffset);
     });
   }
 
-  void _stepTowards(int target) {
+  void _stepTowards(int target, double innerOffset) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _travellingTo != target) return;
       if (!_scroll.hasClients) {
@@ -599,12 +655,39 @@ class _TextSurfaceState extends State<_TextSurface> {
       }
       final anchor = _keys[target]?.currentContext;
       if (anchor != null) {
-        Scrollable.ensureVisible(anchor, alignment: 0);
-        // One more frame before reporting resumes, so the position that is
-        // written down is the one the jump arrived at.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_travellingTo == target) _travellingTo = null;
-        });
+        unawaited(
+          Scrollable.ensureVisible(anchor, alignment: 0).then((_) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _travellingTo != target || !_scroll.hasClients) {
+                return;
+              }
+              final paragraph = anchor.findRenderObject();
+              final viewport = context.findRenderObject();
+              if (paragraph is RenderBox &&
+                  viewport is RenderBox &&
+                  paragraph.attached &&
+                  viewport.attached) {
+                final top = paragraph
+                    .localToGlobal(Offset.zero, ancestor: viewport)
+                    .dy;
+                final wantedTop = -paragraph.size.height * innerOffset;
+                final delta = top - wantedTop;
+                final position = _scroll.position;
+                _scroll.jumpTo(
+                  (position.pixels + delta).clamp(
+                    position.minScrollExtent,
+                    position.maxScrollExtent,
+                  ),
+                );
+              }
+              // One more frame before reporting resumes, so the first written
+              // position is the one the restored scroll actually reached.
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (_travellingTo == target) _travellingTo = null;
+              });
+            });
+          }),
+        );
         return;
       }
       if (_steps++ > 120) {
@@ -622,7 +705,7 @@ class _TextSurfaceState extends State<_TextSurface> {
           position.maxScrollExtent,
         ),
       );
-      _stepTowards(target);
+      _stepTowards(target, innerOffset);
     });
   }
 
@@ -660,7 +743,7 @@ class _TextSurfaceState extends State<_TextSurface> {
       // last one means measuring detached boxes on every scrolled frame, and
       // the map grows for as long as the book is open.
       _keys.clear();
-      _travelTo(reader.paragraphIndex, paragraphs.length);
+      _travelTo(reader.paragraphIndex, reader.innerOffset, paragraphs.length);
     }
 
     return Focus(

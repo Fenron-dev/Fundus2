@@ -32,6 +32,7 @@ final class PlaybackPreference {
     this.skipForward = const Duration(seconds: 30),
     this.sleepTimer = const Duration(minutes: 30),
     this.sleepAtChapterEnd = true,
+    this.shakeToExtendSleepTimer = true,
     this.autoplayNext = true,
     this.autoplayDelay = const Duration(seconds: 8),
     this.shuffle = false,
@@ -45,6 +46,7 @@ final class PlaybackPreference {
         skipForward: _secondsOf(value['skip_forward'], 30),
         sleepTimer: _minutesOf(value['sleep_timer_minutes'], 30),
         sleepAtChapterEnd: value['sleep_at_chapter_end'] != false,
+        shakeToExtendSleepTimer: value['shake_to_extend_sleep_timer'] != false,
         autoplayNext: value['autoplay_next'] != false,
         autoplayDelay: _secondsOf(value['autoplay_delay'], 8),
         shuffle: value['shuffle'] == true,
@@ -68,6 +70,9 @@ final class PlaybackPreference {
   /// is the thing a sleep timer exists to prevent; stopping four minutes late
   /// at a chapter break costs nothing by comparison.
   final bool sleepAtChapterEnd;
+
+  /// Whether a deliberate phone shake extends an active sleep timer.
+  final bool shakeToExtendSleepTimer;
 
   /// Whether the next episode starts on its own when one ends.
   ///
@@ -100,6 +105,7 @@ final class PlaybackPreference {
     'skip_forward': skipForward.inSeconds,
     'sleep_timer_minutes': sleepTimer.inMinutes,
     'sleep_at_chapter_end': sleepAtChapterEnd,
+    'shake_to_extend_sleep_timer': shakeToExtendSleepTimer,
     'autoplay_next': autoplayNext,
     'autoplay_delay': autoplayDelay.inSeconds,
     'shuffle': shuffle,
@@ -112,6 +118,7 @@ final class PlaybackPreference {
     Duration? skipForward,
     Duration? sleepTimer,
     bool? sleepAtChapterEnd,
+    bool? shakeToExtendSleepTimer,
     bool? autoplayNext,
     Duration? autoplayDelay,
     bool? shuffle,
@@ -122,6 +129,8 @@ final class PlaybackPreference {
     skipForward: skipForward ?? this.skipForward,
     sleepTimer: sleepTimer ?? this.sleepTimer,
     sleepAtChapterEnd: sleepAtChapterEnd ?? this.sleepAtChapterEnd,
+    shakeToExtendSleepTimer:
+        shakeToExtendSleepTimer ?? this.shakeToExtendSleepTimer,
     autoplayNext: autoplayNext ?? this.autoplayNext,
     autoplayDelay: autoplayDelay ?? this.autoplayDelay,
     shuffle: shuffle ?? this.shuffle,

@@ -59,6 +59,24 @@ veraltete Segmente dürfen einen neueren Lesestand nicht überschreiben.
   ein Stopp (auch vom Sperrbildschirm) gilt nicht als Synthesefehler und darf
   keine andere, inzwischen gestartete Wiedergabe schließen. Ein Wechsel zu
   einem anderen Werk stoppt das Vorlesen ohne den Lesestand zurückzusetzen.
+- Der Textreader checkpointet normales Lesen spätestens alle 15 Sekunden und
+  zusätzlich beim Weglegen oder Schließen. Jeder vollständig gehörte
+  TTS-Abschnitt wird sofort im lokalen Fortschrittsdatensatz gespeichert;
+  portable und Peer-Checkpoints folgen höchstens alle 15 Sekunden und bei
+  Pause/Stop sofort. Beim Wiederöffnen stellt die Ansicht auch den Offset innerhalb
+  des Absatzes wieder her, nicht nur den Absatzanfang. Lesen und Hören teilen
+  damit Datei, Kapitel, Absatzanker und Text-Offset; ein pausierter Satz wird
+  beim Fortsetzen nötigenfalls ab Satzanfang wiederholt, aber nie übersprungen.
+- Während Phonon den nächsten begrenzten Textabschnitt im Worker vorbereitet,
+  bleibt die Android-Mediasitzung aktiv. Sie hält Audiofokus, Mediensteuerung
+  und den von audio_service verwalteten Vordergrunddienst/Wake-Lock auch in
+  den kurzen Synthesepausen. Sperrbildschirm-Steuerung kann TTS pausieren und
+  fortsetzen, einschließlich einer Pause zwischen zwei Sätzen.
+- Der gemeinsame Sleep-Timer ist im Textreader erreichbar. Für TTS bedeutet
+  „Bis Kapitelende" das Ende des aktuellen Buchkapitels. Auf Android kann ein
+  bewusstes Doppelschütteln den noch aktiven Timer um fünf Minuten verlängern;
+  der Sensor wird nur bei aktivem Timer gelesen und lässt sich in den
+  Wiedergabeeinstellungen ausschalten.
 - Die Modellmappe wird nur lokal in `device.json` gespeichert. Novels ohne
   verlässliche Sprachangabe nutzen Englisch, während explizite Werk- oder
   Dateiangaben Vorrang behalten.
@@ -162,9 +180,9 @@ Modelltransfer; ein älterer Server liefert ein erklärtes leeres Angebot.
 
 ## Präzision und derzeitige Grenzen
 
-Die aktuelle Engine erzeugt kurze Sprachsegmente vollständig und spielt sie
-anschließend ab. Der nächste Abschnitt wird danach erzeugt; ein vorausschauender
-Audio-Puffer für lückenärmere Wiedergabe ist noch nicht implementiert. Es gibt
+Die Engine erzeugt kurze Sprachsegmente. Während ein Abschnitt abgespielt wird,
+bereitet der Worker höchstens einen Folgeabschnitt vor, um Pausen zu verkürzen;
+bei langsamer Synthese kann es weiterhin eine hörbare Lücke geben. Es gibt
 keine Wort-für-Wort-Zeitmarken. Nur vollständig abgespielte Segmente schreiben
 den Textstand fort; beim Stoppen mitten in einem Satz kann dieser beim Fortsetzen
 erneut beginnen. Dies schützt vor dem Überspringen noch nicht gehörter Wörter.
@@ -181,7 +199,10 @@ Phonons sprachweite Wörterbücher und optionale Textregeln, vorausschauender
 Audio-Puffer, Sperrbildschirm- und
 Unterbrechungstests sowie Laufzeit- und Akku-Abnahme auf echtem Android
 (insbesondere S21 FE). Ein erfolgreicher GitHub-Build ersetzt keinen
-Gerätetest.
+Gerätetest. Android-Hersteller können Hintergrunddienste zusätzlich durch
+eigene Akkuverwaltung einschränken; auf dem S21 FE muss die gesperrte
+Wiedergabe daher praktisch abgenommen werden. Schütteln setzt verfügbare
+Bewegungssensorwerte voraus.
 
 ## Engine- und Datenschutzentscheidung für die nächsten Schritte
 
@@ -226,7 +247,7 @@ Download-Herkunft müssen vor einem Release gesondert geklärt werden.
 Als nächste Schritte bleiben: eine vertrauenswürdige Signatur bzw. ein
 Prüfnachweis für die Herkunft von Modellarchiven, optionale sprachweite
 Phonon-Wörterbücher/Textregeln und die Abnahme auf echten Geräten. Dabei sind
-Laufzeit, Speicher, Akkuverbrauch, Audiofokus im Hintergrund und Verhalten bei
-Sperrbildschirm-Unterbrechungen zu messen. Der bereits vorhandene
-`audio_service`-/`audio_session`-Pfad darf nicht mit einer zweiten,
+Laufzeit, Speicher, Akkuverbrauch, Audiofokus im Hintergrund, Timer-Ende am
+Buchkapitel und Schütteln im gesperrten Zustand zu messen. Der bereits
+vorhandene `audio_service`-/`audio_session`-Pfad darf nicht mit einer zweiten,
 gleichzeitig spielenden Fundus-Audiositzung konkurrieren.
