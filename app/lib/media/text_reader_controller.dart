@@ -228,11 +228,16 @@ class TextReaderController extends ChangeNotifier {
     String? globalDefault,
   }) {
     if (!_open || _work == null) return null;
+    // The user's light novels and webnovels are predominantly English. Make
+    // English their effective media-type default while still letting actual
+    // work/file language, a per-work override, and an explicit preference win.
+    final effectiveMediaTypeDefault =
+        mediaTypeDefault ?? (_work!.mediaType?.id == 'novel' ? 'en' : null);
     return SpeechLanguageResolver.resolve(
       workOverride: workOverride,
       workMetadata: _work!.summary.language,
       publicationMetadata: publicationMetadata,
-      mediaTypeDefault: mediaTypeDefault,
+      mediaTypeDefault: effectiveMediaTypeDefault,
       globalDefault: globalDefault,
     );
   }

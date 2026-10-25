@@ -37,8 +37,9 @@ veraltete Segmente dürfen einen neueren Lesestand nicht überschreiben.
   Deutsch, Französisch, Spanisch und Portugiesisch einschließlich üblicher
   Sprachcodes. Unbekannte Werte ergeben **keine** stillschweigende deutsche
   Stimme, sondern erfordern eine Wahl. Der Textreader reicht seine vorhandene
-  Werks-Sprache an diese Auflösung weiter; ein Reader-Test prüft ein englisches
-  Novel gegen einen deutschen Standard.
+  Werks-Sprache an diese Auflösung weiter. Für Novels gilt Englisch als
+  Medientyp-Standard vor der allgemeinen Gerätesprache; explizite Werk- oder
+  Dateiangaben haben Vorrang. Reader-Tests prüfen beide Fälle.
 - Core- und Reader-Tests prüfen Einstieg, Abkürzungen, lange Absätze,
   Unicode-Zeichengrenzen, geänderte Anker, falsche Kapitel,
   Synthese ohne Fortschrittsänderung,

@@ -192,6 +192,29 @@ void main() {
       );
     });
 
+    test(
+      'Novels verwenden Englisch als Standard vor der Gerätesprache',
+      () async {
+        await openWork();
+        final base = library.works.first;
+        final noLanguageMetadata = LibraryWorkSummary(
+          id: base.id,
+          kind: 'webnovel',
+          title: base.title,
+          author: base.summary.author,
+          fileCount: base.summary.fileCount,
+          addedAt: base.summary.addedAt,
+        );
+        await reader.open(
+          library.library!,
+          WorkView.fromSummary(noLanguageMetadata),
+        );
+        final choice = reader.resolveSpeechLanguage(globalDefault: 'de')!;
+        expect(choice.language, SpeechLanguage.english);
+        expect(choice.source, SpeechLanguageSource.mediaTypeDefault);
+      },
+    );
+
     test('an explicitly selected new volume starts at its beginning', () async {
       final folder = Directory('${root.path}/Light Novels/Glasmeer');
       writeEpub(folder, 'Band 02.epub', ['Neues']);
