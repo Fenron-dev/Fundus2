@@ -12,6 +12,7 @@ import '../../app/fundus_scope.dart';
 import '../../media/text_reader_controller.dart';
 import '../../media/phonon_model_store.dart';
 import '../../media/text_speech_controller.dart';
+import 'speech_model_status.dart';
 
 /// The reader for running text, laid over the shell.
 ///
@@ -138,7 +139,10 @@ class _TextReaderBar extends StatelessWidget {
             tooltip: 'Lesezeichen setzen',
           ),
           ListenableBuilder(
-            listenable: scope.textSpeech,
+            listenable: Listenable.merge([
+              scope.textSpeech,
+              scope.speechModels,
+            ]),
             builder: (context, _) {
               final speech = scope.textSpeech;
               final icon = switch (speech.state) {
@@ -158,9 +162,17 @@ class _TextReaderBar extends StatelessWidget {
                 TextSpeechState.idle => 'Vorlesen starten',
               };
               return IconButton(
-                onPressed: () => _toggleTextSpeech(context),
-                icon: Icon(icon, size: FundusIcons.sizeLg, color: ink),
-                tooltip: tooltip,
+                onPressed: scope.speechModels.isBusy
+                    ? null
+                    : () => _toggleTextSpeech(context),
+                icon: Icon(
+                  scope.speechModels.isBusy ? Icons.downloading_rounded : icon,
+                  size: FundusIcons.sizeLg,
+                  color: ink,
+                ),
+                tooltip: scope.speechModels.isBusy
+                    ? 'Vorlesemodell wird vom Server geladen'
+                    : tooltip,
               );
             },
           ),
@@ -214,13 +226,38 @@ class _TextReaderBar extends StatelessWidget {
 
 Future<void> _toggleTextSpeech(BuildContext context) async {
   final scope = FundusScope.of(context);
+  final requestedWorkId = scope.textReader.work?.id;
+  final requestedVolume = scope.textReader.volumeIndex;
+  final requestedChapter = scope.textReader.chapterIndex;
   var modelDirectory = scope.settings.phononModelDirectory;
-  if (!scope.textSpeech.isActive && modelDirectory == null) {
-    await _chooseTextSpeechModel(context);
+  if (modelDirectory != null && Platform.isMacOS) {
+    await scope.vaultAccess.unlock(modelDirectory);
+    if (!context.mounted) return;
+  }
+  if (!scope.textSpeech.isActive &&
+      (modelDirectory == null || !Directory(modelDirectory).existsSync())) {
+    if (Platform.isAndroid) {
+      modelDirectory = await scope.speechModels.ensureAvailable(retry: true);
+    }
+    if (!context.mounted) return;
+    if (modelDirectory == null || !Directory(modelDirectory).existsSync()) {
+      await _chooseTextSpeechModel(context, explain: true);
+    }
     modelDirectory = scope.settings.phononModelDirectory;
-    if (modelDirectory == null || !context.mounted) return;
+    if (modelDirectory == null ||
+        !Directory(modelDirectory).existsSync() ||
+        !context.mounted) {
+      return;
+    }
+  }
+  if (!scope.textReader.isOpen ||
+      scope.textReader.work?.id != requestedWorkId ||
+      scope.textReader.volumeIndex != requestedVolume ||
+      scope.textReader.chapterIndex != requestedChapter) {
+    return;
   }
   final workId = scope.textReader.work?.id;
+  final rate = workId == null ? 1.0 : scope.settings.speechRate(workId);
   final workOverride = workId == null
       ? null
       : scope.settings.speechLanguageOverride(workId);
@@ -231,6 +268,10 @@ Future<void> _toggleTextSpeech(BuildContext context) async {
     modelDirectory: modelDirectory ?? '',
     workOverride: workOverride,
     globalDefault: null,
+    rate: rate,
+    pronunciations: workId == null
+        ? const {}
+        : scope.settings.speechPronunciations(workId),
     voice: workId == null || language == null
         ? null
         : scope.settings.speechVoice(
@@ -248,9 +289,90 @@ String _speechLanguageLabel(SpeechLanguage language) => switch (language) {
   SpeechLanguage.portuguese => 'Portugiesisch',
 };
 
-Future<void> _chooseTextSpeechModel(BuildContext context) async {
+Future<MapEntry<String, String>?> _editSpeechPronunciation(
+  BuildContext context, {
+  String? source,
+  String? spoken,
+}) async {
+  final sourceController = TextEditingController(text: source);
+  final spokenController = TextEditingController(text: spoken);
+  final result = await showDialog<MapEntry<String, String>>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(
+        source == null ? 'Aussprache hinzufügen' : 'Aussprache ändern',
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: sourceController,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Wort im Buch'),
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          TextField(
+            controller: spokenController,
+            decoration: const InputDecoration(labelText: 'So aussprechen'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Abbrechen'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final word = sourceController.text.trim();
+            final pronunciation = spokenController.text.trim();
+            if (word.isEmpty || pronunciation.isEmpty) return;
+            Navigator.pop(dialogContext, MapEntry(word, pronunciation));
+          },
+          child: const Text('Speichern'),
+        ),
+      ],
+    ),
+  );
+  sourceController.dispose();
+  spokenController.dispose();
+  return result;
+}
+
+Future<void> _chooseTextSpeechModel(
+  BuildContext context, {
+  bool explain = false,
+}) async {
   final scope = FundusScope.of(context);
   try {
+    if (explain) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Vorlesen einmal einrichten'),
+          content: Text(
+            Platform.isAndroid
+                ? '${scope.speechModels.failure ?? 'Es ist noch kein Sprachmodell installiert.'}\n\nMit verbundenem Server lädt Fundus das Modell automatisch. Alternativ kannst du ein vorhandenes CPU-Modell als ZIP importieren.'
+                : Platform.isMacOS
+                ? 'Die Sprachengine ist enthalten. Für die Stimme wird zusätzlich ein passendes Core-ML-Modell benötigt. Wähle dessen lokalen Modellordner. Für Android wird am Server ein separates CPU-Modell eingerichtet.'
+                : 'Die Sprachengine ist enthalten. Einmalig fehlt noch das Sprachmodell mit einer Stimme. Du kannst direkt den vorhandenen Phonon-Ordner models/phonon-31m-en wählen oder ihn an einen beliebigen lokalen Speicherort kopieren.\n\nIm gewählten Ordner müssen config.json, tokenizer.json, model.q8.gguf (oder model.safetensors) sowie default-voice.safetensors liegen. Das englische Modell ist für deine Novels geeignet.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Schließen'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(
+                Platform.isAndroid ? 'ZIP importieren' : 'Modellordner wählen',
+              ),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !context.mounted) return;
+    }
     final String? directory;
     if (Platform.isAndroid) {
       final selection = await FilePicker.pickFiles(
@@ -273,6 +395,10 @@ Future<void> _chooseTextSpeechModel(BuildContext context) async {
       );
     }
     if (directory == null || !context.mounted) return;
+    if (!Platform.isMacOS) {
+      await PhononModelStore.validateCpuModelDirectory(directory);
+    }
+    await scope.vaultAccess.remember(directory);
     if (scope.textSpeech.isActive) await scope.textSpeech.stop();
     await scope.settings.setPhononModelDirectory(directory);
   } on FormatException catch (error) {
@@ -820,6 +946,12 @@ Future<void> _showTextSettings(BuildContext context) {
           workId,
           SpeechLanguageResolver.code(selectedSpeechLanguage),
         );
+  var selectedSpeechRate = workId == null
+      ? 1.0
+      : scope.settings.speechRate(workId);
+  var pronunciations = workId == null
+      ? <String, String>{}
+      : scope.settings.speechPronunciations(workId);
   var supportedSpeechLanguages = <SpeechLanguage>[];
   var availableSpeechVoices = <String>[];
   var loadingSpeechVoices = false;
@@ -841,6 +973,7 @@ Future<void> _showTextSettings(BuildContext context) {
       speechOptionsError = null;
     });
     try {
+      if (Platform.isMacOS) await scope.vaultAccess.unlock(directory);
       final languages = await scope.textSpeech.availableLanguages(
         modelDirectory: directory,
         language: selectedSpeechLanguage,
@@ -1029,12 +1162,28 @@ Future<void> _showTextSettings(BuildContext context) {
                 Text(
                   scope.settings.phononModelDirectory == null
                       ? Platform.isAndroid
-                            ? 'Noch kein lokales Phonon-Modell importiert. Wähle ein ZIP-Archiv mit englischem Modell, tokenizer.json und default-voice.safetensors. Novels ohne Sprachangabe werden auf Englisch vorgelesen.'
+                            ? 'Fundus lädt das Vorlesemodell vom gekoppelten Server und speichert es für unterwegs. Am Server muss ein CPU-Modell mit Stimme eingerichtet sein. Novels ohne Sprachangabe werden auf Englisch vorgelesen.'
                             : 'Noch kein lokales Phonon-Modell ausgewählt. Novels ohne Sprachangabe werden auf Englisch vorgelesen.'
                       : 'Modellordner: ${scope.settings.phononModelDirectory!.split(Platform.pathSeparator).last}',
                   style: Theme.of(sheetContext).textTheme.bodySmall,
                 ),
                 const SizedBox(height: FundusSpace.x2),
+                Text(
+                  'Modelle werden nicht mit Fundus ausgeliefert und bleiben '
+                  'auf diesem Gerät. Laut Phonon-Projekt steht phonon-31m-en '
+                  'unter Apache 2.0; phonon-40m-Modelle einschließlich Englisch '
+                  'unter CC BY-NC 4.0. Bitte Lizenz und Herkunft des gewählten '
+                  'Archivs prüfen. Importierte Modelle werden lokal auf '
+                  'Dateiveränderungen geprüft; das ist kein Echtheitsnachweis.',
+                  style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                    color: context.fundus.textFaint,
+                  ),
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                if (Platform.isAndroid) ...[
+                  const SpeechModelStatus(),
+                  const SizedBox(height: FundusSpace.x2),
+                ],
                 OutlinedButton.icon(
                   onPressed: () async {
                     await _chooseTextSpeechModel(sheetContext);
@@ -1099,6 +1248,125 @@ Future<void> _showTextSettings(BuildContext context) {
                       },
                     ),
                   ),
+                if (workId != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: FundusSpace.x2),
+                    child: Text(
+                      'Für dieses Werk aktiv: '
+                      '${_speechLanguageLabel(selectedSpeechLanguage)}'
+                      '${selectedSpeechVoice == null ? '' : ' · $selectedSpeechVoice'}',
+                      style: Theme.of(sheetContext).textTheme.bodySmall,
+                    ),
+                  ),
+                const SizedBox(height: FundusSpace.x2),
+                Text(
+                  'Vorlesetempo · ${selectedSpeechRate.toStringAsFixed(2)}×',
+                  style: Theme.of(sheetContext).textTheme.labelSmall,
+                ),
+                Slider(
+                  min: 0.5,
+                  max: 2.5,
+                  divisions: 20,
+                  value: selectedSpeechRate,
+                  label: '${selectedSpeechRate.toStringAsFixed(2)}×',
+                  onChanged: workId == null
+                      ? null
+                      : (value) async {
+                          setSheetState(() => selectedSpeechRate = value);
+                          await scope.settings.setSpeechRate(workId, value);
+                        },
+                ),
+                OutlinedButton.icon(
+                  onPressed:
+                      loadingSpeechVoices ||
+                          scope.settings.phononModelDirectory == null ||
+                          reader.work == null
+                      ? null
+                      : () async {
+                          speechOptionsError = null;
+                          setSheetState(() {});
+                          await scope.textSpeech.preview(
+                            modelDirectory:
+                                scope.settings.phononModelDirectory!,
+                            language: selectedSpeechLanguage,
+                            voice: selectedSpeechVoice,
+                            rate: selectedSpeechRate,
+                          );
+                          if (!sheetContext.mounted) return;
+                          setSheetState(() {
+                            speechOptionsError = scope.textSpeech.failure;
+                          });
+                        },
+                  icon: const Icon(Icons.volume_up_outlined),
+                  label: const Text('Stimme probehören'),
+                ),
+                if (workId != null) ...[
+                  const SizedBox(height: FundusSpace.x4),
+                  Text(
+                    'Aussprache für dieses Werk',
+                    style: Theme.of(sheetContext).textTheme.labelSmall,
+                  ),
+                  Text(
+                    'Gilt nur beim Vorlesen; der Originaltext bleibt unverändert.',
+                    style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                      color: context.fundus.textFaint,
+                    ),
+                  ),
+                  for (final entry in pronunciations.entries)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(entry.key),
+                      subtitle: Text('Wird gesprochen als: ${entry.value}'),
+                      onTap: () async {
+                        final revised = await _editSpeechPronunciation(
+                          sheetContext,
+                          source: entry.key,
+                          spoken: entry.value,
+                        );
+                        if (revised == null || !sheetContext.mounted) return;
+                        final next = Map<String, String>.from(pronunciations)
+                          ..remove(entry.key)
+                          ..[revised.key] = revised.value;
+                        await scope.settings.setSpeechPronunciations(
+                          workId,
+                          next,
+                        );
+                        setSheetState(() => pronunciations = next);
+                      },
+                      trailing: IconButton(
+                        tooltip: 'Aussprache entfernen',
+                        onPressed: () async {
+                          final next = Map<String, String>.from(pronunciations)
+                            ..remove(entry.key);
+                          await scope.settings.setSpeechPronunciations(
+                            workId,
+                            next,
+                          );
+                          if (sheetContext.mounted) {
+                            setSheetState(() => pronunciations = next);
+                          }
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ),
+                  TextButton.icon(
+                    onPressed: () async {
+                      final added = await _editSpeechPronunciation(
+                        sheetContext,
+                      );
+                      if (added == null || !sheetContext.mounted) return;
+                      final next = Map<String, String>.from(pronunciations)
+                        ..[added.key] = added.value;
+                      await scope.settings.setSpeechPronunciations(
+                        workId,
+                        next,
+                      );
+                      setSheetState(() => pronunciations = next);
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Aussprache hinzufügen'),
+                  ),
+                ],
                 if (speechOptionsError case final error?)
                   Padding(
                     padding: const EdgeInsets.only(top: FundusSpace.x2),

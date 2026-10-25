@@ -225,6 +225,17 @@ class ServerHostController extends ChangeNotifier {
       if (registry.libraries.isEmpty) {
         throw StateError('Keine der ausgewählten Bibliotheken ist verfügbar.');
       }
+      final speechPath =
+          settings.phononServerModelDirectory ?? settings.phononModelDirectory;
+      if (speechPath != null && unlockPath != null) {
+        // Speech is optional: losing model-folder access must not stop the
+        // media server from starting. The model endpoint reports it missing.
+        try {
+          await unlockPath!(speechPath);
+        } on Object {
+          /* Optional model. */
+        }
+      }
       final handler = FundusServerHandler(
         // Only paired devices get in. The handler also accepts one fixed
         // token; it is generated here, never shown and never stored, so no
@@ -239,6 +250,9 @@ class ServerHostController extends ChangeNotifier {
         // Zeilen ist „bei mir ist nichts erreichbar" nicht nachvollziehbar.
         requestObserver: _logRequest,
         onLibraryUnusable: _reopenLibrary,
+        speechModelDirectory: () =>
+            settings.phononServerModelDirectory ??
+            settings.phononModelDirectory,
       );
       _socket = await _listen(handler, identity);
       if (_disposed || !_wantsSharing) {

@@ -195,6 +195,85 @@ void main() {
   });
 
   test(
+    'TTS-Tempo gilt nur für das Segment und ändert Audio-Habits nicht',
+    () async {
+      final speechFile = File('${root.path}/temporary-speech-rate.wav');
+      await speechFile.writeAsBytes([0, 1, 2, 3]);
+      final playback = controller.playSpeechFile(
+        work: work,
+        fileId: 'chapter-1:0',
+        title: '${work.title} · Kapitel 1',
+        path: speechFile.path,
+        rate: 1.4,
+      );
+      await waitForPlayback(
+        controller,
+        () => controller.isPlaying && controller.isPlayingSpeech,
+      );
+      expect(engine.rate, 1.4);
+      expect(controller.habits.rate, 1);
+      engine.emitCompleted();
+      await playback;
+      expect(engine.rate, 1);
+      expect(controller.habits.rate, 1);
+    },
+  );
+
+  test(
+    'ein pausiertes TTS-Segment lässt sich ohne Lesesprung fortsetzen',
+    () async {
+      final speechFile = File('${root.path}/temporary-speech-pause.wav');
+      await speechFile.writeAsBytes([0, 1, 2, 3]);
+      final playback = controller.playSpeechFile(
+        work: work,
+        fileId: 'chapter-1:0',
+        title: '${work.title} · Kapitel 1',
+        path: speechFile.path,
+      );
+      await waitForPlayback(
+        controller,
+        () => controller.isPlaying && controller.isPlayingSpeech,
+      );
+
+      await controller.pause();
+      expect(controller.isPlayingSpeech, isTrue);
+      expect(controller.isPlaybackRequested, isFalse);
+      await controller.playOrPause();
+      await waitForPlayback(controller, () => controller.isPlaying);
+      engine.emitCompleted();
+
+      await playback;
+      expect(controller.isPlayingSpeech, isFalse);
+    },
+  );
+
+  test(
+    'absichtliches Beenden meldet Unterbrechung ohne Buchfortschritt',
+    () async {
+      final speechFile = File('${root.path}/temporary-speech-stop.wav');
+      await speechFile.writeAsBytes([0, 1, 2, 3]);
+      final playback = controller.playSpeechFile(
+        work: work,
+        fileId: 'chapter-1:0',
+        title: '${work.title} · Kapitel 1',
+        path: speechFile.path,
+      );
+      await waitForPlayback(
+        controller,
+        () => controller.isPlaying && controller.isPlayingSpeech,
+      );
+
+      final stopped = expectLater(
+        playback,
+        throwsA(isA<SpeechPlaybackInterrupted>()),
+      );
+      await controller.close();
+      await stopped;
+      expect(library.loadProgress(work.id), isNull);
+    },
+  );
+
+  test(
     'running playback writes to the recovered vault without losing its position',
     () async {
       await controller.open(library, work);

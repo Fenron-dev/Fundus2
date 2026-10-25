@@ -7,8 +7,10 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/work_view.dart';
 import 'phonon_native.dart';
+import 'phonon_model_store.dart';
 import 'playback_controller.dart';
 import 'speech_engine.dart';
+import 'speech_text_transform.dart';
 import 'text_reader_controller.dart';
 
 enum TextSpeechState { idle, preparing, synthesizing, playing, paused, failed }
@@ -45,6 +47,7 @@ final class TextSpeechController extends ChangeNotifier {
 
   TextSpeechEngine? _engine;
   String? _engineKey;
+  final Set<String> _verifiedModelDirectories = {};
   TextSpeechState _state = TextSpeechState.idle;
   String? _failure;
   int _runId = 0;
@@ -85,7 +88,16 @@ final class TextSpeechController extends ChangeNotifier {
   }
 
   void _playerChanged() {
-    if (_state == TextSpeechState.playing && !player.isPlaying) {
+    if ((_state == TextSpeechState.playing ||
+            _state == TextSpeechState.preparing ||
+            _state == TextSpeechState.paused) &&
+        player.isPlayingSpeech) {
+      _state = switch ((player.isPlaybackRequested, player.isPlaying)) {
+        (true, true) => TextSpeechState.playing,
+        (true, false) => TextSpeechState.preparing,
+        (false, _) when player.isLoadingTrack => TextSpeechState.preparing,
+        _ => TextSpeechState.paused,
+      };
       notifyListeners();
     }
   }
@@ -95,6 +107,8 @@ final class TextSpeechController extends ChangeNotifier {
     String? workOverride,
     String? globalDefault,
     String? voice,
+    double rate = 1,
+    Map<String, String> pronunciations = const {},
   }) async {
     if (isActive) return;
     final work = reader.work;
@@ -113,21 +127,26 @@ final class TextSpeechController extends ChangeNotifier {
     notifyListeners();
     try {
       await _ensureEngine(modelDirectory, selection.language);
-      await _read(token, work, selection.language, voice);
+      await _read(token, work, selection.language, voice, rate, pronunciations);
       if (token == _runId) {
         _state = TextSpeechState.idle;
         _runningWorkId = null;
       }
     } on Object catch (error) {
       if (token == _runId) {
-        _failure = _diagnostic(error);
-        _state = TextSpeechState.failed;
+        final intentionallyStopped = error is SpeechPlaybackInterrupted;
+        _failure = intentionallyStopped ? null : _diagnostic(error);
+        _state = intentionallyStopped
+            ? TextSpeechState.idle
+            : TextSpeechState.failed;
         _runningWorkId = null;
         reader.checkpointSpeech();
-        try {
-          await player.close();
-        } on Object {
-          // Preserve the original synthesis/player diagnostic.
+        if (!intentionallyStopped && player.isSpeechFileLoaded) {
+          try {
+            await player.close();
+          } on Object {
+            // Preserve the original synthesis/player diagnostic.
+          }
         }
       }
     } finally {
@@ -135,9 +154,115 @@ final class TextSpeechController extends ChangeNotifier {
     }
   }
 
+  /// Plays a short, fixed phrase through the same local voice and player as
+  /// reading. It deliberately does not move the book position or write a
+  /// reading checkpoint.
+  Future<void> preview({
+    required String modelDirectory,
+    required SpeechLanguage language,
+    String? voice,
+    double rate = 1,
+  }) async {
+    final work = reader.work;
+    if (!reader.isOpen || work == null) return;
+    if (isActive) await stop();
+    final token = ++_runId;
+    _runningWorkId = work.id;
+    _failure = null;
+    _state = TextSpeechState.preparing;
+    notifyListeners();
+    File? file;
+    try {
+      await _ensureEngine(modelDirectory, language);
+      if (token != _runId) return;
+      _state = TextSpeechState.synthesizing;
+      notifyListeners();
+      final text = switch (language) {
+        SpeechLanguage.english =>
+          'This is a short voice sample. Your English novel will be read aloud from your current position.',
+        SpeechLanguage.german =>
+          'Dies ist eine kurze Hörprobe. Dein Buch wird an deiner aktuellen Lesestelle vorgelesen.',
+        SpeechLanguage.french =>
+          'Ceci est un court échantillon vocal. Votre livre sera lu à partir de votre position actuelle.',
+        SpeechLanguage.spanish =>
+          'Esta es una breve muestra de voz. Tu libro se leerá desde tu posición actual.',
+        SpeechLanguage.portuguese =>
+          'Esta é uma pequena amostra de voz. O livro será lido a partir da sua posição atual.',
+      };
+      final position = MediaPosition(
+        kind: MediaPositionKind.epubCfi,
+        numericValue: 0,
+        label: 'Hörprobe',
+      );
+      final segment = SpeechTextSegment(
+        text: text,
+        start: 0,
+        end: text.length,
+        paragraphIndex: 0,
+        startPosition: position,
+        endPosition: position,
+      );
+      final audio = await _engine!.synthesize(
+        segment,
+        language: language,
+        voice: voice,
+      );
+      if (token != _runId) return;
+      final temp = await _tempDirectory();
+      file = File('${temp.path}/fundus-speech-preview-${++_runIdCounter}.wav');
+      await file.writeAsBytes(audio.wav, flush: true);
+      _state = TextSpeechState.playing;
+      notifyListeners();
+      await player.playSpeechFile(
+        work: work,
+        fileId: 'preview:${SpeechLanguageResolver.code(language)}',
+        title: 'Phonon-Hörprobe · ${_languageName(language)}',
+        path: file.path,
+        rate: rate,
+      );
+    } on Object catch (error) {
+      if (token == _runId && error is! SpeechPlaybackInterrupted) {
+        _failure = _diagnostic(error);
+        if (player.isSpeechFileLoaded) {
+          try {
+            await player.close();
+          } on Object {
+            // Preserve the original preview diagnostic.
+          }
+        }
+      }
+    } finally {
+      try {
+        if (file != null && await file.exists()) await file.delete();
+      } on FileSystemException {
+        // A stale temporary WAV can be removed by the next app cleanup.
+      }
+      if (token == _runId) {
+        _state = _failure == null
+            ? TextSpeechState.idle
+            : TextSpeechState.failed;
+        _runningWorkId = null;
+        notifyListeners();
+      }
+    }
+  }
+
+  static String _languageName(SpeechLanguage language) => switch (language) {
+    SpeechLanguage.english => 'English',
+    SpeechLanguage.german => 'Deutsch',
+    SpeechLanguage.french => 'Französisch',
+    SpeechLanguage.spanish => 'Spanisch',
+    SpeechLanguage.portuguese => 'Portugiesisch',
+  };
+
   Future<void> _ensureEngine(String directory, SpeechLanguage language) async {
     final key = '$directory|${SpeechLanguageResolver.code(language)}';
     if (_engine != null && _engineKey == key) return;
+    if (PhononModelStore.isFundusImportedModel(directory) &&
+        !_verifiedModelDirectories.contains(directory)) {
+      await PhononModelStore.verifyIntegrity(directory);
+      _verifiedModelDirectories.add(directory);
+    }
     await _engine?.dispose();
     _engine = await _engineFactory(directory, language);
     _engineKey = key;
@@ -148,6 +273,8 @@ final class TextSpeechController extends ChangeNotifier {
     WorkView work,
     SpeechLanguage language,
     String? voice,
+    double rate,
+    Map<String, String> pronunciations,
   ) async {
     while (token == _runId && reader.isOpen) {
       await _waitUntilResumed(token);
@@ -169,8 +296,9 @@ final class TextSpeechController extends ChangeNotifier {
 
       _state = TextSpeechState.synthesizing;
       notifyListeners();
+      final speechSegment = SpeechTextTransform.apply(segment, pronunciations);
       final audio = await _engine!.synthesize(
-        segment,
+        speechSegment,
         language: language,
         voice: voice,
       );
@@ -193,6 +321,7 @@ final class TextSpeechController extends ChangeNotifier {
               ? work.title
               : '${work.title} · ${currentChapter.title}',
           path: path,
+          rate: rate,
         );
       } finally {
         try {
@@ -231,13 +360,22 @@ final class TextSpeechController extends ChangeNotifier {
   }
 
   Future<void> resume() async {
-    if (!_pauseRequested) return;
+    if (!_pauseRequested &&
+        !(_state == TextSpeechState.paused && player.isPlayingSpeech)) {
+      return;
+    }
     _pauseRequested = false;
     final gate = _resumeGate;
     _resumeGate = null;
     if (gate != null && !gate.isCompleted) gate.complete();
-    if (player.isPlayingSpeech) await player.playOrPause();
-    if (_state == TextSpeechState.paused) _state = TextSpeechState.preparing;
+    if (player.isPlayingSpeech && !player.isPlaybackRequested) {
+      await player.playOrPause();
+    }
+    if (_state == TextSpeechState.paused) {
+      _state = player.isPlaying
+          ? TextSpeechState.playing
+          : TextSpeechState.preparing;
+    }
     notifyListeners();
   }
 
@@ -246,6 +384,8 @@ final class TextSpeechController extends ChangeNotifier {
     String? workOverride,
     String? globalDefault,
     String? voice,
+    double rate = 1,
+    Map<String, String> pronunciations = const {},
   }) async {
     if (!isActive) {
       return start(
@@ -253,9 +393,14 @@ final class TextSpeechController extends ChangeNotifier {
         workOverride: workOverride,
         globalDefault: globalDefault,
         voice: voice,
+        rate: rate,
+        pronunciations: pronunciations,
       );
     }
-    if (_pauseRequested) return resume();
+    if (_pauseRequested ||
+        _state == TextSpeechState.paused && player.isPlayingSpeech) {
+      return resume();
+    }
     return pause();
   }
 

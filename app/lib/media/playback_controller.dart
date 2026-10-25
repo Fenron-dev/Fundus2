@@ -13,6 +13,12 @@ import 'playback_engine.dart';
 import 'playback_preference.dart';
 import 'track_preference.dart';
 
+/// A speech segment stopped intentionally (for example from the lock screen)
+/// rather than failing during synthesis or audio output.
+final class SpeechPlaybackInterrupted implements Exception {
+  const SpeechPlaybackInterrupted();
+}
+
 /// The one player.
 ///
 /// Not one for local files and another for a server: the controller is handed
@@ -131,6 +137,8 @@ class PlaybackController extends ChangeNotifier {
   bool get isPlaybackRequested => _playbackRequested;
   bool get isLoadingTrack => _loadingTrack;
   bool get isPlayingSpeech => _speechCompletion != null;
+  bool get isSpeechFileLoaded =>
+      currentSource?.fileId.startsWith('speech:') ?? false;
   Future<bool> Function()? requestAudioFocus;
   Future<void> Function()? releaseAudioFocus;
 
@@ -540,8 +548,12 @@ class PlaybackController extends ChangeNotifier {
     required String fileId,
     required String title,
     required String path,
+    double? rate,
   }) async {
     await _stopWhatIsPlaying();
+    final previousRate = _rate;
+    final speechRate = rate?.clamp(0.5, 3.0);
+    var rateApplied = false;
     final epoch = _pauseEpoch;
     final completion = Completer<void>();
     _speechCompletion = completion;
@@ -569,17 +581,24 @@ class PlaybackController extends ChangeNotifier {
     try {
       await _openCurrent();
       if (_failure case final failure?) throw StateError(failure);
-      if (epoch != _pauseEpoch) {
-        throw StateError('Die Vorlese-Wiedergabe wurde unterbrochen.');
+      if (speechRate != null && _engineOrNull != null) {
+        await _engine.setRate(speechRate);
+        rateApplied = true;
       }
-      await _play();
-      if (!_playbackRequested && !_playing) {
+      // If an interruption arrives while the segment is opening, keep its
+      // completion future alive. A later explicit Play can resume it without
+      // failing TTS or advancing the reader past audio that was never heard.
+      if (epoch == _pauseEpoch) await _play();
+      if (epoch == _pauseEpoch && !_playbackRequested && !_playing) {
         throw StateError(
           _failure ?? 'Die Audioausgabe konnte nicht gestartet werden.',
         );
       }
       await completion.future;
     } finally {
+      if (rateApplied && _engineOrNull != null) {
+        await _engine.setRate(previousRate);
+      }
       if (identical(_speechCompletion, completion)) {
         _speechCompletion = null;
       }
@@ -590,9 +609,7 @@ class PlaybackController extends ChangeNotifier {
     final completion = _speechCompletion;
     _speechCompletion = null;
     if (completion != null && !completion.isCompleted) {
-      completion.completeError(
-        StateError('Die Vorlese-Wiedergabe wurde unterbrochen.'),
-      );
+      completion.completeError(const SpeechPlaybackInterrupted());
     }
   }
 

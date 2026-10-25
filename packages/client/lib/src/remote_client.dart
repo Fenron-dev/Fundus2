@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:fundus_core/fundus_core.dart';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import 'pairing_code.dart';
@@ -84,6 +85,74 @@ final class FundusRemoteClient {
   final Duration timeout;
   final http.Client _http;
   bool? _supportsPublicationManifests;
+
+  /// Older servers or servers without a configured CPU model return no offer.
+  Future<SpeechModelManifest?> speechModel() async {
+    try {
+      return SpeechModelManifest.fromJson(
+        await _getBounded('/v1/tts/model', maxBytes: 1024 * 1024),
+      );
+    } on FundusRemoteException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Streams to a new, app-owned staging file. Never buffers model weights in
+  /// memory, follows redirects, or accepts bytes differing from the offer.
+  Future<void> downloadSpeechModelFile({
+    required SpeechModelManifest model,
+    required int index,
+    required File destination,
+    void Function(int received)? onProgress,
+  }) async {
+    final entry = model.files[index];
+    RandomAccessFile? output;
+    try {
+      final request =
+          http.Request(
+              'GET',
+              baseUri.resolve('/v1/tts/models/${model.id}/files/$index'),
+            )
+            ..followRedirects = false
+            ..headers.addAll({..._headers, 'accept-encoding': 'identity'});
+      final response = await _http.send(request).timeout(timeout);
+      if (response.statusCode != 200 ||
+          (response.contentLength != null &&
+              response.contentLength != entry.bytes)) {
+        await response.stream.listen((_) {}).cancel();
+        throw FundusRemoteException(
+          'Die Sprachmodell-Datei konnte nicht vollständig vom Server geladen werden.',
+          statusCode: response.statusCode,
+        );
+      }
+      output = await destination.open(mode: FileMode.writeOnly);
+      final hashResult = _ModelDigestSink();
+      final hash = sha256.startChunkedConversion(hashResult);
+      var received = 0;
+      await for (final chunk in response.stream.timeout(timeout)) {
+        received += chunk.length;
+        if (received > entry.bytes) {
+          throw const FormatException(
+            'Die Sprachmodell-Datei ist größer als angekündigt.',
+          );
+        }
+        hash.add(chunk);
+        await output.writeFrom(chunk);
+        onProgress?.call(received);
+      }
+      hash.close();
+      if (received != entry.bytes ||
+          hashResult.value?.toString() != entry.sha256) {
+        throw const FormatException(
+          'Die Prüfsumme der Sprachmodell-Datei stimmt nicht. Bitte erneut laden.',
+        );
+      }
+      await output.flush();
+    } finally {
+      await output?.close();
+    }
+  }
 
   Future<bool> supportsPublicationManifests() async {
     if (_supportsPublicationManifests != null) {
@@ -749,12 +818,13 @@ final class FundusRemoteClient {
   }) async {
     try {
       final request = http.Request('GET', baseUri.resolve(path))
+        ..followRedirects = false
         ..headers.addAll({..._headers, 'accept-encoding': 'identity'});
       final response = await _http.send(request).timeout(timeout);
       if ((response.contentLength ?? 0) > maxBytes) {
         await response.stream.listen((_) {}).cancel();
         throw const FundusRemoteException(
-          'Kapitelbestand überschreitet die Größenbegrenzung.',
+          'Die Antwort überschreitet die Größenbegrenzung.',
           statusCode: 413,
         );
       }
@@ -762,7 +832,7 @@ final class FundusRemoteClient {
       await for (final chunk in response.stream.timeout(timeout)) {
         if (bytes.length + chunk.length > maxBytes) {
           throw const FundusRemoteException(
-            'Kapitelbestand überschreitet die Größenbegrenzung.',
+            'Die Antwort überschreitet die Größenbegrenzung.',
             statusCode: 413,
           );
         }
@@ -1060,4 +1130,12 @@ final class ComicPageRecord {
   final String id;
   final String name;
   final int size;
+}
+
+final class _ModelDigestSink implements Sink<Digest> {
+  Digest? value;
+  @override
+  void add(Digest data) => value = data;
+  @override
+  void close() {}
 }

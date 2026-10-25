@@ -31,6 +31,7 @@ import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
 import '../media/text_speech_controller.dart';
+import '../media/speech_model_controller.dart';
 import '../features/work/progress_choice_sheet.dart';
 import '../features/library/metadata_import_conflict_dialog.dart';
 import 'app_navigation.dart';
@@ -153,6 +154,23 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     reader: textReader,
     player: player,
   );
+  late final SpeechModelController speechModels = SpeechModelController(
+    settings: settings,
+    servers: () {
+      final seen = <String>{};
+      return [
+        for (final entry in peerLibraries.connected)
+          if (!entry.refused && seen.add(entry.peer.serverId))
+            (
+              id: entry.peer.serverId,
+              name: entry.peer.name,
+              client: entry.client,
+            ),
+      ];
+    },
+    storageRoot: () async =>
+        _supportRoot ?? await getApplicationSupportDirectory(),
+  );
   late final FullscreenController fullscreen =
       widget.fullscreen ?? FullscreenController();
   late final SyncController sync =
@@ -210,6 +228,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     reader.addListener(_bump);
     textReader.addListener(_bump);
     textSpeech.addListener(_bump);
+    speechModels.addListener(_bump);
     fullscreen.addListener(_bump);
     sync.addListener(_bump);
     host.addListener(_bump);
@@ -536,6 +555,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// look it up, and get null for a work that lies on this disk — which is
   /// exactly what „local" means to a player.
   void _wireSources() {
+    if (Platform.isAndroid && peerLibraries.hasConnection) {
+      unawaited(speechModels.ensureAvailable());
+    }
     FundusStreamProxy? proxyFor(String sourceId) =>
         peerLibraries.forSource(sourceId)?.proxy;
 
@@ -651,6 +673,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     // TTS owns the shared player while it is active; stop it before disposing
     // that player and the reader it checkpoints against.
     textSpeech.dispose();
+    speechModels.removeListener(_bump);
+    speechModels.dispose();
     // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
     if (widget.reader == null) reader.dispose();

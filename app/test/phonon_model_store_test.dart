@@ -35,6 +35,30 @@ void main() {
       File('$directory/default-voice.safetensors').readAsStringSync(),
       'voice',
     );
+    expect(
+      File('$directory/${PhononModelStore.integrityFileName}').existsSync(),
+      isTrue,
+    );
+    await PhononModelStore.verifyIntegrity(directory);
+  });
+
+  test('verifies imported files and detects later model changes', () async {
+    final zip = await _writeArchive(root, [
+      ArchiveFile.string('config.json', '{}'),
+      ArchiveFile.string('tokenizer.json', '{}'),
+      ArchiveFile.string('model.q8.gguf', 'weights'),
+      ArchiveFile.string('default-voice.safetensors', 'voice'),
+    ]);
+    final directory = await PhononModelStore.importCpuModelArchive(
+      archivePath: zip.path,
+      applicationSupportPath: root.path,
+    );
+    await File('$directory/model.q8.gguf').writeAsString('changed');
+
+    await expectLater(
+      PhononModelStore.verifyIntegrity(directory),
+      throwsFormatException,
+    );
   });
 
   test(

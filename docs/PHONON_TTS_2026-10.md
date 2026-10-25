@@ -55,8 +55,10 @@ veraltete Segmente dürfen einen neueren Lesestand nicht überschreiben.
   Fundus-Player mit dessen Audiofokus; es gibt keine zweite Audiositzung.
   Abschnitte werden temporär als WAV geschrieben und nach der Wiedergabe
   entfernt. Erst nach natürlichem Audioende wandert der gemeinsame Lesestand
-  weiter. Pause, Stopp, Fehler und App-Ende sichern den tatsächlich gehörten
-  Stand; ein Wechsel zu einem anderen Werk stoppt das Vorlesen.
+  weiter. Audiofokus-Pause hält das aktuelle Segment zum späteren Fortsetzen;
+  ein Stopp (auch vom Sperrbildschirm) gilt nicht als Synthesefehler und darf
+  keine andere, inzwischen gestartete Wiedergabe schließen. Ein Wechsel zu
+  einem anderen Werk stoppt das Vorlesen ohne den Lesestand zurückzusetzen.
 - Die Modellmappe wird nur lokal in `device.json` gespeichert. Novels ohne
   verlässliche Sprachangabe nutzen Englisch, während explizite Werk- oder
   Dateiangaben Vorrang behalten.
@@ -67,23 +69,118 @@ veraltete Segmente dürfen einen neueren Lesestand nicht überschreiben.
   gemeinsamen Gerätespeicher. Bei einer Deinstallation wird das App-private
   Modell entfernt und muss danach erneut importiert werden; bei einem normalen
   App-Update bleibt es erhalten.
+- Der Modellimport schreibt eine lokale SHA-256-Prüfliste neben die
+  importierten Dateien und prüft sie vor dem Laden der nativen Engine. Damit
+  werden beschädigte oder nachträglich veränderte Dateien erkannt; die Liste
+  ist kein Signaturnachweis und kann die Herkunft eines frei gewählten Archivs
+  nicht bestätigen. Ältere Importe erhalten beim ersten Laden einmalig eine
+  solche lokale Ausgangsprüfung. Danach gilt die erfolgreiche Prüfung für
+  diese Modellmappe bis zum Ende der laufenden App-Sitzung, damit ein
+  Sprachwechsel nicht jedes Mal sämtliche Gewichte erneut hasht.
+- Die Modellwahl weist auf die unterschiedlichen Lizenzen hin: laut dem
+  bereitgestellten Phonon-Projekt ist `phonon-31m-en` Apache-2.0, während die
+  `phonon-40m`-Modelle einschließlich Englisch CC BY-NC 4.0 sind. Fundus
+  verteilt keine Modellgewichte; Modelle und Prüflisten bleiben lokal.
 - Im Reader lassen sich die Vorlesesprache sowie die im installierten Modell
   verfügbaren Sprachen und Stimmen ansehen. Die Auswahl wird lokal je Werk
   gespeichert; eine Stimme wird zusätzlich nach Sprache getrennt gemerkt.
   Für Novels ist Englisch vorausgewählt, explizite Sprachmetadaten oder eine
   gespeicherte Auswahl gehen weiterhin vor. Die Stimmenliste stammt aus der
   installierten Phonon-Engine, nicht aus einer fest codierten Fundus-Liste.
+  Die Einstellungen zeigen die wirksame Sprache und Stimme. Eine lokalisierte
+  Hörprobe verwendet genau diese Auswahl, ohne den Buchstand fortzuschreiben.
+- Das Vorlesetempo ist lokal pro Werk einstellbar. Es wird nur für die
+  jeweilige TTS-Wiedergabe vorübergehend auf dem gemeinsamen Player gesetzt
+  und danach zurückgestellt; Tempo-Habits von Musik und Hörbüchern werden nicht
+  verändert.
+- Eine lokale, werkbezogene Ausspracheliste lässt einzelne Begriffe
+  (einschließlich englischer Namen) für die Stimme ersetzen. Der Abgleich ist
+  wortgenau und Unicode-fähig; längere Einträge haben Vorrang. Nur der an die
+  Engine gesendete Sprechtext ändert sich, niemals der gespeicherte Roman oder
+  seine Positionsanker. Die Liste bleibt installationslokal.
 - GitHub-Builds sind für die gepinnte Phonon-C-FFI-Revision vorbereitet:
   Android ARM64/x86_64, Windows x64 und macOS. Modellgewichte bleiben davon
   getrennt und werden nicht in Fundus-Builds oder das öffentliche Repository
   aufgenommen.
+- Der Server bietet unter den authentifizierten `/v1/tts/`-Routen ein CPU-Modell
+  mit relativen Dateinamen, Größen und SHA-256-Prüfsummen an. Native Bibliotheken,
+  andere Ordner und beliebige Dateien werden nicht übertragen. Q8 hat Vorrang
+  vor den unkomprimierten Gewichten, damit nicht beide Varianten geladen werden.
+  Modellprüfung und Hash-Berechnung laufen außerhalb des UI-/Server-Isolates.
+- Android holt ein fehlendes Modell beim Verbinden von einem gekoppelten Server.
+  Es nutzt dessen bestehendes Zugangstoken und Zertifikat-Pinning, streamt die
+  Dateien mit Größen- und Prüfsummenkontrolle und aktiviert erst den vollständig
+  geprüften Download. Fehlversuche werden nicht mit jedem Herzschlag wiederholt;
+  im Reader und unter Geräte & Abgleich kann man den Bezug erneut starten.
+  Vorhandene lokale Modelle werden weiterverwendet, auch ohne Serverkontakt.
+- Der erste Klick auf Vorlesen erklärt die noch erforderliche Modelleinrichtung,
+  bevor ein Dateiauswahldialog erscheint. Windows prüft den gewählten CPU-Ordner
+  auf Konfiguration, Tokenizer, Gewichte und Stimme. Am Server kann ein separates
+  CPU-Modell gewählt werden, damit ein Mac weiterhin sein Core-ML-Modell für die
+  eigene Wiedergabe nutzen und Android gleichzeitig CPU-Daten liefern kann.
 
-**Noch offen:** Prüfsummen- und Lizenzprüfung für Modellarchive,
-Hörprobe und sichtbare Anzeige der aktuell wirksamen Sprache/Stimme,
-Phonons Aussprache-Wörterbücher und Textregeln, Sperrbildschirm-/Unterbrechungstests sowie Laufzeit- und
-Akku-Abnahme auf echtem Android (insbesondere S21 FE). Die neuen nativen
-GitHub-Buildschritte sind konfiguriert, müssen nach dem Push aber erst noch
-remote erfolgreich laufen; ein erfolgreicher CI-Build ersetzt keinen
+## Einrichtung für Windows, Server und Android
+
+Die GitHub-App-Pakete enthalten die native Sprachengine (`ptts_ffi.dll` unter
+Windows, `libptts_ffi.so` unter Android). **Sprachmodelle und Stimmen sind separate
+Daten.** Der Öffnen-Dialog im bisherigen Windows-Build bedeutet, dass noch kein
+Modellordner gewählt wurde; er fragt nicht nach einer Novel oder einer Engine.
+
+Für englische Novels ist der vorhandene Phonon-Ordner `models/phonon-31m-en`
+geeignet. Man kann ihn direkt auswählen oder vollständig z. B. nach
+`C:\Fundus-TTS\phonon-31m-en` kopieren und diesen Ordner auswählen. Für CPU sind
+mindestens diese Dateien erforderlich:
+
+```text
+phonon-31m-en/
+  config.json
+  tokenizer.json
+  model.q8.gguf              (alternativ model.safetensors)
+  default-voice.safetensors  (alternativ passende Stimmen in voices/)
+```
+
+Weitere Modelldateien und Lizenzhinweise aus dem Phonon-Ordner können erhalten
+bleiben. Zusätzliche Stimmen kommen in dessen `voices/`-Unterordner. Eine
+Phonon-Python-Umgebung muss nicht kopiert oder gestartet werden. Die bevorzugten
+Dateinamen sind gegen die [fest gepinnte native CPU-Implementierung](https://github.com/gradium-ai/xn-ptts/blob/49b9033e44ab0fbb935973eca3213757644d1bbb/ptts-ffi/src/cpu.rs)
+geprüft.
+
+Am Desktop-Server unter **Einstellungen → Geräte & Abgleich → Vorlesemodell für
+gekoppelte Geräte → CPU-Modellordner wählen** denselben Ordner hinterlegen. Ohne
+separate Auswahl verwendet der Server den lokalen Vorlese-Modellordner. Die
+Auswahl gilt sofort, auch bei laufendem Server. Bei macOS muss für Android ein
+CPU-Modell hinterlegt werden; ein exportiertes Core-ML-Bundle ist nicht portabel
+auf Windows/Android.
+
+Android verbindet sich wie bisher mit dem Server und lädt das angebotene Modell,
+wenn noch keines lokal eingerichtet ist. Der Fortschritt ist unter Geräte &
+Abgleich sowie in den Reader-Einstellungen sichtbar. Falls zuvor noch kein
+Modell am Server eingerichtet war, dort **Vorlesemodell vom Server laden**
+antippen. Ein manuelles ZIP bleibt als Alternative vorhanden. Es wird kein
+HuggingFace-Zugang auf dem Handy benötigt. Beide Geräte benötigen den Build mit
+Modelltransfer; ein älterer Server liefert ein erklärtes leeres Angebot.
+
+## Präzision und derzeitige Grenzen
+
+Die aktuelle Engine erzeugt kurze Sprachsegmente vollständig und spielt sie
+anschließend ab. Der nächste Abschnitt wird danach erzeugt; ein vorausschauender
+Audio-Puffer für lückenärmere Wiedergabe ist noch nicht implementiert. Es gibt
+keine Wort-für-Wort-Zeitmarken. Nur vollständig abgespielte Segmente schreiben
+den Textstand fort; beim Stoppen mitten in einem Satz kann dieser beim Fortsetzen
+erneut beginnen. Dies schützt vor dem Überspringen noch nicht gehörter Wörter.
+
+Eine funktionierende Übersetzung der nativen Bibliothek im GitHub-Build und
+grüne Steuerungs-/Protokolltests belegen noch keine Sprachqualität,
+Echtzeitfähigkeit oder Akkulaufzeit auf dem S21 FE. Dafür bleiben die echten
+Windows-/Android-Abspieltests ausdrücklich erforderlich. Vollständige
+Hörbuch-/m4b-Exporte sind kein Teil der Reader-TTS-Umsetzung.
+
+**Noch offen:** eine vertrauenswürdige Herkunfts-/Signaturprüfung für
+Modellarchive (lokale SHA-256-Prüflisten erkennen nur spätere Veränderungen),
+Phonons sprachweite Wörterbücher und optionale Textregeln, vorausschauender
+Audio-Puffer, Sperrbildschirm- und
+Unterbrechungstests sowie Laufzeit- und Akku-Abnahme auf echtem Android
+(insbesondere S21 FE). Ein erfolgreicher GitHub-Build ersetzt keinen
 Gerätetest.
 
 ## Engine- und Datenschutzentscheidung für die nächsten Schritte
@@ -126,8 +223,10 @@ begrenzt und wird ohne Löschen von Originalmedien bereinigt. Die 40m-Modelle
 haben eine nichtkommerzielle Lizenz; Weitergabe, Attribution und
 Download-Herkunft müssen vor einem Release gesondert geklärt werden.
 
-Die nächste Implementierungsfolge ist: Modellimport mit Integritätsprüfung,
-Sprach-/Stimmenwahl, Aussprache/Textregeln und Akku-/Laufzeittest auf echtem
-Android-Gerät. Der bereits vorhandene
+Als nächste Schritte bleiben: eine vertrauenswürdige Signatur bzw. ein
+Prüfnachweis für die Herkunft von Modellarchiven, optionale sprachweite
+Phonon-Wörterbücher/Textregeln und die Abnahme auf echten Geräten. Dabei sind
+Laufzeit, Speicher, Akkuverbrauch, Audiofokus im Hintergrund und Verhalten bei
+Sperrbildschirm-Unterbrechungen zu messen. Der bereits vorhandene
 `audio_service`-/`audio_session`-Pfad darf nicht mit einer zweiten,
 gleichzeitig spielenden Fundus-Audiositzung konkurrieren.

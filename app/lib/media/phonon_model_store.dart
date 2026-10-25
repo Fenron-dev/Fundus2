@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
 import 'package:archive/archive.dart';
 import 'package:archive/archive_io.dart';
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 /// Imports an Android CPU model into Fundus' private app storage. The system
@@ -14,6 +16,48 @@ final class PhononModelStore {
   static const maxArchiveBytes = 1024 * 1024 * 1024;
   static const maxExpandedBytes = 768 * 1024 * 1024;
   static const maxFiles = 2048;
+  static const _maxInstalledFiles = maxFiles + 1;
+  static const integrityFileName = '.fundus-integrity.json';
+
+  static Future<void> validateCpuModelDirectory(
+    String directory,
+  ) => Isolate.run(() {
+    bool regular(String name) =>
+        FileSystemEntity.typeSync(
+          p.join(directory, name),
+          followLinks: false,
+        ) ==
+        FileSystemEntityType.file;
+    final config = File(p.join(directory, 'config.json'));
+    final voices = Directory(p.join(directory, 'voices'));
+    final hasVoice =
+        regular('default-voice.safetensors') ||
+        (voices.existsSync() &&
+            voices
+                .listSync(recursive: true, followLinks: false)
+                .any(
+                  (file) => file is File && file.path.endsWith('.safetensors'),
+                ));
+    if (!regular('config.json') ||
+        !regular('tokenizer.json') ||
+        !(regular('model.q8.gguf') || regular('model.safetensors')) ||
+        !hasVoice) {
+      throw const FormatException(
+        'Wähle den Modellordner mit config.json, tokenizer.json, model.q8.gguf (oder model.safetensors) und default-voice.safetensors (oder voices/).',
+      );
+    }
+    if (config.lengthSync() > 1024 * 1024) {
+      throw const FormatException('Die Modellkonfiguration ist zu groß.');
+    }
+    final decoded = jsonDecode(config.readAsStringSync());
+    if (decoded is! Map ||
+        decoded['languages'] is! List ||
+        (decoded['languages'] as List).isEmpty) {
+      throw const FormatException(
+        'Die Modellkonfiguration enthält keine Sprachen.',
+      );
+    }
+  });
 
   static Future<String> importCpuModelArchive({
     required String archivePath,
@@ -21,6 +65,16 @@ final class PhononModelStore {
   }) => Isolate.run(
     () => _extractCpuModelArchive(archivePath, applicationSupportPath),
   );
+
+  /// Verifies imported model files before the native engine reads them. For a
+  /// model imported by an older Fundus release, it records a local baseline
+  /// once. This detects later corruption, not a deliberately replaced model.
+  static Future<void> verifyIntegrity(String modelDirectory) =>
+      Isolate.run(() => _verifyModelIntegrity(modelDirectory));
+
+  static bool isFundusImportedModel(String modelDirectory) =>
+      p.basename(p.dirname(modelDirectory)) == 'phonon-models' &&
+      p.basename(modelDirectory).startsWith('model-');
 }
 
 String _extractCpuModelArchive(String archivePath, String supportPath) {
@@ -80,6 +134,11 @@ String _extractCpuModelArchive(String archivePath, String supportPath) {
     }
 
     final paths = normalized.map((entry) => entry.path).toSet();
+    if (paths.contains(PhononModelStore.integrityFileName)) {
+      throw const FormatException(
+        'Das Modellarchiv enthält einen reservierten Fundus-Dateinamen.',
+      );
+    }
     final hasWeights =
         paths.contains('model.q8.gguf') || paths.contains('model.safetensors');
     final hasVoice =
@@ -104,6 +163,7 @@ String _extractCpuModelArchive(String archivePath, String supportPath) {
     final staging = Directory(p.join(root.path, '.import-$suffix'))
       ..createSync();
     try {
+      final hashes = <String, String>{};
       for (final entry in normalized) {
         final destination = File(
           p.joinAll([staging.path, ...p.posix.split(entry.path)]),
@@ -114,7 +174,15 @@ String _extractCpuModelArchive(String archivePath, String supportPath) {
           throw const FormatException('Eine Modell-Datei ist beschädigt.');
         }
         destination.writeAsBytesSync(bytes, flush: true);
+        hashes[entry.path] = sha256.convert(bytes).toString();
       }
+      final integrity = File(
+        p.join(staging.path, PhononModelStore.integrityFileName),
+      );
+      integrity.writeAsStringSync(
+        jsonEncode({'schema_version': 1, 'files': hashes}),
+        flush: true,
+      );
       final installed = Directory(p.join(root.path, 'model-$suffix'));
       staging.renameSync(installed.path);
       return installed.path;
@@ -131,6 +199,128 @@ String _extractCpuModelArchive(String archivePath, String supportPath) {
   } finally {
     input.closeSync();
   }
+}
+
+Future<void> _verifyModelIntegrity(String modelDirectory) async {
+  final root = Directory(modelDirectory);
+  if (!root.existsSync()) {
+    throw const FormatException(
+      'Der Phonon-Modellordner ist nicht erreichbar.',
+    );
+  }
+  final manifest = File(p.join(root.path, PhononModelStore.integrityFileName));
+  if (!manifest.existsSync()) {
+    _writeIntegrityManifest(root);
+    return;
+  }
+
+  late final Object? decoded;
+  try {
+    decoded = jsonDecode(manifest.readAsStringSync());
+  } on Object {
+    throw const FormatException(
+      'Die Integritätsliste des Phonon-Modells ist beschädigt.',
+    );
+  }
+  if (decoded is! Map || decoded['schema_version'] != 1) {
+    throw const FormatException(
+      'Die Integritätsliste des Phonon-Modells wird nicht unterstützt.',
+    );
+  }
+  final rawFiles = decoded['files'];
+  if (rawFiles is! Map || rawFiles.length > PhononModelStore.maxFiles) {
+    throw const FormatException('Die Modell-Prüfliste ist ungültig.');
+  }
+  final expected = <String, String>{};
+  for (final entry in rawFiles.entries) {
+    if (entry.key is! String ||
+        entry.value is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(entry.value as String) ||
+        _safeArchivePath(entry.key as String) != entry.key) {
+      throw const FormatException('Die Modell-Prüfliste ist ungültig.');
+    }
+    expected[entry.key as String] = entry.value as String;
+  }
+
+  final actual = _modelFiles(root)
+      .where(
+        (file) =>
+            p.relative(file.path, from: root.path).replaceAll('\\', '/') !=
+            PhononModelStore.integrityFileName,
+      )
+      .toList();
+  final actualPaths = actual
+      .map(
+        (file) => p.relative(file.path, from: root.path).replaceAll('\\', '/'),
+      )
+      .toSet();
+  if (actualPaths.length != expected.length ||
+      !actualPaths.containsAll(expected.keys)) {
+    throw const FormatException(
+      'Modellintegrität fehlgeschlagen: Dateibestand geändert. Importiere das Modell erneut.',
+    );
+  }
+  for (final file in actual) {
+    final relative = p
+        .relative(file.path, from: root.path)
+        .replaceAll('\\', '/');
+    if (relative == PhononModelStore.integrityFileName) continue;
+    final digest = await sha256.bind(file.openRead()).first;
+    if (digest.toString() != expected[relative]) {
+      throw const FormatException(
+        'Modellintegrität fehlgeschlagen: Eine Modell-Datei wurde verändert. Importiere das Modell erneut.',
+      );
+    }
+  }
+}
+
+void _writeIntegrityManifest(Directory root) {
+  final files =
+      _modelFiles(root)
+          .where(
+            (file) =>
+                p.relative(file.path, from: root.path).replaceAll('\\', '/') !=
+                PhononModelStore.integrityFileName,
+          )
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
+  if (files.isEmpty || files.length > PhononModelStore.maxFiles) {
+    throw const FormatException('Der Modellordner enthält zu viele Dateien.');
+  }
+  final hashes = <String, String>{};
+  for (final file in files) {
+    final relative = p
+        .relative(file.path, from: root.path)
+        .replaceAll('\\', '/');
+    if (_safeArchivePath(relative) == null) {
+      throw const FormatException(
+        'Der Phonon-Modellordner enthält einen ungültigen Pfad.',
+      );
+    }
+    hashes[relative] = sha256.convert(file.readAsBytesSync()).toString();
+  }
+  File(p.join(root.path, PhononModelStore.integrityFileName)).writeAsStringSync(
+    jsonEncode({'schema_version': 1, 'files': hashes}),
+    flush: true,
+  );
+}
+
+List<File> _modelFiles(Directory root) {
+  final files = <File>[];
+  for (final entity in root.listSync(recursive: true, followLinks: false)) {
+    final type = FileSystemEntity.typeSync(entity.path, followLinks: false);
+    if (type != FileSystemEntityType.file &&
+        type != FileSystemEntityType.directory) {
+      throw const FormatException(
+        'Der Phonon-Modellordner enthält einen Link oder eine ungültige Datei.',
+      );
+    }
+    if (type == FileSystemEntityType.file) files.add(File(entity.path));
+  }
+  if (files.length > PhononModelStore._maxInstalledFiles) {
+    throw const FormatException('Der Modellordner enthält zu viele Dateien.');
+  }
+  return files;
 }
 
 String? _safeArchivePath(String path) {

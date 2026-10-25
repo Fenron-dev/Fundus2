@@ -168,6 +168,18 @@ class AppSettings extends ChangeNotifier {
     value == null || value.trim().isEmpty ? null : value.trim(),
   );
 
+  /// CPU model offered to paired devices; a Mac may use a different Core-ML
+  /// bundle for its own playback. This path is installation-local as well.
+  String? get phononServerModelDirectory {
+    final value = _values['phonon_server_model_directory'];
+    return value is String && value.trim().isNotEmpty ? value.trim() : null;
+  }
+
+  Future<void> setPhononServerModelDirectory(String? value) => _set(
+    'phonon_server_model_directory',
+    value?.trim().isEmpty == true ? null : value?.trim(),
+  );
+
   String? speechLanguageOverride(String workId) {
     final raw = _values['speech_language_overrides'];
     if (raw is! Map) return null;
@@ -211,6 +223,73 @@ class AppSettings extends ChangeNotifier {
       voices[key] = voice.trim();
     }
     return _set('speech_voices', voices);
+  }
+
+  double speechRate(String workId) {
+    final raw = _values['speech_rates'];
+    if (raw is! Map) return 1;
+    final value = raw[workId];
+    if (value is! num || !value.toDouble().isFinite) return 1;
+    return value.toDouble().clamp(0.5, 2.5);
+  }
+
+  Future<void> setSpeechRate(String workId, double rate) {
+    if (!rate.isFinite || rate < 0.5 || rate > 2.5) {
+      throw ArgumentError.value(
+        rate,
+        'rate',
+        'Expected a value from 0.5 to 2.5',
+      );
+    }
+    final raw = _values['speech_rates'];
+    final rates = raw is Map
+        ? Map<String, Object?>.from(raw.cast<Object?, Object?>())
+        : <String, Object?>{};
+    rates[workId] = rate;
+    return _set('speech_rates', rates);
+  }
+
+  Map<String, String> speechPronunciations(String workId) {
+    final raw = _values['speech_pronunciations'];
+    if (raw is! Map || raw[workId] is! Map) return const {};
+    return Map<String, String>.fromEntries(
+      (raw[workId]! as Map).entries
+          .where(
+            (entry) =>
+                entry.key is String &&
+                entry.value is String &&
+                (entry.key as String).trim().isNotEmpty &&
+                (entry.value as String).trim().isNotEmpty,
+          )
+          .map(
+            (entry) => MapEntry(
+              (entry.key as String).trim(),
+              (entry.value as String).trim(),
+            ),
+          ),
+    );
+  }
+
+  Future<void> setSpeechPronunciations(
+    String workId,
+    Map<String, String> pronunciations,
+  ) {
+    final raw = _values['speech_pronunciations'];
+    final values = raw is Map
+        ? Map<String, Object?>.from(raw.cast<Object?, Object?>())
+        : <String, Object?>{};
+    final clean = <String, String>{};
+    for (final entry in pronunciations.entries) {
+      final source = entry.key.trim();
+      final spoken = entry.value.trim();
+      if (source.isNotEmpty && spoken.isNotEmpty) clean[source] = spoken;
+    }
+    if (clean.isEmpty) {
+      values.remove(workId);
+    } else {
+      values[workId] = clean;
+    }
+    return _set('speech_pronunciations', values);
   }
 
   /// What this device calls itself. Asked of the platform once, on the first

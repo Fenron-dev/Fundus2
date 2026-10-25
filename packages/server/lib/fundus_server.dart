@@ -11,6 +11,7 @@ export 'src/pairing.dart';
 
 import 'src/pairing.dart';
 import 'src/comic_archive.dart';
+import 'src/speech_models.dart';
 
 /// Eine Bibliothek, wie sie nach außen bedient wird.
 ///
@@ -190,6 +191,7 @@ final class FundusServerHandler {
     this.pairingAuthority,
     this.requestObserver,
     this.onLibraryUnusable,
+    this.speechModelDirectory,
   }) : registry = registry ?? FundusLibraryRegistry();
 
   final String token;
@@ -198,6 +200,8 @@ final class FundusServerHandler {
   final FundusLibraryRegistry registry;
   final FundusPairingAuthority? pairingAuthority;
   final FundusServerRequestObserver? requestObserver;
+  final String? Function()? speechModelDirectory;
+  final SharedSpeechModel _speechModel = SharedSpeechModel();
 
   /// Wird gerufen, wenn eine registrierte Bibliothek nicht mehr antwortet.
   ///
@@ -215,6 +219,8 @@ final class FundusServerHandler {
       ..get('/v1/health', _health)
       ..post('/v1/pairing/claim', _claimPairing)
       ..get('/v1/capabilities', _capabilities)
+      ..get('/v1/tts/model', _speechModelManifest)
+      ..get('/v1/tts/models/<modelId>/files/<index>', _speechModelFile)
       ..get('/v1/libraries', _libraries)
       ..get('/v1/libraries/<libraryId>/works', _works)
       ..get('/v1/libraries/<libraryId>/catalogue', _catalogue)
@@ -502,8 +508,54 @@ final class FundusServerHandler {
       'annotations',
       'portable_reader_profiles',
       'publication_manifests',
+      'speech_model_transfer',
     ],
   });
+
+  Future<Response> _speechModelManifest(Request request) async {
+    final directory = speechModelDirectory?.call();
+    if (directory == null || directory.isEmpty) {
+      return _notFound('speech_model_unavailable');
+    }
+    try {
+      final manifest = await _speechModel.manifest(directory);
+      return _json(manifest.toJson());
+    } on Object {
+      return _json({
+        'error': 'speech_model_invalid',
+        'message':
+            'Am Server ist kein vollständiges CPU-Sprachmodell mit Stimme hinterlegt.',
+      }, statusCode: 409);
+    }
+  }
+
+  Future<Response> _speechModelFile(
+    Request request,
+    String modelId,
+    String index,
+  ) async {
+    final directory = speechModelDirectory?.call();
+    if (directory == null || directory.isEmpty) {
+      return _notFound('speech_model_unavailable');
+    }
+    try {
+      final manifest = await _speechModel.manifest(directory);
+      final at = int.tryParse(index);
+      if (manifest.id != modelId ||
+          at == null ||
+          at < 0 ||
+          at >= manifest.files.length) {
+        return _notFound('speech_model_file_not_found');
+      }
+      return _serveFile(
+        request,
+        _speechModel.file(directory, manifest.files[at]),
+        resourceId: 'speech-$modelId-$at',
+      );
+    } on Object {
+      return _notFound('speech_model_file_not_found');
+    }
+  }
 
   Response _libraries(Request request) => _json({
     'libraries': [

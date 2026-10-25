@@ -36,6 +36,7 @@ export 'src/publication/publication_manifest.dart';
 export 'src/publication/publication_source.dart';
 export 'src/publication/reflow_document.dart';
 export 'src/publication/speech_language.dart';
+export 'src/publication/speech_model.dart';
 export 'src/publication/speech_text_plan.dart';
 export 'src/scan/audio_technical_metadata.dart';
 export 'src/scan/background_scan.dart';

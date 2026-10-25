@@ -28,6 +28,8 @@ import '../../data/work_filter.dart';
 import '../../data/server_host.dart';
 import '../library/unassigned_folders_card.dart';
 import '../../media/playback_preference.dart';
+import '../../media/phonon_model_store.dart';
+import '../reader/speech_model_status.dart';
 import '../../media/track_preference.dart';
 import 'settings_catalog.dart';
 import 'maintenance_page.dart';
@@ -3158,6 +3160,7 @@ class _SyncState extends State<_Sync> {
           ),
         ),
         _Sharing(host: scope.host),
+        if (Platform.isAndroid) const SettingsCard(child: SpeechModelStatus()),
         SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3877,6 +3880,29 @@ class _Sharing extends StatelessWidget {
                   ? null
                   : () => host.removeLibrary(entry.path),
             ),
+          if (!Platform.isAndroid) ...[
+            const SizedBox(height: FundusSpace.x4),
+            Text(
+              'Vorlesemodell für gekoppelte Geräte',
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: FundusSpace.x2),
+            Text(
+              'Android lädt dieses CPU-Modell mit Stimmen direkt von diesem Server und kann danach offline vorlesen. '
+              'Ein englisches Modell oder ein mehrsprachiges Modell mit Englisch eignet sich für Novels. '
+              'Ohne separate Auswahl wird der lokale Vorlese-Modellordner verwendet. Ein Mac-Core-ML-Modell ist für Android nicht geeignet.',
+              style: theme.textTheme.bodySmall,
+            ),
+            if ((host.settings.phononServerModelDirectory ??
+                    host.settings.phononModelDirectory)
+                case final path?)
+              Text(path, style: theme.textTheme.bodySmall),
+            OutlinedButton.icon(
+              onPressed: () => _chooseServerSpeechModel(context),
+              icon: const Icon(Icons.record_voice_over_outlined),
+              label: const Text('CPU-Modellordner wählen'),
+            ),
+          ],
           if (host.failure case final failure?) ...[
             const SizedBox(height: FundusSpace.x3),
             Text(
@@ -3961,6 +3987,43 @@ class _Sharing extends StatelessWidget {
     if (path == null || path.trim().isEmpty) return;
     await scope.vaultAccess.remember(path);
     await host.addLibrary(path, name: p.basename(path));
+  }
+
+  Future<void> _chooseServerSpeechModel(BuildContext context) async {
+    try {
+      final path = await FilePicker.getDirectoryPath(
+        dialogTitle: 'CPU-Sprachmodell für Android wählen',
+      );
+      if (path == null || !context.mounted) return;
+      await PhononModelStore.validateCpuModelDirectory(path);
+      if (!context.mounted) return;
+      await FundusScope.of(context).vaultAccess.remember(path);
+      await host.settings.setPhononServerModelDirectory(path);
+      if (!Platform.isMacOS && host.settings.phononModelDirectory == null) {
+        await host.settings.setPhononModelDirectory(path);
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'CPU-Vorlesemodell für gekoppelte Geräte hinterlegt.',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is FormatException
+                  ? error.message
+                  : 'Der Modellordner konnte nicht eingerichtet werden: $error',
+            ),
+          ),
+        );
+      }
+    }
   }
 
   static String _date(DateTime value) {
