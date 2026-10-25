@@ -421,9 +421,12 @@ void main() {
         await again.open(library.library!, work);
         expect(again.paragraphIndex, reader.paragraphIndex);
         expect(again.innerOffset, closeTo(reader.innerOffset, .001));
+        final resumed = again.speechPlan()!.segments.first;
         expect(
-          again.speechPlan()!.segments.first.start,
-          greaterThan(segment.end),
+          resumed.paragraphIndex > segment.paragraphIndex ||
+              resumed.paragraphIndex == segment.paragraphIndex &&
+                  resumed.start > segment.end,
+          isTrue,
         );
       },
     );

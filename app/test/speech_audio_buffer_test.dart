@@ -28,7 +28,7 @@ void main() {
   }
 
   test(
-    'continuous stream keeps one WAV header, bounds ahead data, commits only heard sentences',
+    'continuous raw PCM stream bounds ahead data and commits only heard sentences',
     () async {
       final buffer = await SpeechAudioBuffer.open();
       addTearDown(buffer.dispose);
@@ -38,7 +38,7 @@ void main() {
       expect(head.statusCode, 200);
       await head.drain<void>();
       final wrong = await (await client.getUrl(
-        buffer.uri.replace(path: '/unknown/speech.wav'),
+        buffer.uri.replace(path: '/unknown/speech.pcm'),
       )).close();
       expect(wrong.statusCode, 404);
       await wrong.drain<void>();
@@ -57,7 +57,7 @@ void main() {
       final heard = buffer.heardUntil(const Duration(milliseconds: 1200));
       expect(heard.map((s) => s.text), ['Sentence 0.']);
       await fifth;
-      expect(buffer.bufferedSentences, 4);
+      expect(buffer.bufferedSegments, 4);
 
       final response = await (await client.getUrl(buffer.uri)).close();
       final bytesFuture = response.fold<List<int>>(
@@ -66,9 +66,8 @@ void main() {
       );
       buffer.finish();
       final bytes = await bytesFuture;
-      expect(String.fromCharCodes(bytes.take(4)), 'RIFF');
-      expect(String.fromCharCodes(bytes.skip(8).take(4)), 'WAVE');
-      expect(bytes.length, 44 + speechPcm(audio().wav).length * 5);
+      expect(bytes.length, speechPcm(audio().wav).length * 5);
+      expect(bytes.sublist(0, 4), isNot(equals([82, 73, 70, 70])));
       expect(buffer.complete().map((s) => s.text), [
         'Sentence 1.',
         'Sentence 2.',

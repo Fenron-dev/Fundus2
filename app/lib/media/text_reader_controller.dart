@@ -208,7 +208,7 @@ class TextReaderController extends ChangeNotifier {
 
   /// The next speech pieces are anchored to the same text position as the
   /// visual reader. This does not generate audio or advance progress.
-  SpeechTextPlan? speechPlan() {
+  SpeechTextPlan? speechPlan({int maxCharacters = 400}) {
     final chapter = currentChapter;
     final volume = currentVolume;
     if (!_open || chapter == null || volume == null) return null;
@@ -217,6 +217,7 @@ class TextReaderController extends ChangeNotifier {
       fileId: volume.fileId,
       chapterId: chapter.id,
       at: _position(),
+      maxCharacters: maxCharacters,
     );
   }
 
@@ -229,6 +230,7 @@ class TextReaderController extends ChangeNotifier {
       fileId: volume.fileId,
       chapterId: chapter.id,
       at: null,
+      groupSentences: false,
     ).segments.toList();
     if (sentences.isEmpty) return;
     final cursor =

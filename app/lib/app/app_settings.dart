@@ -222,18 +222,42 @@ class AppSettings extends ChangeNotifier {
   Future<void> setSpeechDictionaries(List<SpeechDictionary> values) =>
       _set('speech_dictionaries', [for (final value in values) value.toJson()]);
 
+  /// A work may override the dictionaries inherited from its speech profile.
+  /// This also lets works using the legacy/default model activate dictionaries
+  /// without requiring a profile to be created first.
+  List<String> speechDictionaryIdsFor(String workId, SpeechProfile? profile) {
+    final raw = _values['speech_dictionary_ids_by_work'];
+    final value = raw is Map ? raw[workId] : null;
+    if (value is List) return value.whereType<String>().toList();
+    return profile?.dictionaryIds ?? const [];
+  }
+
+  Future<void> setSpeechDictionaryIds(String workId, List<String> ids) {
+    final raw = _values['speech_dictionary_ids_by_work'];
+    final values = raw is Map
+        ? Map<String, Object?>.from(raw.cast<Object?, Object?>())
+        : <String, Object?>{};
+    values[workId] = ids.toSet().toList();
+    return _set('speech_dictionary_ids_by_work', values);
+  }
+
   Map<String, String> effectiveSpeechPronunciations(
     String workId,
-    SpeechProfile? profile,
-  ) => {
-    for (final dictionary in speechDictionaries)
-      if (profile != null &&
-          profile.dictionaryIds.contains(dictionary.id) &&
-          (dictionary.language == null ||
-              dictionary.language == profile.language))
-        ...dictionary.entries,
-    ...speechPronunciations(workId),
-  };
+    SpeechProfile? profile, {
+    String? language,
+  }) {
+    final activeLanguage =
+        language ?? profile?.language ?? speechLanguageOverride(workId) ?? 'en';
+    final selected = speechDictionaryIdsFor(workId, profile).toSet();
+    return {
+      for (final dictionary in speechDictionaries)
+        if (selected.contains(dictionary.id) &&
+            (dictionary.language == null ||
+                dictionary.language == activeLanguage))
+          ...dictionary.entries,
+      ...speechPronunciations(workId),
+    };
+  }
 
   /// Local Phonon checkpoint folder selected on this installation. Model
   /// files are kept out of the shared vault and device sync.
@@ -369,6 +393,41 @@ class AppSettings extends ChangeNotifier {
       values[workId] = clean;
     }
     return _set('speech_pronunciations', values);
+  }
+
+  /// Copies the per-work choices that affect reading aloud. The referenced
+  /// profile remains shared; no model or voice files are copied.
+  Future<void> copySpeechSettings(
+    String sourceWorkId,
+    String targetWorkId,
+  ) async {
+    await setSpeechProfileId(targetWorkId, speechProfileId(sourceWorkId));
+    await setSpeechLanguageOverride(
+      targetWorkId,
+      speechLanguageOverride(sourceWorkId),
+    );
+    await setSpeechRate(targetWorkId, speechRate(sourceWorkId));
+    await setSpeechPronunciations(
+      targetWorkId,
+      speechPronunciations(sourceWorkId),
+    );
+    await setSpeechDictionaryIds(
+      targetWorkId,
+      speechDictionaryIdsFor(
+        sourceWorkId,
+        speechProfileFor(
+          sourceWorkId,
+          speechLanguageOverride(sourceWorkId) ?? 'en',
+        ),
+      ),
+    );
+    for (final language in ['en', 'de', 'fr', 'es', 'pt']) {
+      await setSpeechVoice(
+        targetWorkId,
+        language,
+        speechVoice(sourceWorkId, language),
+      );
+    }
   }
 
   /// What this device calls itself. Asked of the platform once, on the first

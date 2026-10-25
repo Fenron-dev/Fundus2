@@ -7,8 +7,8 @@ import 'dart:typed_data';
 import 'package:fundus_core/fundus_core.dart';
 import 'speech_engine.dart';
 
-/// One continuous WAV stream for a chapter. Backpressure follows *heard*
-/// sentences, not mpv read-ahead, so a long book never accumulates in memory.
+/// One continuous raw PCM stream for a chapter. Backpressure follows *heard*
+/// speech segments, not mpv read-ahead, so a long book never accumulates in memory.
 final class SpeechAudioBuffer {
   SpeechAudioBuffer._(this._server, this._token);
   final HttpServer _server;
@@ -23,8 +23,8 @@ final class SpeechAudioBuffer {
   Object? failure;
 
   Uri get uri =>
-      Uri.parse('http://127.0.0.1:${_server.port}/$_token/speech.wav');
-  int get bufferedSentences => _markers.length;
+      Uri.parse('http://127.0.0.1:${_server.port}/$_token/speech.pcm');
+  int get bufferedSegments => _markers.length;
 
   static Future<SpeechAudioBuffer> open() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -48,7 +48,7 @@ final class SpeechAudioBuffer {
       await response.close();
       return;
     }
-    response.headers.contentType = ContentType('audio', 'wav');
+    response.headers.contentType = ContentType.binary;
     response.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
     if (request.method == 'HEAD') {
       await response.close();
@@ -61,7 +61,6 @@ final class SpeechAudioBuffer {
     }
     _claimed = true;
     try {
-      response.add(_header());
       await response.addStream(_audio.stream);
       await response.close();
     } on Object {
@@ -73,6 +72,10 @@ final class SpeechAudioBuffer {
     PhononAudio audio,
     SpeechTextSegment segment, {
     bool paragraphEnd = false,
+    bool chapterEnd = false,
+    Duration sentencePause = const Duration(milliseconds: 120),
+    Duration paragraphPause = const Duration(milliseconds: 600),
+    Duration chapterPause = const Duration(milliseconds: 1500),
   }) async {
     while (!_closed && _markers.length >= 4) {
       await (_space ??= Completer<void>()).future;
@@ -80,9 +83,11 @@ final class SpeechAudioBuffer {
     if (_closed) return;
     final pcm = speechPcm(
       audio.wav,
-      pause: paragraphEnd
-          ? const Duration(milliseconds: 300)
-          : const Duration(milliseconds: 120),
+      pause: chapterEnd
+          ? chapterPause
+          : paragraphEnd
+          ? paragraphPause
+          : sentencePause,
     );
     _end += Duration(
       microseconds: pcm.length ~/ 2 * Duration.microsecondsPerSecond ~/ 24000,
@@ -124,27 +129,6 @@ final class SpeechAudioBuffer {
     _space = null;
     unawaited(_audio.close());
     await _server.close(force: true);
-  }
-
-  static Uint8List _header() {
-    final wav = Uint8List(44);
-    final data = ByteData.sublistView(wav);
-    void ascii(int at, String text) =>
-        wav.setRange(at, at + text.length, text.codeUnits);
-    ascii(0, 'RIFF');
-    data.setUint32(4, 0xffffffff, Endian.little);
-    ascii(8, 'WAVE');
-    ascii(12, 'fmt ');
-    data.setUint32(16, 16, Endian.little);
-    data.setUint16(20, 1, Endian.little);
-    data.setUint16(22, 1, Endian.little);
-    data.setUint32(24, 24000, Endian.little);
-    data.setUint32(28, 48000, Endian.little);
-    data.setUint16(32, 2, Endian.little);
-    data.setUint16(34, 16, Endian.little);
-    ascii(36, 'data');
-    data.setUint32(40, 0xffffffff, Endian.little);
-    return wav;
   }
 }
 

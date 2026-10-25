@@ -20,6 +20,9 @@ void main() {
           jsonEncode({
             'name': 'English narrator',
             'filename': 'voices/english.safetensors',
+            'gender': 'female',
+            'language': 'en',
+            'locale': 'en-us',
           }),
           jsonEncode({'name': 'Outside', 'filename': '../outside.safetensors'}),
           jsonEncode({
@@ -38,6 +41,11 @@ void main() {
         },
       ]);
       expect(root.listSync(recursive: true).whereType<File>().length, 3);
+      final details = await PhononVoiceCatalog.readDetailed(voices.path);
+      expect(
+        details.single.displayLabel,
+        'English narrator (weiblich · Englisch · US-Akzent)',
+      );
     },
   );
 }

@@ -8,6 +8,11 @@ final class SpeechProfile {
     this.voicesDirectory,
     this.voice,
     this.dictionaryIds = const [],
+    this.maxCharacters = 400,
+    this.sentencePauseMs = 120,
+    this.paragraphPauseMs = 600,
+    this.chapterPauseMs = 1500,
+    this.textRules = const [],
   });
 
   final String id;
@@ -17,6 +22,26 @@ final class SpeechProfile {
   final String? voicesDirectory;
   final String? voice;
   final List<String> dictionaryIds;
+  final int maxCharacters;
+  final int sentencePauseMs;
+  final int paragraphPauseMs;
+  final int chapterPauseMs;
+  final List<String> textRules;
+
+  SpeechProfile copyWith({List<String>? dictionaryIds}) => SpeechProfile(
+    id: id,
+    name: name,
+    language: language,
+    modelDirectory: modelDirectory,
+    voicesDirectory: voicesDirectory,
+    voice: voice,
+    dictionaryIds: dictionaryIds ?? this.dictionaryIds,
+    maxCharacters: maxCharacters,
+    sentencePauseMs: sentencePauseMs,
+    paragraphPauseMs: paragraphPauseMs,
+    chapterPauseMs: chapterPauseMs,
+    textRules: textRules,
+  );
 
   factory SpeechProfile.fromJson(Map value) => SpeechProfile(
     id: value['id'] as String,
@@ -26,6 +51,13 @@ final class SpeechProfile {
     voicesDirectory: value['voices_directory'] as String?,
     voice: value['voice'] as String?,
     dictionaryIds: (value['dictionary_ids'] as List? ?? [])
+        .whereType<String>()
+        .toList(),
+    maxCharacters: (value['max_characters'] as num?)?.toInt() ?? 400,
+    sentencePauseMs: (value['sentence_pause_ms'] as num?)?.toInt() ?? 120,
+    paragraphPauseMs: (value['paragraph_pause_ms'] as num?)?.toInt() ?? 600,
+    chapterPauseMs: (value['chapter_pause_ms'] as num?)?.toInt() ?? 1500,
+    textRules: (value['text_rules'] as List? ?? [])
         .whereType<String>()
         .toList(),
   );
@@ -38,6 +70,11 @@ final class SpeechProfile {
     'voices_directory': voicesDirectory,
     'voice': voice,
     'dictionary_ids': dictionaryIds,
+    'max_characters': maxCharacters,
+    'sentence_pause_ms': sentencePauseMs,
+    'paragraph_pause_ms': paragraphPauseMs,
+    'chapter_pause_ms': chapterPauseMs,
+    'text_rules': textRules,
   };
 }
 

@@ -93,9 +93,7 @@ void main() {
           engine.emitPosition(
             Duration(
               microseconds:
-                  ((bytes - 44).clamp(0, bytes) ~/ 2) *
-                  Duration.microsecondsPerSecond ~/
-                  24000,
+                  (bytes ~/ 2) * Duration.microsecondsPerSecond ~/ 24000,
             ),
           );
         }, onDone: engine.emitCompleted);

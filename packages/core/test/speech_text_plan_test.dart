@@ -36,8 +36,36 @@ void main() {
       fileId: 'band-1',
       chapterId: 'kapitel-1',
       at: null,
+      groupSentences: false,
     ).segments.first;
     expect(first.text, 'Dr. Morgen las den ersten Satz.');
+  });
+
+  test('größere Profile bündeln Sätze, Sprungsegmente bleiben satzgenau', () {
+    final grouped = SpeechTextPlan(
+      document: document,
+      fileId: 'band-1',
+      chapterId: 'kapitel-1',
+      at: null,
+      maxCharacters: 400,
+    ).segments.first;
+    final sentence = SpeechTextPlan(
+      document: document,
+      fileId: 'band-1',
+      chapterId: 'kapitel-1',
+      at: null,
+      maxCharacters: 400,
+      groupSentences: false,
+    ).segments.first;
+    expect(
+      grouped.text,
+      'Dr. Morgen las den ersten Satz. Danach kam der zweite Satz.',
+    );
+    expect(sentence.text, 'Dr. Morgen las den ersten Satz.');
+    expect(
+      document.paragraphs[0].text.substring(grouped.start, grouped.end),
+      grouped.text,
+    );
   });
 
   test('lange Abschnitte bleiben begrenzt und zeigen auf Originaltext', () {

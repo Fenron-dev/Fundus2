@@ -8,6 +8,8 @@ import 'package:path_provider/path_provider.dart';
 import '../../app/fundus_scope.dart';
 import '../../media/speech_profile.dart';
 import '../../media/phonon_model_store.dart';
+import '../../media/phonon_voice_catalog.dart';
+import '../../media/speech_text_rules.dart';
 import '../reader/speech_model_status.dart';
 import 'settings_shell.dart';
 
@@ -128,10 +130,15 @@ Future<void> editSpeechProfile(
       original?.modelDirectory ?? scope.settings.phononModelDirectory;
   String? voicesDirectory = original?.voicesDirectory;
   String? voice = original?.voice;
-  var voices = <String>[];
+  var voices = <PhononVoiceInfo>[];
   var busy = false;
   String? error;
   final dictionaries = {...?original?.dictionaryIds};
+  var maxCharacters = original?.maxCharacters ?? 400;
+  var sentencePauseMs = original?.sentencePauseMs ?? 120;
+  var paragraphPauseMs = original?.paragraphPauseMs ?? 600;
+  var chapterPauseMs = original?.chapterPauseMs ?? 1500;
+  final textRules = {...?original?.textRules};
   await showDialog<void>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
@@ -172,10 +179,18 @@ Future<void> editSpeechProfile(
               language: selectedLanguage,
               voicesDirectory: voicesDirectory,
             );
+            final details = await PhononVoiceCatalog.readDetailed(
+              voicesDirectory ?? directory,
+            );
+            final byName = {for (final item in details) item.name: item};
+            final voiceOptions = [
+              for (final name in available)
+                byName[name] ?? PhononVoiceInfo(name: name, path: ''),
+            ];
             if (dialogContext.mounted) {
               update(() {
-                voices = available;
-                if (!voices.contains(voice)) voice = null;
+                voices = voiceOptions;
+                if (!voices.any((item) => item.name == voice)) voice = null;
               });
             }
           } on Object catch (e) {
@@ -232,7 +247,12 @@ Future<void> editSpeechProfile(
                           }),
                   ),
                   const SizedBox(height: FundusSpace.x3),
-                  Text(directory ?? 'Kein Modell gewählt'),
+                  Text('Modell / Ausgabequalität'),
+                  Text(
+                    '${directory ?? 'Kein Modell gewählt'}\n'
+                    'Die gewählte Modellvariante bestimmt derzeit Qualität und Geschwindigkeit. Seed und Variation (Temperatur) werden von der nativen Live-Engine noch nicht angeboten.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                   Wrap(
                     spacing: FundusSpace.x2,
                     children: [
@@ -357,18 +377,89 @@ Future<void> editSpeechProfile(
                   ),
                   if (voices.isNotEmpty)
                     DropdownButtonFormField<String>(
-                      key: ValueKey(voices.join('|')),
+                      key: ValueKey(voices.map((v) => v.name).join('|')),
                       initialValue: voice,
                       isExpanded: true,
                       decoration: const InputDecoration(labelText: 'Stimme'),
                       items: [
                         for (final entry in voices)
                           DropdownMenuItem(
-                            value: entry,
-                            child: Text(entry, overflow: TextOverflow.ellipsis),
+                            value: entry.name,
+                            child: Text(
+                              entry.displayLabel,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                       ],
                       onChanged: (value) => update(() => voice = value),
+                    ),
+                  const SizedBox(height: FundusSpace.x3),
+                  Text(
+                    'Sprachverarbeitung',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  Text(
+                    'Längere Abschnitte klingen meist natürlicher. Die Textregeln ändern nur den gesprochenen Text, nie das Buch.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  Text('Maximale Zeichen pro Abschnitt: $maxCharacters'),
+                  Slider(
+                    value: maxCharacters.toDouble(),
+                    min: 80,
+                    max: 1000,
+                    divisions: 92,
+                    onChanged: (value) =>
+                        update(() => maxCharacters = (value / 10).round() * 10),
+                  ),
+                  Text('Pause zwischen Abschnitten: $sentencePauseMs ms'),
+                  Slider(
+                    value: sentencePauseMs.toDouble(),
+                    min: 0,
+                    max: 1000,
+                    divisions: 20,
+                    onChanged: (value) => update(
+                      () => sentencePauseMs = (value / 50).round() * 50,
+                    ),
+                  ),
+                  Text('Pause nach Absatz: $paragraphPauseMs ms'),
+                  Slider(
+                    value: paragraphPauseMs.toDouble(),
+                    min: 0,
+                    max: 3000,
+                    divisions: 30,
+                    onChanged: (value) => update(
+                      () => paragraphPauseMs = (value / 100).round() * 100,
+                    ),
+                  ),
+                  Text('Pause nach Kapitel: $chapterPauseMs ms'),
+                  Slider(
+                    value: chapterPauseMs.toDouble(),
+                    min: 0,
+                    max: 5000,
+                    divisions: 50,
+                    onChanged: (value) => update(
+                      () => chapterPauseMs = (value / 100).round() * 100,
+                    ),
+                  ),
+                  const SizedBox(height: FundusSpace.x2),
+                  Text(
+                    'Textregeln für ${speechLanguageLabel(language)}',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  for (final rule in SpeechTextRules.forLanguage(language))
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(rule.title),
+                      subtitle: Text(rule.description),
+                      value: textRules.contains(rule.id),
+                      onChanged: (enabled) => update(() {
+                        if (enabled == true) {
+                          textRules.add(rule.id);
+                        } else {
+                          textRules.remove(rule.id);
+                        }
+                      }),
                     ),
                   TextButton.icon(
                     onPressed:
@@ -384,6 +475,7 @@ Future<void> editSpeechProfile(
                               language: SpeechLanguageResolver.parse(language)!,
                               voicesDirectory: voicesDirectory,
                               voice: voice,
+                              rules: textRules,
                             );
                             if (dialogContext.mounted) {
                               update(() {
@@ -450,6 +542,11 @@ Future<void> editSpeechProfile(
                         voicesDirectory: voicesDirectory,
                         voice: voice,
                         dictionaryIds: dictionaries.toList(),
+                        maxCharacters: maxCharacters,
+                        sentencePauseMs: sentencePauseMs,
+                        paragraphPauseMs: paragraphPauseMs,
+                        chapterPauseMs: chapterPauseMs,
+                        textRules: textRules.toList(),
                       );
                       await scope.settings.setSpeechProfiles([
                         for (final value in scope.settings.speechProfiles)

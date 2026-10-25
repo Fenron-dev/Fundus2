@@ -2,17 +2,71 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as p;
 
+final class PhononVoiceInfo {
+  const PhononVoiceInfo({
+    required this.name,
+    required this.path,
+    this.language,
+    this.locale,
+    this.gender,
+  });
+
+  final String name;
+  final String path;
+  final String? language;
+  final String? locale;
+  final String? gender;
+
+  String get displayLabel {
+    final parts = <String>[];
+    if (gender == 'female') {
+      parts.add('weiblich');
+    } else if (gender == 'male') {
+      parts.add('männlich');
+    }
+    final languageName = switch (language?.toLowerCase()) {
+      'de' => 'Deutsch',
+      'en' => 'Englisch',
+      'fr' => 'Französisch',
+      'es' => 'Spanisch',
+      'pt' => 'Portugiesisch',
+      _ => language,
+    };
+    if (languageName?.trim().isNotEmpty ?? false) parts.add(languageName!);
+    if (locale?.trim().isNotEmpty ?? false) {
+      final accent = switch (locale!.toLowerCase()) {
+        'en-us' => 'US-Akzent',
+        'en-gb' => 'UK-Akzent',
+        'en-au' => 'Australischer Akzent',
+        'de-de' => 'Deutschland',
+        'de-at' => 'Österreich',
+        'de-ch' => 'Schweiz',
+        _ => locale!,
+      };
+      parts.add(accent);
+    }
+    return parts.isEmpty ? name : '$name (${parts.join(' · ')})';
+  }
+}
+
 /// Phonon's shared voices.jsonl/custom.jsonl plus loose embeddings. The native
 /// engine receives absolute references; large checkpoints are never duplicated.
 final class PhononVoiceCatalog {
   static Future<List<Map<String, String>>> read(String? directory) async {
+    final detailed = await readDetailed(directory);
+    return [
+      for (final voice in detailed) {'name': voice.name, 'path': voice.path},
+    ];
+  }
+
+  static Future<List<PhononVoiceInfo>> readDetailed(String? directory) async {
     if (directory == null || directory.trim().isEmpty) return const [];
     final root = Directory(directory);
     if (!await root.exists()) {
       throw const FormatException('Der Stimmenordner fehlt.');
     }
     final canonical = await root.resolveSymbolicLinks();
-    final voices = <String, String>{};
+    final voices = <String, PhononVoiceInfo>{};
     for (final name in ['voices.jsonl', 'custom.jsonl']) {
       final file = File(p.join(directory, name));
       if (!await file.exists()) continue;
@@ -40,7 +94,16 @@ final class PhononVoiceCatalog {
         if (!await target.exists()) continue;
         final actual = await target.resolveSymbolicLinks();
         if (!p.isWithin(canonical, actual)) continue;
-        voices[label] = actual;
+        final language = entry['language'];
+        final locale = entry['locale'];
+        final gender = entry['gender'];
+        voices[label] = PhononVoiceInfo(
+          name: label,
+          path: actual,
+          language: language is String ? language : null,
+          locale: locale is String ? locale : null,
+          gender: gender is String ? gender.toLowerCase() : null,
+        );
         if (voices.length > 2048) {
           throw const FormatException('Zu viele Stimmen im Katalog.');
         }
@@ -60,7 +123,8 @@ final class PhononVoiceCatalog {
               !p.basename(entry.path).startsWith('model')) {
             final actual = await entry.resolveSymbolicLinks();
             if (p.isWithin(canonical, actual)) {
-              voices[p.basenameWithoutExtension(entry.path)] = actual;
+              final name = p.basenameWithoutExtension(entry.path);
+              voices[name] = PhononVoiceInfo(name: name, path: actual);
               if (voices.length > 2048) {
                 throw const FormatException('Zu viele Stimmen im Ordner.');
               }
@@ -69,9 +133,6 @@ final class PhononVoiceCatalog {
         }
       }
     }
-    return [
-      for (final entry in voices.entries)
-        {'name': entry.key, 'path': entry.value},
-    ];
+    return [...voices.values];
   }
 }

@@ -44,6 +44,11 @@ void main() {
         'Ryo': 'Ree-oh',
         'Mage': 'Mayj',
       });
+      await settings.setSpeechDictionaryIds('novel', const []);
+      expect(settings.effectiveSpeechPronunciations('novel', english), {
+        'Ryo': 'Ree-oh',
+      });
+      await settings.setSpeechDictionaryIds('novel', ['names']);
       await settings.setSpeechProfileId('novel', 'de-1');
       expect(settings.speechProfileFor('novel', 'en')!.language, 'de');
       await settings.setSpeechProfileId('novel', null);
@@ -87,6 +92,64 @@ void main() {
       await settings.setSpeechLanguageOverride('novel-en', null);
       expect(settings.speechLanguageOverride('novel-en'), isNull);
       expect(() => settings.setSpeechRate('novel-en', 3), throwsArgumentError);
+    },
+  );
+  test(
+    'übernimmt persönliche Vorlese-Einstellungen von einem anderen Werk',
+    () async {
+      final settings = AppSettings.inMemory();
+      addTearDown(settings.dispose);
+      await settings.setSpeechProfiles(const [
+        SpeechProfile(
+          id: 'english',
+          name: 'English',
+          language: 'en',
+          modelDirectory: '/models/en',
+          maxCharacters: 640,
+          sentencePauseMs: 100,
+          paragraphPauseMs: 700,
+          chapterPauseMs: 1400,
+          textRules: ['quotes'],
+        ),
+      ]);
+      await settings.setSpeechProfileId('source', 'english');
+      await settings.setSpeechLanguageOverride('source', 'en');
+      await settings.setSpeechVoice('source', 'en', 'Harper');
+      await settings.setSpeechRate('source', 1.4);
+      await settings.setSpeechPronunciations('source', {'Ryo': 'Rio'});
+      await settings.setSpeechDictionaryIds('source', ['fantasy']);
+
+      await settings.copySpeechSettings('source', 'target');
+
+      expect(settings.speechProfileId('target'), 'english');
+      expect(settings.speechLanguageOverride('target'), 'en');
+      expect(settings.speechVoice('target', 'en'), 'Harper');
+      expect(settings.speechRate('target'), 1.4);
+      expect(settings.speechPronunciations('target'), {'Ryo': 'Rio'});
+      expect(settings.speechDictionaryIdsFor('target', null), ['fantasy']);
+      expect(settings.speechProfiles.single.maxCharacters, 640);
+      expect(settings.speechProfiles.single.textRules, ['quotes']);
+    },
+  );
+
+  test(
+    'werk kann Einstellungswörterbuch ohne Sprachprofil verwenden',
+    () async {
+      final settings = AppSettings.inMemory();
+      addTearDown(settings.dispose);
+      await settings.setSpeechDictionaries(const [
+        SpeechDictionary(
+          id: 'english',
+          name: 'English names',
+          language: 'en',
+          entries: {'Ryo': 'Rio'},
+        ),
+      ]);
+      await settings.setSpeechDictionaryIds('novel', ['english']);
+      expect(
+        settings.effectiveSpeechPronunciations('novel', null, language: 'en'),
+        {'Ryo': 'Rio'},
+      );
     },
   );
 }

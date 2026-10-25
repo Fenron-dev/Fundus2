@@ -32,6 +32,7 @@ final class SpeechTextPlan {
     required this.chapterId,
     required this.at,
     this.maxCharacters = 400,
+    this.groupSentences = true,
   }) {
     if (maxCharacters < 80 || maxCharacters > 1000) {
       throw ArgumentError.value(maxCharacters, 'maxCharacters');
@@ -51,6 +52,10 @@ final class SpeechTextPlan {
   final String chapterId;
   final MediaPosition? at;
   final int maxCharacters;
+
+  /// When false, each sentence remains an independent segment. Reader seek
+  /// controls use this so chunk-size tuning never changes sentence skipping.
+  final bool groupSentences;
 
   /// A changed paragraph ID means the reader had to fall back to an older
   /// character offset. The caller can warn rather than pretending this is an
@@ -73,32 +78,65 @@ final class SpeechTextPlan {
           ? (paragraph.text.length * resolved.innerOffset).round()
           : 0;
       if (cursor >= paragraph.text.length) continue;
-      final sentences = _sentenceSpans(paragraph.text);
-      for (final sentence in sentences) {
+      final spans = <({int start, int end})>[];
+      var chunkStart = -1;
+      var chunkEnd = -1;
+      for (final sentence in _sentenceSpans(paragraph.text)) {
         if (sentence.end <= cursor) continue;
-        for (final span in _boundedSpans(
+        final parts = _boundedSpans(
           paragraph.text,
           sentence.start,
           sentence.end,
           maxCharacters,
-        )) {
-          MediaPosition position(int offset) => document.positionFor(
-            paragraphIndex: paragraphIndex,
-            innerOffset: paragraph.text.isEmpty
-                ? 0
-                : offset / paragraph.text.length,
-            fileId: fileId,
-            chapterId: chapterId,
-          );
-          yield SpeechTextSegment(
-            text: paragraph.text.substring(span.start, span.end),
-            start: span.start,
-            end: span.end,
-            paragraphIndex: paragraphIndex,
-            startPosition: position(span.start),
-            endPosition: position(span.end),
-          );
+        ).toList();
+        for (final part in parts) {
+          if (!groupSentences) {
+            spans.add(part);
+            continue;
+          }
+          if (chunkStart >= 0 && part.end - chunkStart > maxCharacters) {
+            spans.add((start: chunkStart, end: chunkEnd));
+            chunkStart = -1;
+          }
+          if (chunkStart < 0) {
+            chunkStart = part.start;
+            chunkEnd = part.end;
+          } else {
+            chunkEnd = part.end;
+          }
+          if (part.end - part.start >= maxCharacters) {
+            spans.add((start: chunkStart, end: chunkEnd));
+            chunkStart = -1;
+          }
         }
+      }
+      if (chunkStart >= 0) spans.add((start: chunkStart, end: chunkEnd));
+      for (final span in spans) {
+        var start = span.start;
+        var end = span.end;
+        while (start < end && _space.hasMatch(paragraph.text[start])) {
+          start++;
+        }
+        while (end > start && _space.hasMatch(paragraph.text[end - 1])) {
+          end--;
+        }
+        if (start == end) continue;
+        MediaPosition position(int offset) => document.positionFor(
+          paragraphIndex: paragraphIndex,
+          innerOffset: paragraph.text.isEmpty
+              ? 0
+              : offset / paragraph.text.length,
+          fileId: fileId,
+          chapterId: chapterId,
+        );
+        yield SpeechTextSegment(
+          text: paragraph.text.substring(start, end),
+          start: start,
+          end: end,
+          paragraphIndex: paragraphIndex,
+          startPosition: position(start),
+          endPosition: position(end),
+        );
       }
     }
   }

@@ -350,7 +350,13 @@ final class MediaKitEngine implements PlaybackEngine {
     final native = _player.platform;
     if (native is NativePlayer) {
       final speech =
-          uri.host == '127.0.0.1' && uri.path.endsWith('/speech.wav');
+          uri.host == '127.0.0.1' && uri.path.endsWith('/speech.pcm');
+      await native.setProperty('demuxer', speech ? 'rawaudio' : 'auto');
+      if (speech) {
+        await native.setProperty('demuxer-rawaudio-format', 's16le');
+        await native.setProperty('demuxer-rawaudio-rate', '24000');
+        await native.setProperty('demuxer-rawaudio-channels', '1');
+      }
       await native.setProperty('cache', speech ? 'no' : 'yes');
       await native.setProperty(
         'stream-buffer-size',

@@ -11,6 +11,7 @@ import 'phonon_model_store.dart';
 import 'playback_controller.dart';
 import 'speech_engine.dart';
 import 'speech_audio_buffer.dart';
+import 'phonon_wave.dart';
 import 'speech_text_transform.dart';
 import 'text_reader_controller.dart';
 
@@ -68,10 +69,15 @@ final class TextSpeechController extends ChangeNotifier {
     double rate,
     Map<String, String> pronunciations,
     String? voicesDirectory,
+    Set<String> textRules,
+    int maxCharacters,
+    int sentencePauseMs,
+    int paragraphPauseMs,
+    int chapterPauseMs,
   })?
   _lastOptions;
 
-  int get bufferedSentences => _buffer?.bufferedSentences ?? 0;
+  int get bufferedSegments => _buffer?.bufferedSegments ?? 0;
 
   void updatePronunciations(Map<String, String> value) {
     final previous = _lastOptions;
@@ -84,6 +90,11 @@ final class TextSpeechController extends ChangeNotifier {
         rate: previous.rate,
         pronunciations: value,
         voicesDirectory: previous.voicesDirectory,
+        textRules: previous.textRules,
+        maxCharacters: previous.maxCharacters,
+        sentencePauseMs: previous.sentencePauseMs,
+        paragraphPauseMs: previous.paragraphPauseMs,
+        chapterPauseMs: previous.chapterPauseMs,
       );
     }
   }
@@ -99,6 +110,11 @@ final class TextSpeechController extends ChangeNotifier {
         rate: rate,
         pronunciations: previous.pronunciations,
         voicesDirectory: previous.voicesDirectory,
+        textRules: previous.textRules,
+        maxCharacters: previous.maxCharacters,
+        sentencePauseMs: previous.sentencePauseMs,
+        paragraphPauseMs: previous.paragraphPauseMs,
+        chapterPauseMs: previous.chapterPauseMs,
       );
     }
     if (isActive) await player.setSpeechRate(rate);
@@ -122,6 +138,11 @@ final class TextSpeechController extends ChangeNotifier {
           rate: options.rate,
           pronunciations: options.pronunciations,
           voicesDirectory: options.voicesDirectory,
+          textRules: options.textRules,
+          maxCharacters: options.maxCharacters,
+          sentencePauseMs: options.sentencePauseMs,
+          paragraphPauseMs: options.paragraphPauseMs,
+          chapterPauseMs: options.chapterPauseMs,
         ),
       );
       if (paused) await pause();
@@ -209,6 +230,11 @@ final class TextSpeechController extends ChangeNotifier {
     double rate = 1,
     Map<String, String> pronunciations = const {},
     String? voicesDirectory,
+    Set<String> textRules = const {},
+    int maxCharacters = 400,
+    int sentencePauseMs = 120,
+    int paragraphPauseMs = 600,
+    int chapterPauseMs = 1500,
   }) async {
     if (isActive) return;
     final work = reader.work;
@@ -229,6 +255,11 @@ final class TextSpeechController extends ChangeNotifier {
       rate: rate,
       pronunciations: pronunciations,
       voicesDirectory: voicesDirectory,
+      textRules: textRules,
+      maxCharacters: maxCharacters,
+      sentencePauseMs: sentencePauseMs,
+      paragraphPauseMs: paragraphPauseMs,
+      chapterPauseMs: chapterPauseMs,
     );
     _pauseRequested = false;
     _runningWorkId = work.id;
@@ -252,6 +283,11 @@ final class TextSpeechController extends ChangeNotifier {
         voice,
         rate,
         pronunciations,
+        textRules,
+        maxCharacters,
+        sentencePauseMs,
+        paragraphPauseMs,
+        chapterPauseMs,
       );
       if (token == _runId) {
         _state = TextSpeechState.idle;
@@ -295,6 +331,7 @@ final class TextSpeechController extends ChangeNotifier {
     String? voice,
     double rate = 1,
     String? voicesDirectory,
+    Set<String> rules = const {},
   }) async {
     final work =
         reader.work ??
@@ -350,7 +387,12 @@ final class TextSpeechController extends ChangeNotifier {
         endPosition: position,
       );
       final audio = await _engine!.synthesize(
-        segment,
+        SpeechTextTransform.apply(
+          segment,
+          const {},
+          rules: rules,
+          language: SpeechLanguageResolver.code(language),
+        ),
         language: language,
         voice: voice,
       );
@@ -447,11 +489,16 @@ final class TextSpeechController extends ChangeNotifier {
     String? voice,
     double rate,
     Map<String, String> pronunciations,
+    Set<String> textRules,
+    int maxCharacters,
+    int sentencePauseMs,
+    int paragraphPauseMs,
+    int chapterPauseMs,
   ) async {
     while (token == _runId && reader.isOpen) {
       await _waitUntilResumed(token);
       if (token != _runId || !reader.isOpen) return;
-      final plan = reader.speechPlan();
+      final plan = reader.speechPlan(maxCharacters: maxCharacters);
       if (plan == null) return;
       final segments = plan.segments;
       final segment = segments.isEmpty ? null : segments.first;
@@ -475,7 +522,7 @@ final class TextSpeechController extends ChangeNotifier {
       _state = TextSpeechState.synthesizing;
       notifyListeners();
       // Synthesis runs ahead on the serial native worker, but never more than
-      // four unplayed sentences. One audio sink remains open for the chapter.
+      // four unplayed speech segments. One audio sink remains open per chapter.
       Future<void> produce() async {
         try {
           final iterator = segments.iterator;
@@ -489,10 +536,12 @@ final class TextSpeechController extends ChangeNotifier {
             if (token != _runId) break;
             final hasNext = iterator.moveNext();
             final next = hasNext ? iterator.current : null;
-            final prepared = await _synthesize(
+            final prepared = await _synthesizeWithPauses(
               SpeechTextTransform.apply(
                 current,
                 _lastOptions?.pronunciations ?? pronunciations,
+                rules: textRules,
+                language: SpeechLanguageResolver.code(language),
               ),
               language: language,
               voice: voice,
@@ -504,6 +553,10 @@ final class TextSpeechController extends ChangeNotifier {
               current,
               paragraphEnd:
                   next == null || next.paragraphIndex != current.paragraphIndex,
+              chapterEnd: next == null,
+              sentencePause: Duration(milliseconds: sentencePauseMs),
+              paragraphPause: Duration(milliseconds: paragraphPauseMs),
+              chapterPause: Duration(milliseconds: chapterPauseMs),
             );
             notifyListeners();
             if (next == null) break;
@@ -587,6 +640,68 @@ final class TextSpeechController extends ChangeNotifier {
     }
   }
 
+  Future<_SpeechPreparation> _synthesizeWithPauses(
+    SpeechTextSegment segment, {
+    required SpeechLanguage language,
+    required String? voice,
+  }) async {
+    final pieces = SpeechTextTransform.splitPauses(segment.text);
+    if (pieces.length == 1) {
+      return _synthesize(
+        _withText(segment, pieces.single.text),
+        language: language,
+        voice: voice,
+      );
+    }
+    try {
+      final wave = PhononWaveBuilder(maxSeconds: 300);
+      for (var index = 0; index < pieces.length; index++) {
+        final piece = pieces[index];
+        final generated = await _synthesize(
+          _withText(segment, piece.text),
+          language: language,
+          voice: voice,
+        );
+        if (generated.error != null) return generated;
+        final wav = generated.audio!.wav;
+        final source = ByteData.sublistView(wav, 44);
+        final samples = Float32List(source.lengthInBytes ~/ 2);
+        for (var sample = 0; sample < samples.length; sample++) {
+          samples[sample] = source.getInt16(sample * 2, Endian.little) / 32768;
+        }
+        if (!wave.append(samples)) {
+          throw const FormatException('Phonon-Abschnitt ist zu lang.');
+        }
+        if (index < pieces.length - 1 && piece.pauseAfter > Duration.zero) {
+          final silence = Float32List(
+            piece.pauseAfter.inMicroseconds *
+                PhononWaveBuilder.sampleRate ~/
+                Duration.microsecondsPerSecond,
+          );
+          if (!wave.append(silence)) {
+            throw const FormatException('Phonon-Abschnitt ist zu lang.');
+          }
+        }
+      }
+      return (
+        audio: PhononAudio(wav: wave.finish(), duration: wave.duration),
+        error: null,
+      );
+    } on Object catch (error) {
+      return (audio: null, error: error);
+    }
+  }
+
+  static SpeechTextSegment _withText(SpeechTextSegment segment, String text) =>
+      SpeechTextSegment(
+        text: text,
+        start: segment.start,
+        end: segment.end,
+        paragraphIndex: segment.paragraphIndex,
+        startPosition: segment.startPosition,
+        endPosition: segment.endPosition,
+      );
+
   static int _runIdCounter = 0;
 
   Future<void> _waitUntilResumed(int token) async {
@@ -635,6 +750,11 @@ final class TextSpeechController extends ChangeNotifier {
     double rate = 1,
     Map<String, String> pronunciations = const {},
     String? voicesDirectory,
+    Set<String> textRules = const {},
+    int maxCharacters = 400,
+    int sentencePauseMs = 120,
+    int paragraphPauseMs = 600,
+    int chapterPauseMs = 1500,
   }) async {
     if (!isActive) {
       return start(
@@ -645,6 +765,11 @@ final class TextSpeechController extends ChangeNotifier {
         rate: rate,
         pronunciations: pronunciations,
         voicesDirectory: voicesDirectory,
+        textRules: textRules,
+        maxCharacters: maxCharacters,
+        sentencePauseMs: sentencePauseMs,
+        paragraphPauseMs: paragraphPauseMs,
+        chapterPauseMs: chapterPauseMs,
       );
     }
     if (_pauseRequested ||

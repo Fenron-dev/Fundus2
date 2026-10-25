@@ -29,13 +29,36 @@ Einzel-WAV-/Einzelmodell-Stand und dessen offene Puffer-/Wörterbuchpunkte unten
   ein/zwei Sätze zurück, einen Satz vor, laufend veränderbares Tempo,
   Profilwahl, Wörterbuch und Sleep-Timer. Der Timer ist jetzt **auch auf Desktop**
   sichtbar; seine Android-Schüttelverlängerung bleibt bestehen.
-- Ein Kapitel läuft durch **einen** kontinuierlichen 24-kHz-PCM/WAV-Stream im
-  gemeinsamen Player statt Stop/Open nach jedem Satz. Ein zufälliger
+- Ein Kapitel läuft durch **einen** kontinuierlichen, headerlosen 24-kHz-Mono-
+  PCM-Stream im gemeinsamen Player statt Stop/Open nach jedem Satz. Der Log des
+  Windows-Builds 106 meldete am vorherigen WAV-Stream ungültige Maximalgröße
+  und beschädigte Pakete; mit dem rohen PCM-Transport wird kein unzutreffender
+  WAV-Längenheader mehr vorgetäuscht. Ein zufälliger
   Loopback-Endpunkt ist nur auf diesem Gerät erreichbar, wird nicht gecacht
-  und nach Ende/Stop geschlossen. Vier ungehörte Sätze plus eine laufende
+  und nach Ende/Stop geschlossen. Vier ungehörte Sprachabschnitte plus eine laufende
   Synthese begrenzen den Puffer. Zwei Sätze bzw. acht Sekunden werden
   vorgefüllt. Lange Stille wird mit Sprachrand/Fade gekürzt; definierte
   Satz-/Absatzpausen bleiben. mpv nutzt dafür kleine Lese-/Probegrößen.
+- Profile speichern außerdem maximale Abschnittslänge, Satz-/Absatz-/Kapitel-
+  pausen und aktivierte Textregeln. Mehrere Sätze desselben Absatzes werden bis
+  zum Zeichenlimit gemeinsam synthetisiert; Satzsprünge im Player bleiben davon
+  unabhängig.
+- Deutsche Phonon-Regeln (alte ß-Schreibung, Abkürzungen, Zahlenbereiche) und
+  sprachübergreifende Regeln (Anführungszeichen, Versalien, Fußnoten,
+  Gedankenstriche/Auslassungspunkte) sind pro Sprachprofil auswählbar. Nur der
+  Sprechtext ändert sich, nie das Buch.
+- Stimmen aus Phonons `voices.jsonl` zeigen verfügbare Angaben zu Geschlecht,
+  Sprache und Locale/Akzent direkt im Auswahlfeld; fehlende Angaben bleiben
+  leer, sie werden nicht geraten.
+- Im Reader lassen sich Profil-Wörterbücher aus den Einstellungen neben den
+  Werk-Ausspracheeinträgen aktivieren. „Einstellungen von anderem Werk
+  übernehmen“ kopiert Profil, Sprache, Tempo, Stimme und Werkaussprache; die
+  Profilregeln und Abschnittsoptionen folgen dem gewählten Profil.
+- Die Modell-/Ordnerwahl ist zugleich die Qualitätswahl für Live-TTS. Der
+  gepinnte C-FFI-Adapter exponiert derzeit keine Seed- oder Temperaturparameter;
+  diese Studio-Funktionen werden daher noch nicht gespeichert oder als wirksam
+  dargestellt. Bitrate betrifft komprimierte Exporte, nicht den verlustfreien
+  PCM-Livestream. Dafür wäre eine Erweiterung der nativen Schnittstelle nötig.
 - Textfortschritt folgt dem **Audio-Positionssignal**, niemals dem Vorausladen.
   Pause/Stop sichern nur gehörte Sätze; Zurückspringen invalidiert die alte
   Queue vor dem Textsprung. Tempo und Aussprache ändern keine Originalanker.
@@ -52,15 +75,16 @@ Einzel-WAV-/Einzelmodell-Stand und dessen offene Puffer-/Wörterbuchpunkte unten
   zusätzliche Modell-ZIPs. Ein Mehrprofil-Modellkatalog des Servers mit
   separatem Stimmen-Download ist damit noch nicht eingeführt.
 
-Regressionen prüfen begrenzten Puffer, einen durchgehenden WAV-Header,
+Regressionen prüfen begrenzten Puffer, headerlosen PCM-Transport,
 Abbruch/Backpressure, keine Fortschritte durch Vorausladen, ein komplettes
 Kapitel über einen Player-Open, Katalog-Pfadgrenzen, Profil-/Wörterbuch-Roundtrip,
 Satzrücksprung und Wiederöffnen. Native Übersetzung erfolgt nur in GitHub;
 hörbare Flüssigkeit, Modell-/Stimmkompatibilität und gesperrte
 Android-Wiedergabe bleiben echte Geräteabnahmen.
 
-Lokaler Prüfstand: 1.008 Tests bestanden, acht bestehende App-Tests
-übersprungen; statische Analyse, Formatprüfung und Diff-Prüfung sauber.
+Fokussierte Regressionen prüfen PCM-Transport, Textregeln, Stimmenmetadaten,
+Profilübernahme sowie positionsgenaue Abschnittsgrenzen. Die vollständige
+App- und native Plattformabnahme steht noch aus.
 Der native Adapter wurde gegen die exakten gepinnten Quelldateien angewendet;
 ein lokaler nativer Build wurde entsprechend Projektvorgabe nicht ausgeführt.
 
@@ -255,9 +279,9 @@ Hörbuch-/m4b-Exporte sind kein Teil der Reader-TTS-Umsetzung.
 
 **Noch offen:** eine vertrauenswürdige Herkunfts-/Signaturprüfung für
 Modellarchive (lokale SHA-256-Prüflisten erkennen nur spätere Veränderungen),
-Phonons sprachweite Wörterbücher und optionale Textregeln, vorausschauender
-Audio-Puffer, Sperrbildschirm- und
-Unterbrechungstests sowie Laufzeit- und Akku-Abnahme auf echtem Android
+Seed-/Temperaturwerte über eine erweiterte FFI-Schnittstelle, ein serverseitiger
+Mehrprofil-Modell-/Stimmkatalog, Sperrbildschirm- und Unterbrechungstests sowie
+Laufzeit- und Akku-Abnahme auf echtem Android
 (insbesondere S21 FE). Ein erfolgreicher GitHub-Build ersetzt keinen
 Gerätetest. Android-Hersteller können Hintergrunddienste zusätzlich durch
 eigene Akkuverwaltung einschränken; auf dem S21 FE muss die gesperrte
@@ -290,7 +314,7 @@ Das eigenständige Phonon-Studio nutzt Python/`ptts`, Kapitel-WAV und m4b-Export
 Für Fundus ist ein Python-Server im Client weder für Android geeignet noch für
 eine schnelle Reader-Umschaltung nötig. Stattdessen erzeugt die native
 `ptts-ffi`-Schnittstelle begrenzte Textabschnitte auf einem Worker. Die
-Sprachabschnitte laufen als temporäre WAVs durch den gemeinsamen Fundus-Player.
+Sprachabschnitte laufen als begrenzter PCM-Strom durch den gemeinsamen Fundus-Player.
 Android enthält eine ARM64-CPU-Bibliothek; das optionale
 Snapdragon-NPU-Paket ist kein allgemeiner Ersatz. Die aktuelle Android-Anleitung
 des Herstellers bezeichnet das direkte Flutter-FFI-Binding noch als ungetestet;
@@ -305,9 +329,9 @@ haben eine nichtkommerzielle Lizenz; Weitergabe, Attribution und
 Download-Herkunft müssen vor einem Release gesondert geklärt werden.
 
 Als nächste Schritte bleiben: eine vertrauenswürdige Signatur bzw. ein
-Prüfnachweis für die Herkunft von Modellarchiven, optionale sprachweite
-Phonon-Wörterbücher/Textregeln und die Abnahme auf echten Geräten. Dabei sind
-Laufzeit, Speicher, Akkuverbrauch, Audiofokus im Hintergrund, Timer-Ende am
+Prüfnachweis für die Herkunft von Modellarchiven, Seed-/Temperaturparameter
+über eine erweiterte native Schnittstelle und die Abnahme auf echten Geräten.
+Dabei sind Laufzeit, Speicher, Akkuverbrauch, Audiofokus im Hintergrund, Timer-Ende am
 Buchkapitel und Schütteln im gesperrten Zustand zu messen. Der bereits
 vorhandene `audio_service`-/`audio_session`-Pfad darf nicht mit einer zweiten,
 gleichzeitig spielenden Fundus-Audiositzung konkurrieren.

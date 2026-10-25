@@ -439,6 +439,13 @@ Future<void> _showSpeechOptions(BuildContext context) async {
                   },
                 ),
                 TextButton.icon(
+                  onPressed: () => _copySpeechSettingsFromAnotherWork(sheet),
+                  icon: const Icon(Icons.content_copy_outlined),
+                  label: const Text(
+                    'Einstellungen von anderem Werk übernehmen',
+                  ),
+                ),
+                TextButton.icon(
                   onPressed: () => _showSpeechDictionary(sheet),
                   icon: const Icon(Icons.menu_book_outlined),
                   label: const Text('Aussprache ansehen / hinzufügen'),
@@ -482,6 +489,83 @@ Future<void> _showSpeechOptions(BuildContext context) async {
   );
 }
 
+Future<void> _copySpeechSettingsFromAnotherWork(BuildContext context) async {
+  final scope = FundusScope.of(context);
+  final targetId = scope.textReader.work?.id;
+  if (targetId == null) return;
+  final candidates = scope.library.works
+      .where(
+        (work) => work.id != targetId && TextReaderController.handles(work),
+      )
+      .toList(growable: false);
+  final search = TextEditingController();
+  final sourceId = await showDialog<String>(
+    context: context,
+    builder: (dialog) => StatefulBuilder(
+      builder: (dialog, update) {
+        final query = search.text.trim().toLowerCase();
+        final visible = candidates
+            .where((work) => work.title.toLowerCase().contains(query))
+            .take(500)
+            .toList(growable: false);
+        return AlertDialog(
+          title: const Text('Einstellungen aus anderem Werk übernehmen'),
+          content: SizedBox(
+            width: FundusSpeechMetrics.dialogWidth,
+            height: FundusSpeechMetrics.settingsHeight * .65,
+            child: Column(
+              children: [
+                TextField(
+                  controller: search,
+                  decoration: const InputDecoration(
+                    labelText: 'Werk suchen',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (_) => update(() {}),
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                Expanded(
+                  child: visible.isEmpty
+                      ? const Center(
+                          child: Text('Keine passenden Werke gefunden.'),
+                        )
+                      : ListView.builder(
+                          itemCount: visible.length,
+                          itemBuilder: (context, index) {
+                            final work = visible[index];
+                            return ListTile(
+                              title: Text(work.title),
+                              subtitle: Text(
+                                scope.settings.speechProfileId(work.id) == null
+                                    ? 'Kein Sprachprofil zugeordnet'
+                                    : 'Profil: ${scope.settings.speechProfiles.where((p) => p.id == scope.settings.speechProfileId(work.id)).firstOrNull?.name ?? 'nicht mehr vorhanden'}',
+                              ),
+                              onTap: () => Navigator.pop(dialog, work.id),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: const Text('Abbrechen'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+  search.dispose();
+  if (sourceId == null || !context.mounted) return;
+  final wasActive = scope.textSpeech.isActive;
+  if (wasActive) await scope.textSpeech.stop();
+  await scope.settings.copySpeechSettings(sourceId, targetId);
+  if (wasActive && context.mounted) await _toggleTextSpeech(context);
+}
+
 Future<void> _showSpeechDictionary(BuildContext context, {String? word}) async {
   final scope = FundusScope.of(context);
   final workId = scope.textReader.work?.id;
@@ -509,7 +593,11 @@ Future<void> _showSpeechDictionary(BuildContext context, {String? word}) async {
       SpeechLanguageResolver.code(language),
     );
     scope.textSpeech.updatePronunciations(
-      scope.settings.effectiveSpeechPronunciations(workId, profile),
+      scope.settings.effectiveSpeechPronunciations(
+        workId,
+        profile,
+        language: SpeechLanguageResolver.code(language),
+      ),
     );
   }
 
@@ -532,10 +620,22 @@ Future<void> _showSpeechDictionary(BuildContext context, {String? word}) async {
           SpeechLanguageResolver.code(language),
         );
         final own = scope.settings.speechPronunciations(workId);
+        final languageCode = SpeechLanguageResolver.code(language);
+        final selectedDictionaryIds = scope.settings
+            .speechDictionaryIdsFor(workId, profile)
+            .toSet();
         final effective = scope.settings.effectiveSpeechPronunciations(
           workId,
           profile,
+          language: languageCode,
         );
+        final dictionaries = scope.settings.speechDictionaries
+            .where(
+              (dictionary) =>
+                  dictionary.language == null ||
+                  dictionary.language == languageCode,
+            )
+            .toList();
         return SafeArea(
           child: ListView(
             shrinkWrap: true,
@@ -547,6 +647,46 @@ Future<void> _showSpeechDictionary(BuildContext context, {String? word}) async {
               ),
               const Text(
                 'Tippe auf einen Eintrag, um ihn für dieses Werk anzupassen. Bereits gepufferte Sätze verwenden noch die vorige Aussprache.',
+              ),
+              const SizedBox(height: FundusSpace.x3),
+              Text(
+                'Wörterbücher aus den Einstellungen',
+                style: Theme.of(sheet).textTheme.titleSmall,
+              ),
+              for (final dictionary in dictionaries)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(dictionary.name),
+                  subtitle: Text('${dictionary.entries.length} Einträge'),
+                  value: selectedDictionaryIds.contains(dictionary.id),
+                  onChanged: (enabled) async {
+                    final ids = {...selectedDictionaryIds};
+                    if (enabled == true) {
+                      ids.add(dictionary.id);
+                    } else {
+                      ids.remove(dictionary.id);
+                    }
+                    await scope.settings.setSpeechDictionaryIds(
+                      workId,
+                      ids.toList(),
+                    );
+                    scope.textSpeech.updatePronunciations(
+                      scope.settings.effectiveSpeechPronunciations(
+                        workId,
+                        profile,
+                        language: languageCode,
+                      ),
+                    );
+                  },
+                ),
+              if (dictionaries.isEmpty)
+                const Text(
+                  'In den Einstellungen sind noch keine Wörterbücher angelegt.',
+                ),
+              const Divider(),
+              Text(
+                'Aktive Aussprache',
+                style: Theme.of(sheet).textTheme.titleSmall,
               ),
               for (final entry in effective.entries)
                 ListTile(
@@ -570,6 +710,7 @@ Future<void> _showSpeechDictionary(BuildContext context, {String? word}) async {
                               scope.settings.effectiveSpeechPronunciations(
                                 workId,
                                 profile,
+                                language: languageCode,
                               ),
                             );
                           },
@@ -655,8 +796,19 @@ Future<void> _toggleTextSpeech(BuildContext context) async {
     rate: rate,
     pronunciations: workId == null
         ? const {}
-        : scope.settings.effectiveSpeechPronunciations(workId, profile),
+        : scope.settings.effectiveSpeechPronunciations(
+            workId,
+            profile,
+            language: language == null
+                ? null
+                : SpeechLanguageResolver.code(language),
+          ),
     voicesDirectory: profile?.voicesDirectory,
+    textRules: profile?.textRules.toSet() ?? const {},
+    maxCharacters: profile?.maxCharacters ?? 400,
+    sentencePauseMs: profile?.sentencePauseMs ?? 120,
+    paragraphPauseMs: profile?.paragraphPauseMs ?? 600,
+    chapterPauseMs: profile?.chapterPauseMs ?? 1500,
     voice:
         profile?.voice ??
         (workId == null || language == null
