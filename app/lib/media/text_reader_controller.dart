@@ -205,6 +205,61 @@ class TextReaderController extends ChangeNotifier {
   double get innerOffset => _innerOffset;
   int get jumpRevision => _jump;
 
+  /// The next speech pieces are anchored to the same text position as the
+  /// visual reader. This does not generate audio or advance progress.
+  SpeechTextPlan? speechPlan() {
+    final chapter = currentChapter;
+    final volume = currentVolume;
+    if (!_open || chapter == null || volume == null) return null;
+    return SpeechTextPlan(
+      document: chapter.document,
+      fileId: volume.fileId,
+      chapterId: chapter.id,
+      at: _position(),
+    );
+  }
+
+  /// Called by the audio sink *after* a segment has finished playing. A
+  /// pre-generated or stale segment must not move the shared reading stand.
+  bool completeSpokenSegment(SpeechTextSegment segment) {
+    final chapter = currentChapter;
+    final volume = currentVolume;
+    if (!_open ||
+        chapter == null ||
+        volume == null ||
+        segment.endPosition.fileId != volume.fileId ||
+        segment.endPosition.chapterId != chapter.id ||
+        segment.paragraphIndex < 0 ||
+        segment.paragraphIndex >= chapter.document.paragraphs.length) {
+      return false;
+    }
+    final paragraph = chapter.document.paragraphs[segment.paragraphIndex];
+    if (segment.start < 0 ||
+        segment.end > paragraph.text.length ||
+        segment.start >= segment.end ||
+        paragraph.text.substring(segment.start, segment.end) != segment.text ||
+        segment.endPosition.elementId != paragraph.id) {
+      return false;
+    }
+    final next = chapter.document.resolve(segment.endPosition);
+    if (next.paragraphIndex != segment.paragraphIndex ||
+        next.paragraphIndex < _paragraphIndex ||
+        next.paragraphIndex == _paragraphIndex &&
+            next.innerOffset <= _innerOffset) {
+      return false;
+    }
+    _paragraphIndex = next.paragraphIndex;
+    _innerOffset = next.innerOffset;
+    _jump++;
+    notifyListeners();
+    _scheduleSave();
+    return true;
+  }
+
+  /// A pause, stop or app lifecycle boundary persists the actually heard
+  /// position using the same checkpoint/journal path as ordinary reading.
+  void checkpointSpeech() => saveProgress(checkpoint: true);
+
   ReflowReaderProfile get profile => _profile;
   List<LibraryBookmark> get bookmarks => _bookmarks;
   List<LibraryHighlight> get highlights => _highlights;

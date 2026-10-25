@@ -322,6 +322,63 @@ void main() {
       expect(reader.chapterFraction, greaterThan(.8));
     });
 
+    test(
+      'nur abgespielte Vorleseabschnitte verschieben den Lesestand',
+      () async {
+        await openWork();
+        final work = library.works.first;
+        final plan = reader.speechPlan()!;
+        final segment = plan.segments.first;
+        expect(library.library!.loadProgress(work.id), isNull);
+
+        // Synthese/Vorausladen allein dürfen den Stand nicht speichern.
+        expect(reader.paragraphIndex, 0);
+        expect(reader.innerOffset, 0);
+        expect(library.library!.loadProgress(work.id), isNull);
+
+        expect(reader.completeSpokenSegment(segment), isTrue);
+        reader.checkpointSpeech();
+        final saved = library.library!.loadProgress(work.id)!;
+        expect(saved.position.kind, MediaPositionKind.epubCfi);
+        expect(saved.position.chapterId, reader.currentChapter!.id);
+        expect(saved.position.elementId, segment.endPosition.elementId);
+        expect(saved.position.numericValue, segment.endPosition.numericValue);
+        expect(saved.checkpoint, isTrue);
+
+        final again = TextReaderController(
+          openSource: (path, name) =>
+              FakeTextSource(name, const ['Kapitel eins', 'Kapitel zwei']),
+        );
+        addTearDown(again.dispose);
+        await again.open(library.library!, work);
+        expect(again.paragraphIndex, reader.paragraphIndex);
+        expect(again.innerOffset, closeTo(reader.innerOffset, .001));
+        expect(
+          again.speechPlan()!.segments.first.start,
+          greaterThan(segment.end),
+        );
+      },
+    );
+
+    test(
+      'veralteter Vorleseabschnitt überschreibt kein anderes Kapitel',
+      () async {
+        await openWork();
+        final stale = reader.speechPlan()!.segments.first;
+        await reader.goToChapter(1);
+        final before = library.library!
+            .loadProgress(library.works.first.id)!
+            .position;
+        expect(reader.completeSpokenSegment(stale), isFalse);
+        reader.checkpointSpeech();
+        final after = library.library!
+            .loadProgress(library.works.first.id)!
+            .position;
+        expect(after.chapterId, before.chapterId);
+        expect(after.numericValue, before.numericValue);
+      },
+    );
+
     test('das nächste Kapitel beginnt wieder ganz oben', () async {
       await openWork();
       reader.reportPosition(4, .75);
