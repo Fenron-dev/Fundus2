@@ -43,10 +43,17 @@ veraltete Segmente dürfen einen neueren Lesestand nicht überschreiben.
   Unicode-Zeichengrenzen, geänderte Anker, falsche Kapitel,
   Synthese ohne Fortschrittsänderung,
   bestätigtes Abspielen, Wiederöffnen und veraltete Abschnitte.
+- Ein erster nativer Worker bindet die offizielle Phonon-C-Schnittstelle über
+  `dart:ffi` an. Modellladen und Synthese laufen seriell außerhalb der
+  Flutter-Oberfläche. Für jeden Abschnitt prüft er Modellsprache und Stimme,
+  begrenzt die erzeugten PCM-Daten und gibt ein 24-kHz-Mono-WAV zurück.
+  Fehlendes Modell bzw. fehlende native Bibliothek liefern einen Fehler statt
+  Cloud-Fallback oder stiller Sprachumstellung. WAV- und Fehlermodelltests
+  sind hinzugefügt. **Das WAV ist bisher noch nicht an den Player gebunden.**
 
 **Noch nicht implementiert:** persistente Werks-/Medientyp-TTS-Auswahl in der
-Oberfläche, Phonon-Bindings, tatsächliche Audioausgabe, Vorlese-UI,
-Modellverwaltung, Stimmen, Textregeln, Hintergrundwiedergabe und
+Oberfläche, Paketierung der nativen Bibliotheken, tatsächliche Audioausgabe,
+Vorlese-UI, Modellverwaltung, Stimmenauswahl, Textregeln, Hintergrundwiedergabe und
 Geräte-Laufzeittests. Dieser Schritt ist ausdrücklich noch nicht benutzbar.
 
 ## Engine- und Datenschutzentscheidung für die nächsten Schritte
@@ -73,9 +80,10 @@ beschreibt Englisch als eigene Textnormalisierung und ein öffentliches
 
 Das eigenständige Phonon-Studio nutzt Python/`ptts`, Kapitel-WAV und m4b-Export.
 Für Fundus ist ein Python-Server im Client weder für Android geeignet noch für
-eine schnelle Reader-Umschaltung nötig. Stattdessen soll die native
-`ptts-ffi`-Schnittstelle kurze PCM-Abschnitte auf einem Worker erzeugen und
-streamen. Android braucht eine geprüfte ARM64-CPU-Bibliothek; das optionale
+eine schnelle Reader-Umschaltung nötig. Stattdessen erzeugt die native
+`ptts-ffi`-Schnittstelle kurze PCM-Abschnitte auf einem Worker. Der spätere
+Player muss diese Daten mit begrenztem Puffer abspielen. Android braucht eine
+geprüfte ARM64-CPU-Bibliothek; das optionale
 Snapdragon-NPU-Paket ist kein allgemeiner Ersatz. Die aktuelle Android-Anleitung
 des Herstellers bezeichnet das direkte Flutter-FFI-Binding noch als ungetestet;
 ein GitHub-Build ist daher keine Geräteabnahme.
@@ -87,8 +95,8 @@ begrenzt und wird ohne Löschen von Originalmedien bereinigt. Die 40m-Modelle
 haben eine nichtkommerzielle Lizenz; Weitergabe, Attribution und
 Download-Herkunft müssen vor einem Release gesondert geklärt werden.
 
-Die nächste Implementierungsfolge ist: native Engine-Abstraktion und
-GitHub-Builds, Modellinstallation mit Integritätsprüfung, Audioausgabe samt
+Die nächste Implementierungsfolge ist: native Bibliothek in GitHub-Builds
+paketieren, Modellinstallation mit Integritätsprüfung, Audioausgabe samt
 Fokus/Unterbrechung und Reader-Steuerung, dann Aussprache/Textregeln und
 Akku-/Laufzeittest auf echtem Android-Gerät. Der bereits vorhandene
 `audio_service`-/`audio_session`-Pfad darf nicht mit einer zweiten,
