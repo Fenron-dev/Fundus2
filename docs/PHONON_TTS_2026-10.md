@@ -43,6 +43,24 @@ Geräte-Laufzeittests. Dieser Schritt ist ausdrücklich noch nicht benutzbar.
 
 ## Engine- und Datenschutzentscheidung für die nächsten Schritte
 
+### Sprachen und Stimmen
+
+Englisch ist ein **gleichrangiger Hauptanwendungsfall**, weil viele Novels in
+der Bibliothek englischsprachig sind. Fundus darf sie nicht mit einem deutschen
+Modell oder deutscher Textnormalisierung vorlesen. Die Auswahl soll je Werk
+überschreibbar sein; ohne manuelle Wahl gilt in dieser Reihenfolge: explizite
+Werks-Sprache, verlässliche Sprachangabe der Datei, konfigurierbarer Standard
+des Medientyps (für Novels beispielsweise Englisch), allgemeiner Standard.
+Eine bloße Vermutung aus Titel oder Dateiname darf nicht stillschweigend die
+Werks-Sprache überschreiben. Der Reader zeigt die wirksame Sprache und Stimme
+an und erlaubt eine Hörprobe. Stimmen und Aussprache-Wörterbücher sind nach
+Sprache getrennt; ein Sprachwechsel ändert keine Textanker oder Lesestände.
+
+Phonon bietet im vorhandenen Studio `phonon-40m-en` sowie das kleinere
+`phonon-31m-en` als englische Modelloptionen. Qualität, Größe, Lizenz und
+Laufzeit auf Desktop und S21 FE werden separat geprüft; die Modellwahl darf
+nicht auf Deutsch festgelegt sein.
+
 Das eigenständige Phonon-Studio nutzt Python/`ptts`, Kapitel-WAV und m4b-Export.
 Für Fundus ist ein Python-Server im Client weder für Android geeignet noch für
 eine schnelle Reader-Umschaltung nötig. Stattdessen soll die native
