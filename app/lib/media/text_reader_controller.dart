@@ -219,6 +219,24 @@ class TextReaderController extends ChangeNotifier {
     );
   }
 
+  /// Resolve the normalization language before selecting a Phonon model.
+  /// Unknown metadata is not interpreted as German; the speech UI must ask.
+  SpeechLanguageSelection? resolveSpeechLanguage({
+    String? workOverride,
+    String? publicationMetadata,
+    String? mediaTypeDefault,
+    String? globalDefault,
+  }) {
+    if (!_open || _work == null) return null;
+    return SpeechLanguageResolver.resolve(
+      workOverride: workOverride,
+      workMetadata: _work!.summary.language,
+      publicationMetadata: publicationMetadata,
+      mediaTypeDefault: mediaTypeDefault,
+      globalDefault: globalDefault,
+    );
+  }
+
   /// Called by the audio sink *after* a segment has finished playing. A
   /// pre-generated or stale segment must not move the shared reading stand.
   bool completeSpokenSegment(SpeechTextSegment segment) {

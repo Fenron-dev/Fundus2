@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/library_controller.dart';
+import 'package:fundus/data/work_view.dart';
 import 'package:fundus/media/text_reader_controller.dart';
 import 'package:fundus_core/fundus_core.dart';
 
@@ -167,6 +168,29 @@ void main() {
       await library.scan();
       await reader.open(library.library!, library.works.first);
     }
+
+    test('englische Werksprache erreicht die Vorleseauswahl', () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      final original = library.works.first.summary;
+      final updated = await library.library!.updateWorkMetadata(
+        workId: original.id,
+        title: original.title,
+        authors: original.authors,
+        language: 'en-US',
+      );
+      await reader.open(library.library!, WorkView.fromSummary(updated));
+      final choice = reader.resolveSpeechLanguage(
+        mediaTypeDefault: 'de',
+        globalDefault: 'de',
+      )!;
+      expect(choice.language, SpeechLanguage.english);
+      expect(choice.source, SpeechLanguageSource.workMetadata);
+      expect(
+        reader.resolveSpeechLanguage(workOverride: 'de')!.language,
+        SpeechLanguage.german,
+      );
+    });
 
     test('an explicitly selected new volume starts at its beginning', () async {
       final folder = Directory('${root.path}/Light Novels/Glasmeer');

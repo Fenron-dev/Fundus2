@@ -32,13 +32,21 @@ veraltete Segmente dürfen einen neueren Lesestand nicht überschreiben.
   einen abgespielten Abschnitt nur aus dem weiterhin geöffneten Kapitel und
   nur wenn dessen Originaltext noch passt und dessen Ende vorwärts führt.
   Ein separater Checkpoint verwendet den bestehenden Lesestand/Journaleintrag.
+- Die Sprachauflösung nutzt explizite Werkswahl vor Werks- und verlässlicher
+  Dateimetadaten-Sprache, danach konfigurierbare Standards. Sie kennt Englisch,
+  Deutsch, Französisch, Spanisch und Portugiesisch einschließlich üblicher
+  Sprachcodes. Unbekannte Werte ergeben **keine** stillschweigende deutsche
+  Stimme, sondern erfordern eine Wahl. Der Textreader reicht seine vorhandene
+  Werks-Sprache an diese Auflösung weiter; ein Reader-Test prüft ein englisches
+  Novel gegen einen deutschen Standard.
 - Core- und Reader-Tests prüfen Einstieg, Abkürzungen, lange Absätze,
   Unicode-Zeichengrenzen, geänderte Anker, falsche Kapitel,
   Synthese ohne Fortschrittsänderung,
   bestätigtes Abspielen, Wiederöffnen und veraltete Abschnitte.
 
-**Noch nicht implementiert:** Phonon-Bindings, tatsächliche Audioausgabe,
-Vorlese-UI, Modellverwaltung, Stimmen, Textregeln, Hintergrundwiedergabe und
+**Noch nicht implementiert:** persistente Werks-/Medientyp-TTS-Auswahl in der
+Oberfläche, Phonon-Bindings, tatsächliche Audioausgabe, Vorlese-UI,
+Modellverwaltung, Stimmen, Textregeln, Hintergrundwiedergabe und
 Geräte-Laufzeittests. Dieser Schritt ist ausdrücklich noch nicht benutzbar.
 
 ## Engine- und Datenschutzentscheidung für die nächsten Schritte
@@ -59,7 +67,9 @@ Sprache getrennt; ein Sprachwechsel ändert keine Textanker oder Lesestände.
 Phonon bietet im vorhandenen Studio `phonon-40m-en` sowie das kleinere
 `phonon-31m-en` als englische Modelloptionen. Qualität, Größe, Lizenz und
 Laufzeit auf Desktop und S21 FE werden separat geprüft; die Modellwahl darf
-nicht auf Deutsch festgelegt sein.
+nicht auf Deutsch festgelegt sein. Der [offizielle C-FFI-Leitfaden](https://github.com/gradium-ai/xn-ptts/blob/main/ptts-ffi/README.md)
+beschreibt Englisch als eigene Textnormalisierung und ein öffentliches
+31m-Englischmodell; er bestätigt keine Flutter-Laufzeitabnahme.
 
 Das eigenständige Phonon-Studio nutzt Python/`ptts`, Kapitel-WAV und m4b-Export.
 Für Fundus ist ein Python-Server im Client weder für Android geeignet noch für
