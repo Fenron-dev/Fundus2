@@ -20,6 +20,12 @@ signature = "pub fn open(dir: &Path, unit: u32, lang: &str) -> Result<Self, Stri
 extended = "pub fn open(dir: &Path, unit: u32, lang: &str, external: &[(String, std::path::PathBuf)]) -> Result<Self, String> {"
 cpu = replace(cpu, signature, extended)
 cpu = replace(cpu, "        let synth = builder.build()", "        for (name, path) in external {\n            builder = builder.add_voice(name.clone(), path.clone());\n        }\n        let synth = builder.build()")
+# Match Phonon's desktop defaults and vary the flow sampler between utterances.
+# Reusing the upstream default seed (42) for every reader segment made adjacent
+# paragraphs use the same prosodic realization, which sounded conspicuously flat.
+cpu = replace(cpu, "    frame_size: usize,\n}", "    frame_size: usize,\n    seed: u64,\n}")
+cpu = replace(cpu, "            frame_size,\n        })", "            frame_size,\n            seed: 4242,\n        })")
+cpu = replace(cpu, "        let opts = SpeechOptions { voice: self.voice.clone(), ..Default::default() };", "        let opts = SpeechOptions { voice: self.voice.clone(), ..Default::default() }\n            .temperature(0.3)\n            .seed(self.seed);\n        self.seed = self.seed.wrapping_add(1);")
 (root / "cpu.rs").write_text(cpu)
 
 apple = (root / "coreml.rs").read_text()

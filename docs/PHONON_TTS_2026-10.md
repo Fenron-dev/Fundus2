@@ -39,6 +39,13 @@ Einzel-WAV-/Einzelmodell-Stand und dessen offene Puffer-/Wörterbuchpunkte unten
   Synthese begrenzen den Puffer. Zwei Sätze bzw. acht Sekunden werden
   vorgefüllt. Lange Stille wird mit Sprachrand/Fade gekürzt; definierte
   Satz-/Absatzpausen bleiben. mpv nutzt dafür kleine Lese-/Probegrößen.
+- Windows kann bei einem offenen Roh-PCM-Livestream eine stehenbleibende
+  Positionsmeldung liefern. Der Reader überwacht deshalb zusätzlich die
+  tatsächliche Player-Wiedergabezeit (pausenbereinigt, mit 500 ms Sicherheits-
+  abstand) und gibt damit den begrenzten Synthesepuffer frei. Der Textstand
+  folgt weiterhin nur Abschnitten, deren Audiozeit erreicht ist, nie dem
+  Vorausladen. Ein Logeintrag `tts.position.fallback` macht sichtbar, wenn
+  Windows auf diese Absicherung zurückgreift.
 - Profile speichern außerdem maximale Abschnittslänge, Satz-/Absatz-/Kapitel-
   pausen und aktivierte Textregeln. Mehrere Sätze desselben Absatzes werden bis
   zum Zeichenlimit gemeinsam synthetisiert; Satzsprünge im Player bleiben davon
@@ -54,11 +61,13 @@ Einzel-WAV-/Einzelmodell-Stand und dessen offene Puffer-/Wörterbuchpunkte unten
   Werk-Ausspracheeinträgen aktivieren. „Einstellungen von anderem Werk
   übernehmen“ kopiert Profil, Sprache, Tempo, Stimme und Werkaussprache; die
   Profilregeln und Abschnittsoptionen folgen dem gewählten Profil.
-- Die Modell-/Ordnerwahl ist zugleich die Qualitätswahl für Live-TTS. Der
-  gepinnte C-FFI-Adapter exponiert derzeit keine Seed- oder Temperaturparameter;
-  diese Studio-Funktionen werden daher noch nicht gespeichert oder als wirksam
-  dargestellt. Bitrate betrifft komprimierte Exporte, nicht den verlustfreien
-  PCM-Livestream. Dafür wäre eine Erweiterung der nativen Schnittstelle nötig.
+- Die Modell-/Ordnerwahl ist zugleich die Qualitätswahl für Live-TTS. Die
+  CPU-Engine verwendet nun Phonons Studio-Temperatur `0.3` und erhöht den Seed
+  ab dem ersten Abschnitt (4242), statt jeden Absatz mit dem gleichen
+  deterministischen Klangmuster zu erzeugen. Dadurch klingt die Ausgabe weniger
+  monoton, ohne ein Modell zu wechseln. Diese Werte sind vorerst fest und noch
+  nicht als Profiloptionen einstellbar. Bitrate betrifft komprimierte Exporte,
+  nicht den verlustfreien PCM-Livestream.
 - Textfortschritt folgt dem **Audio-Positionssignal**, niemals dem Vorausladen.
   Pause/Stop sichern nur gehörte Sätze; Zurückspringen invalidiert die alte
   Queue vor dem Textsprung. Tempo und Aussprache ändern keine Originalanker.

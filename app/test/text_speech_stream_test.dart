@@ -40,7 +40,7 @@ final class _SpeechEngine implements TextSpeechEngine {
 
 void main() {
   test(
-    'one continuous sink plays all chapter sentences and checkpoints only audio position',
+    'one continuous sink keeps playing when Windows position events are absent',
     () async {
       final root = await Directory.systemTemp.createTemp(
         'fundus-speech-stream-',
@@ -87,15 +87,9 @@ void main() {
       playing = engine.playingStream.listen((value) {
         if (!value || listened) return;
         listened = true;
-        var bytes = 0;
-        incoming = response!.listen((chunk) {
-          bytes += chunk.length;
-          engine.emitPosition(
-            Duration(
-              microseconds:
-                  (bytes ~/ 2) * Duration.microsecondsPerSecond ~/ 24000,
-            ),
-          );
+        incoming = response!.listen((_) {
+          // Simulate the Windows raw-PCM path where mpv keeps playing but its
+          // time-pos stream does not advance for this live response.
         }, onDone: engine.emitCompleted);
       });
       await speech
