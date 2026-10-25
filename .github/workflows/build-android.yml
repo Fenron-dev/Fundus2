@@ -41,6 +41,39 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: ndk;28.2.13676358
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: stable
+
+      - name: Check out pinned Phonon engine
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: gradium-ai/xn-ptts
+          ref: 49b9033e44ab0fbb935973eca3213757644d1bbb
+          path: .build/phonon
+          persist-credentials: false
+
+      - name: Build Phonon for Android
+        working-directory: .build/phonon
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS='-C strip=symbols -C link-arg=-Wl,-z,max-page-size=16384 -C target-cpu=generic -C target-feature=+dotprod,+fp16'
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS='-C strip=symbols -C link-arg=-Wl,-z,max-page-size=16384 -C target-cpu=x86-64'
+          unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --version 4.1.2 --locked
+          cargo ndk -t arm64-v8a -t x86_64 -o "$RUNNER_TEMP/phonon-jniLibs" build --release -p ptts-ffi --locked
+          mkdir -p "$GITHUB_WORKSPACE/app/android/app/src/main/jniLibs"
+          cp -R "$RUNNER_TEMP/phonon-jniLibs/." "$GITHUB_WORKSPACE/app/android/app/src/main/jniLibs/"
+          mkdir -p "$GITHUB_WORKSPACE/app/android/app/src/main/assets"
+          cp LICENSE-APACHE LICENSE-MIT "$GITHUB_WORKSPACE/app/android/app/src/main/assets/"
+
       # A debug key is generated on every hosted runner and cannot update an
       # APK from an earlier run. Failing here is safer than publishing an APK
       # that forces users to uninstall and lose app-private data.

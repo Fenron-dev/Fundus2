@@ -171,6 +171,29 @@ void main() {
     expect(engine.playing, isTrue);
   });
 
+  test('TTS-Segmente nutzen den Player ohne Buchstand als Zeitdatei', () async {
+    final speechFile = File('${root.path}/temporary-speech.wav');
+    await speechFile.writeAsBytes([0, 1, 2, 3]);
+    final playback = controller.playSpeechFile(
+      work: work,
+      fileId: 'chapter-1:0',
+      title: '${work.title} · Kapitel 1',
+      path: speechFile.path,
+    );
+    await waitForPlayback(
+      controller,
+      () => controller.isPlaying && controller.isPlayingSpeech,
+    );
+    engine.emitDuration(const Duration(seconds: 4));
+    engine.emitPosition(const Duration(seconds: 4));
+    await Future<void>.delayed(Duration.zero);
+    expect(library.loadProgress(work.id), isNull);
+    engine.emitCompleted();
+    await playback;
+    expect(controller.isPlayingSpeech, isFalse);
+    expect(library.loadProgress(work.id), isNull);
+  });
+
   test(
     'running playback writes to the recovered vault without losing its position',
     () async {

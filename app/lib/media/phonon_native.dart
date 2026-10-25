@@ -8,22 +8,14 @@ import 'package:ffi/ffi.dart';
 import 'package:fundus_core/fundus_core.dart';
 
 import 'phonon_wave.dart';
-
-/// Audio generated on this device. It is not a reading checkpoint: the
-/// playback sink must finish playing it before advancing [SpeechTextSegment].
-final class PhononAudio {
-  const PhononAudio({required this.wav, required this.duration});
-
-  final Uint8List wav;
-  final Duration duration;
-}
+import 'speech_engine.dart';
 
 /// A long-lived, serial worker for the official Phonon C interface. Neither
 /// model loading nor synthesis is allowed on Flutter's UI isolate.
 ///
 /// The native library and model are optional. A missing installation produces
 /// a visible error; it never falls back to cloud TTS or a different language.
-final class PhononNativeEngine {
+final class PhononNativeEngine implements TextSpeechEngine {
   PhononNativeEngine._();
 
   Isolate? _isolate;
@@ -37,6 +29,7 @@ final class PhononNativeEngine {
   final Map<int, Completer<Map<Object?, Object?>>> _pending = {};
   int _nextId = 0;
   bool _disposed = false;
+  List<SpeechLanguage> _languages = const [];
 
   static Future<PhononNativeEngine> open({
     required String modelDirectory,
@@ -45,11 +38,20 @@ final class PhononNativeEngine {
     final engine = PhononNativeEngine._();
     try {
       await engine._start();
-      await engine._request({
+      final reply = await engine._request({
         'command': 'open',
         'directory': modelDirectory,
         'language': SpeechLanguageResolver.code(language),
       });
+      final rawLanguages = reply['languages'];
+      if (rawLanguages is List) {
+        engine._languages = rawLanguages
+            .whereType<String>()
+            .map(SpeechLanguageResolver.parse)
+            .whereType<SpeechLanguage>()
+            .toSet()
+            .toList(growable: false);
+      }
       return engine;
     } on Object {
       await engine.dispose();
@@ -133,6 +135,21 @@ final class PhononNativeEngine {
 
   /// Synthesizes exactly one bounded original-text segment. The return of this
   /// call means audio was generated, *not* that the user heard it.
+  @override
+  Future<List<SpeechLanguage>> availableLanguages() async => _languages;
+
+  @override
+  Future<List<String>> availableVoices(SpeechLanguage language) async {
+    final reply = await _request({
+      'command': 'catalogue_voices',
+      'language': SpeechLanguageResolver.code(language),
+    });
+    final rawVoices = reply['voices'];
+    if (rawVoices is! List) return const [];
+    return rawVoices.whereType<String>().toList(growable: false);
+  }
+
+  @override
   Future<PhononAudio> synthesize(
     SpeechTextSegment segment, {
     required SpeechLanguage language,
@@ -158,6 +175,7 @@ final class PhononNativeEngine {
     );
   }
 
+  @override
   Future<void> dispose() async {
     if (_disposed) return;
     if (_commands != null) {
@@ -307,7 +325,17 @@ void _phononWorker(SendPort host) async {
                 : Platform.isMacOS
                 ? 'libptts_ffi.dylib'
                 : 'libptts_ffi.so';
-            final api = bindings = _Bindings(DynamicLibrary.open(libraryName));
+            final libraryPath = Platform.isAndroid
+                ? libraryName
+                : '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}$libraryName';
+            late final _Bindings api;
+            try {
+              api = bindings = _Bindings(DynamicLibrary.open(libraryPath));
+            } on ArgumentError {
+              throw StateError(
+                'Die Phonon-Sprachengine fehlt im Fundus-App-Paket.',
+              );
+            }
             final path = directory.toNativeUtf8();
             final lang = language.toNativeUtf8();
             try {
@@ -317,9 +345,40 @@ void _phononWorker(SendPort host) async {
               calloc.free(lang);
             }
             if (handle == nullptr) {
-              throw StateError('Phonon konnte das Modell nicht laden.');
+              final message = api.lastError(nullptr);
+              final detail = message == nullptr
+                  ? null
+                  : message.toDartString().trim();
+              throw StateError(
+                detail == null || detail.isEmpty
+                    ? 'Phonon konnte das Modell nicht laden.'
+                    : detail,
+              );
             }
-            host.send({'id': id});
+            host.send({
+              'id': id,
+              'languages': _nulNames(api.languages(handle)),
+            });
+          case 'catalogue_voices':
+            final api = bindings;
+            if (api == null || handle == nullptr) {
+              throw StateError('Phonon-Modell ist nicht geladen.');
+            }
+            final language = (message['language'] as String).toNativeUtf8();
+            try {
+              if (api.setLanguage(handle, language) == 0) {
+                throw StateError(
+                  _nativeError(
+                    api,
+                    handle,
+                    'Phonon konnte die Sprache nicht setzen.',
+                  ),
+                );
+              }
+            } finally {
+              calloc.free(language);
+            }
+            host.send({'id': id, 'voices': _nulNames(api.voices(handle))});
           case 'synthesize':
             final api = bindings;
             if (api == null || handle == nullptr) {
@@ -332,7 +391,13 @@ void _phononWorker(SendPort host) async {
             final lang = language.toNativeUtf8();
             try {
               if (api.setLanguage(handle, lang) == 0) {
-                throw StateError('Phonon konnte die Sprache nicht setzen.');
+                throw StateError(
+                  _nativeError(
+                    api,
+                    handle,
+                    'Phonon konnte die Sprache nicht setzen.',
+                  ),
+                );
               }
             } finally {
               calloc.free(lang);
@@ -353,7 +418,13 @@ void _phononWorker(SendPort host) async {
             final name = voice.toNativeUtf8();
             try {
               if (api.setVoice(handle, name) == 0) {
-                throw StateError('Phonon konnte die Stimme nicht setzen.');
+                throw StateError(
+                  _nativeError(
+                    api,
+                    handle,
+                    'Phonon konnte die Stimme nicht setzen.',
+                  ),
+                );
               }
             } finally {
               calloc.free(name);
@@ -389,7 +460,13 @@ void _phononWorker(SendPort host) async {
                 throw const FormatException('Phonon-Audio ist zu lang.');
               }
               if (ok == 0 || result.ref.samples != wave.sampleCount) {
-                throw StateError('Phonon konnte den Abschnitt nicht sprechen.');
+                throw StateError(
+                  _nativeError(
+                    api,
+                    handle,
+                    'Phonon konnte den Abschnitt nicht sprechen.',
+                  ),
+                );
               }
               host.send({
                 'id': id,
@@ -422,4 +499,11 @@ void _phononWorker(SendPort host) async {
     if (bindings != null && handle != nullptr) bindings.free(handle);
     inbox.close();
   }
+}
+
+String _nativeError(_Bindings bindings, Pointer<Void> handle, String fallback) {
+  final message = bindings.lastError(handle);
+  if (message == nullptr) return fallback;
+  final detail = message.toDartString().trim();
+  return detail.isEmpty ? fallback : detail;
 }

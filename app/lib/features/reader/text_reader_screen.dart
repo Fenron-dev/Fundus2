@@ -6,9 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../app/fundus_scope.dart';
 import '../../media/text_reader_controller.dart';
+import '../../media/phonon_model_store.dart';
+import '../../media/text_speech_controller.dart';
 
 /// The reader for running text, laid over the shell.
 ///
@@ -32,6 +35,21 @@ class TextReaderScreen extends StatelessWidget {
         child: Column(
           children: [
             if (reader.showsChrome) const _TextReaderBar(),
+            if (scope.textSpeech.failure case final failure?)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: FundusSpace.x4,
+                  vertical: FundusSpace.x1,
+                ),
+                child: Text(
+                  failure,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             const Expanded(child: _TextSurface()),
             // Die Leiste unten ist der Daumenbereich, wie beim Manga-Leser:
             // das Kapitel davor, wo man steht, das Kapitel danach. Am Fuß
@@ -119,6 +137,44 @@ class _TextReaderBar extends StatelessWidget {
             ),
             tooltip: 'Lesezeichen setzen',
           ),
+          ListenableBuilder(
+            listenable: scope.textSpeech,
+            builder: (context, _) {
+              final speech = scope.textSpeech;
+              final icon = switch (speech.state) {
+                TextSpeechState.playing => Icons.pause_rounded,
+                TextSpeechState.paused => Icons.play_arrow_rounded,
+                TextSpeechState.preparing ||
+                TextSpeechState.synthesizing => Icons.hourglass_top_rounded,
+                TextSpeechState.failed => Icons.volume_off_rounded,
+                TextSpeechState.idle => Icons.record_voice_over_outlined,
+              };
+              final tooltip = switch (speech.state) {
+                TextSpeechState.playing => 'Vorlesen pausieren',
+                TextSpeechState.paused => 'Vorlesen fortsetzen',
+                TextSpeechState.preparing => 'Phonon wird gestartet',
+                TextSpeechState.synthesizing => 'Text wird vorgelesen',
+                TextSpeechState.failed => speech.failure ?? 'Vorlesen starten',
+                TextSpeechState.idle => 'Vorlesen starten',
+              };
+              return IconButton(
+                onPressed: () => _toggleTextSpeech(context),
+                icon: Icon(icon, size: FundusIcons.sizeLg, color: ink),
+                tooltip: tooltip,
+              );
+            },
+          ),
+          if (scope.textSpeech.isActive &&
+              scope.textSpeech.state != TextSpeechState.failed)
+            IconButton(
+              onPressed: scope.textSpeech.stop,
+              icon: Icon(
+                Icons.stop_rounded,
+                size: FundusIcons.sizeLg,
+                color: ink,
+              ),
+              tooltip: 'Vorlesen beenden',
+            ),
           if (reader.bookmarks.isNotEmpty)
             IconButton(
               onPressed: () => _showTextBookmarks(context),
@@ -151,6 +207,86 @@ class _TextReaderBar extends StatelessWidget {
             tooltip: 'Markierungen',
           ),
         ],
+      ),
+    );
+  }
+}
+
+Future<void> _toggleTextSpeech(BuildContext context) async {
+  final scope = FundusScope.of(context);
+  var modelDirectory = scope.settings.phononModelDirectory;
+  if (!scope.textSpeech.isActive && modelDirectory == null) {
+    await _chooseTextSpeechModel(context);
+    modelDirectory = scope.settings.phononModelDirectory;
+    if (modelDirectory == null || !context.mounted) return;
+  }
+  final workId = scope.textReader.work?.id;
+  final workOverride = workId == null
+      ? null
+      : scope.settings.speechLanguageOverride(workId);
+  final language = scope.textReader
+      .resolveSpeechLanguage(workOverride: workOverride)
+      ?.language;
+  await scope.textSpeech.toggle(
+    modelDirectory: modelDirectory ?? '',
+    workOverride: workOverride,
+    globalDefault: null,
+    voice: workId == null || language == null
+        ? null
+        : scope.settings.speechVoice(
+            workId,
+            SpeechLanguageResolver.code(language),
+          ),
+  );
+}
+
+String _speechLanguageLabel(SpeechLanguage language) => switch (language) {
+  SpeechLanguage.english => 'English',
+  SpeechLanguage.german => 'Deutsch',
+  SpeechLanguage.french => 'Französisch',
+  SpeechLanguage.spanish => 'Spanisch',
+  SpeechLanguage.portuguese => 'Portugiesisch',
+};
+
+Future<void> _chooseTextSpeechModel(BuildContext context) async {
+  final scope = FundusScope.of(context);
+  try {
+    final String? directory;
+    if (Platform.isAndroid) {
+      final selection = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['zip'],
+        dialogTitle: 'Phonon-Modellarchiv auswählen',
+        allowMultiple: false,
+      );
+      if (selection == null || selection.files.isEmpty) return;
+      final archivePath = selection.files.first.path;
+      if (archivePath == null) return;
+      final support = await getApplicationSupportDirectory();
+      directory = await PhononModelStore.importCpuModelArchive(
+        archivePath: archivePath,
+        applicationSupportPath: support.path,
+      );
+    } else {
+      directory = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Phonon-Modellordner wählen',
+      );
+    }
+    if (directory == null || !context.mounted) return;
+    if (scope.textSpeech.isActive) await scope.textSpeech.stop();
+    await scope.settings.setPhononModelDirectory(directory);
+  } on FormatException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.message)));
+  } on PlatformException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Modellordner konnte nicht gewählt werden: ${error.message ?? error.code}',
+        ),
       ),
     );
   }
@@ -668,7 +804,86 @@ class _ChapterFoot extends StatelessWidget {
 }
 
 Future<void> _showTextSettings(BuildContext context) {
-  final reader = FundusScope.of(context).textReader;
+  final scope = FundusScope.of(context);
+  final reader = scope.textReader;
+  final workId = reader.work?.id;
+  var selectedSpeechLanguage = workId == null
+      ? SpeechLanguage.english
+      : SpeechLanguageResolver.parse(
+              scope.settings.speechLanguageOverride(workId),
+            ) ??
+            reader.resolveSpeechLanguage()?.language ??
+            SpeechLanguage.english;
+  var selectedSpeechVoice = workId == null
+      ? null
+      : scope.settings.speechVoice(
+          workId,
+          SpeechLanguageResolver.code(selectedSpeechLanguage),
+        );
+  var supportedSpeechLanguages = <SpeechLanguage>[];
+  var availableSpeechVoices = <String>[];
+  var loadingSpeechVoices = false;
+  String? speechOptionsError;
+
+  Future<void> loadSpeechVoices(
+    BuildContext sheetContext,
+    void Function(void Function()) setSheetState,
+  ) async {
+    final directory = scope.settings.phononModelDirectory;
+    if (directory == null) {
+      setSheetState(
+        () => speechOptionsError = 'Wähle zuerst ein Phonon-Modell.',
+      );
+      return;
+    }
+    setSheetState(() {
+      loadingSpeechVoices = true;
+      speechOptionsError = null;
+    });
+    try {
+      final languages = await scope.textSpeech.availableLanguages(
+        modelDirectory: directory,
+        language: selectedSpeechLanguage,
+      );
+      final voices = await scope.textSpeech.availableVoices(
+        modelDirectory: directory,
+        language: selectedSpeechLanguage,
+      );
+      if (!sheetContext.mounted) return;
+      setSheetState(() {
+        supportedSpeechLanguages = languages;
+        availableSpeechVoices = voices;
+        if (selectedSpeechVoice != null &&
+            !voices.contains(selectedSpeechVoice)) {
+          selectedSpeechVoice = null;
+        }
+        selectedSpeechVoice ??= voices.contains('default')
+            ? 'default'
+            : voices.isNotEmpty
+            ? voices.first
+            : null;
+      });
+      if (workId != null && selectedSpeechVoice != null) {
+        await scope.settings.setSpeechVoice(
+          workId,
+          SpeechLanguageResolver.code(selectedSpeechLanguage),
+          selectedSpeechVoice,
+        );
+      }
+    } on Object catch (error) {
+      if (!sheetContext.mounted) return;
+      setSheetState(() {
+        speechOptionsError = error.toString().replaceFirst('Bad state: ', '');
+        supportedSpeechLanguages = [];
+        availableSpeechVoices = [];
+      });
+    } finally {
+      if (sheetContext.mounted) {
+        setSheetState(() => loadingSpeechVoices = false);
+      }
+    }
+  }
+
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -775,6 +990,126 @@ Future<void> _showTextSettings(BuildContext context) {
                     color: context.fundus.textFaint,
                   ),
                 ),
+                const SizedBox(height: FundusSpace.x6),
+                Text(
+                  'Vorlesen',
+                  style: Theme.of(sheetContext).textTheme.labelSmall,
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                DropdownButtonFormField<SpeechLanguage>(
+                  initialValue: selectedSpeechLanguage,
+                  decoration: const InputDecoration(labelText: 'Sprache'),
+                  items: [
+                    for (final language in SpeechLanguage.values)
+                      DropdownMenuItem(
+                        value: language,
+                        child: Text(_speechLanguageLabel(language)),
+                      ),
+                  ],
+                  onChanged: (language) async {
+                    if (language == null) return;
+                    selectedSpeechLanguage = language;
+                    selectedSpeechVoice = null;
+                    availableSpeechVoices = [];
+                    supportedSpeechLanguages = [];
+                    setSheetState(() {});
+                    if (workId != null) {
+                      await scope.settings.setSpeechLanguageOverride(
+                        workId,
+                        SpeechLanguageResolver.code(language),
+                      );
+                    }
+                    if (sheetContext.mounted &&
+                        scope.settings.phononModelDirectory != null) {
+                      await loadSpeechVoices(sheetContext, setSheetState);
+                    }
+                  },
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                Text(
+                  scope.settings.phononModelDirectory == null
+                      ? Platform.isAndroid
+                            ? 'Noch kein lokales Phonon-Modell importiert. Wähle ein ZIP-Archiv mit englischem Modell, tokenizer.json und default-voice.safetensors. Novels ohne Sprachangabe werden auf Englisch vorgelesen.'
+                            : 'Noch kein lokales Phonon-Modell ausgewählt. Novels ohne Sprachangabe werden auf Englisch vorgelesen.'
+                      : 'Modellordner: ${scope.settings.phononModelDirectory!.split(Platform.pathSeparator).last}',
+                  style: Theme.of(sheetContext).textTheme.bodySmall,
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await _chooseTextSpeechModel(sheetContext);
+                    if (sheetContext.mounted) {
+                      setSheetState(() {});
+                      await loadSpeechVoices(sheetContext, setSheetState);
+                    }
+                  },
+                  icon: const Icon(Icons.folder_open_outlined),
+                  label: Text(
+                    Platform.isAndroid
+                        ? 'Modellarchiv importieren'
+                        : 'Modellordner wählen',
+                  ),
+                ),
+                const SizedBox(height: FundusSpace.x2),
+                OutlinedButton.icon(
+                  onPressed: loadingSpeechVoices
+                      ? null
+                      : () => loadSpeechVoices(sheetContext, setSheetState),
+                  icon: loadingSpeechVoices
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.record_voice_over_outlined),
+                  label: const Text('Stimmen dieses Modells anzeigen'),
+                ),
+                if (supportedSpeechLanguages.isNotEmpty &&
+                    !supportedSpeechLanguages.contains(selectedSpeechLanguage))
+                  Padding(
+                    padding: const EdgeInsets.only(top: FundusSpace.x2),
+                    child: Text(
+                      'Das Modell unterstützt ${_speechLanguageLabel(selectedSpeechLanguage)} nicht.',
+                      style: Theme.of(sheetContext).textTheme.bodySmall
+                          ?.copyWith(
+                            color: Theme.of(sheetContext).colorScheme.error,
+                          ),
+                    ),
+                  ),
+                if (availableSpeechVoices.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: FundusSpace.x2),
+                    child: DropdownButtonFormField<String>(
+                      initialValue: selectedSpeechVoice,
+                      decoration: const InputDecoration(labelText: 'Stimme'),
+                      items: [
+                        for (final voice in availableSpeechVoices)
+                          DropdownMenuItem(value: voice, child: Text(voice)),
+                      ],
+                      onChanged: (voice) async {
+                        selectedSpeechVoice = voice;
+                        setSheetState(() {});
+                        if (workId != null) {
+                          await scope.settings.setSpeechVoice(
+                            workId,
+                            SpeechLanguageResolver.code(selectedSpeechLanguage),
+                            voice,
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                if (speechOptionsError case final error?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: FundusSpace.x2),
+                    child: Text(
+                      error,
+                      style: Theme.of(sheetContext).textTheme.bodySmall
+                          ?.copyWith(
+                            color: Theme.of(sheetContext).colorScheme.error,
+                          ),
+                    ),
+                  ),
                 const SizedBox(height: FundusSpace.x6),
                 _Measure(
                   label: 'Schriftgröße',

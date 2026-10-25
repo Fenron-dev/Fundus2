@@ -60,9 +60,10 @@ final class ServerLibraryPreference {
 /// the device *identity*, which must never travel in a vault: a copied vault
 /// would otherwise clone it and two devices would report the same id.
 ///
-/// Reader and player settings do **not** live here. They go into the vault's
-/// `_fundus/devices/` directory, because reinstalling the app must not cost
-/// them again — see `DeviceProfile` in the core package.
+/// Shared reader/player settings live in the vault's `_fundus/devices/`
+/// directory. Installation-specific engine choices (for example a local TTS
+/// model path and per-work voice preferences) live here, because they describe
+/// this device's engine installation rather than the shared reading position.
 class AppSettings extends ChangeNotifier {
   AppSettings._(
     this._file,
@@ -154,6 +155,63 @@ class AppSettings extends ChangeNotifier {
       }, ephemeral: true);
 
   String get deviceKey => _values['device_key'] as String? ?? '';
+
+  /// Local Phonon checkpoint folder selected on this installation. Model
+  /// files are kept out of the shared vault and device sync.
+  String? get phononModelDirectory {
+    final value = _values['phonon_model_directory'];
+    return value is String && value.trim().isNotEmpty ? value.trim() : null;
+  }
+
+  Future<void> setPhononModelDirectory(String? value) => _set(
+    'phonon_model_directory',
+    value == null || value.trim().isEmpty ? null : value.trim(),
+  );
+
+  String? speechLanguageOverride(String workId) {
+    final raw = _values['speech_language_overrides'];
+    if (raw is! Map) return null;
+    final value = raw[workId];
+    return value is String && value.trim().isNotEmpty ? value.trim() : null;
+  }
+
+  Future<void> setSpeechLanguageOverride(String workId, String? language) {
+    final raw = _values['speech_language_overrides'];
+    final overrides = raw is Map
+        ? Map<String, Object?>.from(raw.cast<Object?, Object?>())
+        : <String, Object?>{};
+    if (language == null || language.trim().isEmpty) {
+      overrides.remove(workId);
+    } else {
+      overrides[workId] = language.trim();
+    }
+    return _set('speech_language_overrides', overrides);
+  }
+
+  String? speechVoice(String workId, String languageCode) {
+    final raw = _values['speech_voices'];
+    if (raw is! Map) return null;
+    final value = raw['$workId:$languageCode'];
+    return value is String && value.trim().isNotEmpty ? value.trim() : null;
+  }
+
+  Future<void> setSpeechVoice(
+    String workId,
+    String languageCode,
+    String? voice,
+  ) {
+    final raw = _values['speech_voices'];
+    final voices = raw is Map
+        ? Map<String, Object?>.from(raw.cast<Object?, Object?>())
+        : <String, Object?>{};
+    final key = '$workId:$languageCode';
+    if (voice == null || voice.trim().isEmpty) {
+      voices.remove(key);
+    } else {
+      voices[key] = voice.trim();
+    }
+    return _set('speech_voices', voices);
+  }
 
   /// What this device calls itself. Asked of the platform once, on the first
   /// start; a getter cannot wait for a channel, so this is the dull fallback

@@ -35,6 +35,23 @@ jobs:
         with:
           ref: ${{ env.FUNDUS_COMMIT }}
 
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: stable
+
+      - name: Check out pinned Phonon engine
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: gradium-ai/xn-ptts
+          ref: 49b9033e44ab0fbb935973eca3213757644d1bbb
+          path: .build/phonon
+          persist-credentials: false
+
+      - name: Build Phonon for Windows
+        working-directory: .build/phonon
+        run: cargo build --release -p ptts-ffi --locked
+
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -62,6 +79,10 @@ jobs:
         shell: pwsh
         run: |
           $release = (Resolve-Path "build/windows/x64/runner/Release").Path
+          Copy-Item "$env:GITHUB_WORKSPACE/.build/phonon/target/release/ptts_ffi.dll" $release
+          New-Item -ItemType Directory -Force (Join-Path $release "THIRD-PARTY-LICENSES") | Out-Null
+          Copy-Item "$env:GITHUB_WORKSPACE/.build/phonon/LICENSE-APACHE" (Join-Path $release "THIRD-PARTY-LICENSES/PHONON-LICENSE-APACHE.txt")
+          Copy-Item "$env:GITHUB_WORKSPACE/.build/phonon/LICENSE-MIT" (Join-Path $release "THIRD-PARTY-LICENSES/PHONON-LICENSE-MIT.txt")
           $runtime = @(
             "vcruntime140.dll",
             "vcruntime140_1.dll",

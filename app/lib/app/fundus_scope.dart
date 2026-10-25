@@ -30,6 +30,7 @@ import '../media/track_preference.dart';
 import '../media/playback_controller.dart';
 import '../media/reader_controller.dart';
 import '../media/text_reader_controller.dart';
+import '../media/text_speech_controller.dart';
 import '../features/work/progress_choice_sheet.dart';
 import '../features/library/metadata_import_conflict_dialog.dart';
 import 'app_navigation.dart';
@@ -148,6 +149,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
         deviceId: widget.settings.deviceKey,
         deviceName: widget.settings.deviceName,
       );
+  late final TextSpeechController textSpeech = TextSpeechController(
+    reader: textReader,
+    player: player,
+  );
   late final FullscreenController fullscreen =
       widget.fullscreen ?? FullscreenController();
   late final SyncController sync =
@@ -204,6 +209,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     player.addListener(_bump);
     reader.addListener(_bump);
     textReader.addListener(_bump);
+    textSpeech.addListener(_bump);
     fullscreen.addListener(_bump);
     sync.addListener(_bump);
     host.addListener(_bump);
@@ -625,6 +631,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     player.removeListener(_bump);
     reader.removeListener(_bump);
     textReader.removeListener(_bump);
+    textSpeech.removeListener(_bump);
     fullscreen.removeListener(_bump);
     sync.removeListener(_bump);
     host.removeListener(_bump);
@@ -641,6 +648,9 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     player.removeListener(_syncWhenClosed);
     reader.removeListener(_syncWhenClosed);
     textReader.removeListener(_syncWhenClosed);
+    // TTS owns the shared player while it is active; stop it before disposing
+    // that player and the reader it checkpoints against.
+    textSpeech.dispose();
     // A controller handed in from outside is the caller's to dispose.
     if (widget.player == null) player.dispose();
     if (widget.reader == null) reader.dispose();

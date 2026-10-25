@@ -119,6 +119,7 @@ class PlaybackController extends ChangeNotifier {
   int _pauseEpoch = 0;
   int _loadEpoch = 0;
   bool _disposed = false;
+  Completer<void>? _speechCompletion;
 
   @override
   void notifyListeners() {
@@ -129,6 +130,7 @@ class PlaybackController extends ChangeNotifier {
   /// Android must not drop its foreground service/wake lock at every track.
   bool get isPlaybackRequested => _playbackRequested;
   bool get isLoadingTrack => _loadingTrack;
+  bool get isPlayingSpeech => _speechCompletion != null;
   Future<bool> Function()? requestAudioFocus;
   Future<void> Function()? releaseAudioFocus;
 
@@ -529,6 +531,71 @@ class PlaybackController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Plays one generated TTS segment through the shared media player. The
+  /// caller awaits natural completion before advancing the reader position.
+  /// It uses the normal audio-focus and background-session path, but never
+  /// writes this temporary WAV as a media-file progress record.
+  Future<void> playSpeechFile({
+    required WorkView work,
+    required String fileId,
+    required String title,
+    required String path,
+  }) async {
+    await _stopWhatIsPlaying();
+    final epoch = _pauseEpoch;
+    final completion = Completer<void>();
+    _speechCompletion = completion;
+    _failure = null;
+    _ended = false;
+    _library = null;
+    _work = work;
+    _sources = [
+      LocalFileSource(fileId: 'speech:$fileId', title: title, path: path),
+    ];
+    _owners = [work];
+    _resume = const [];
+    _perFile = const {};
+    _queueName = null;
+    _chapters = const [];
+    _trackChapters = const [];
+    _index = 0;
+    _order = const [0];
+    _expanded = false;
+    _chrome = true;
+    _finishedPositionKey = null;
+    _duration = null;
+    _setPosition(Duration.zero);
+    _attachStreams();
+    try {
+      await _openCurrent();
+      if (_failure case final failure?) throw StateError(failure);
+      if (epoch != _pauseEpoch) {
+        throw StateError('Die Vorlese-Wiedergabe wurde unterbrochen.');
+      }
+      await _play();
+      if (!_playbackRequested && !_playing) {
+        throw StateError(
+          _failure ?? 'Die Audioausgabe konnte nicht gestartet werden.',
+        );
+      }
+      await completion.future;
+    } finally {
+      if (identical(_speechCompletion, completion)) {
+        _speechCompletion = null;
+      }
+    }
+  }
+
+  void _cancelSpeechCompletion() {
+    final completion = _speechCompletion;
+    _speechCompletion = null;
+    if (completion != null && !completion.isCompleted) {
+      completion.completeError(
+        StateError('Die Vorlese-Wiedergabe wurde unterbrochen.'),
+      );
+    }
+  }
+
   /// Spielt eine Liste, deren Zeilen aus verschiedenen Werken kommen.
   ///
   /// Der Unterschied zu [open] ist genau einer: welches Werk gerade läuft,
@@ -598,6 +665,7 @@ class PlaybackController extends ChangeNotifier {
   Future<void> _stopWhatIsPlaying() async {
     _loadEpoch++;
     if (_work == null && _sources.isEmpty) return;
+    _cancelSpeechCompletion();
     _endPlaybackRequest();
     saveProgress(checkpoint: true);
     _saveTimer?.cancel();
@@ -993,6 +1061,15 @@ class PlaybackController extends ChangeNotifier {
   /// nothing to decide.
   void _finished() {
     if (!_playbackRequested || _loadingTrack) return;
+    final speech = _speechCompletion;
+    if (speech != null) {
+      _speechCompletion = null;
+      _ended = true;
+      _endPlaybackRequest();
+      if (!speech.isCompleted) speech.complete();
+      notifyListeners();
+      return;
+    }
     // Ein Strom, der reißt, meldet sich wie ein Ende. Der Unterschied ist
     // messbar: was zu Ende ist, steht am Ende. Steht es mitten drin, wird
     // dieselbe Stelle noch einmal geöffnet — das ist, was ein Mensch täte,
@@ -1223,6 +1300,7 @@ class PlaybackController extends ChangeNotifier {
   Future<void> close() async {
     _loadEpoch++;
     _loadingTrack = false;
+    _cancelSpeechCompletion();
     saveProgress();
     await pause();
     await _engineOrNull?.stop();
