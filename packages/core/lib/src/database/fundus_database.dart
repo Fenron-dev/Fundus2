@@ -8,6 +8,7 @@ import '../import/document_importer.dart';
 import '../library/remote_catalogue.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
+import '../model/podcast_subscription.dart';
 import '../model/usage_summary.dart';
 import '../model/content_updates.dart';
 import '../model/library_playlist.dart';
@@ -237,7 +238,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 27;
+  static const schemaVersion = 28;
 
   /// How much progress history one work keeps.
   ///
@@ -5702,6 +5703,102 @@ final class FundusDatabase {
     if (_database.userVersion == 24 && !readOnly) _migrateToVersion25();
     if (_database.userVersion == 25 && !readOnly) _migrateToVersion26();
     if (_database.userVersion == 26 && !readOnly) _migrateToVersion27();
+    if (_database.userVersion == 27 && !readOnly) _migrateToVersion28();
+  }
+
+  /// Podcast subscriptions: which shows fetch their new episodes.
+  void _migrateToVersion28() {
+    transaction(() {
+      _database.execute(
+        'CREATE TABLE IF NOT EXISTS podcast_subscriptions ('
+        'work_id TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE, '
+        'feed_url TEXT NOT NULL, '
+        'subscribed_at INTEGER NOT NULL, '
+        'keep_latest INTEGER NOT NULL DEFAULT 0, '
+        'last_checked_at INTEGER, '
+        'last_error TEXT, '
+        'seen_json TEXT NOT NULL DEFAULT \'[]\')',
+      );
+      _database.userVersion = 28;
+    });
+  }
+
+  /// Every podcast subscription of this vault.
+  List<PodcastSubscription> podcastSubscriptions() {
+    if (!tableExists('podcast_subscriptions')) return const [];
+    return [
+      for (final row in _database.select(
+        'SELECT s.*, w.title FROM podcast_subscriptions s '
+        'JOIN works w ON w.id = s.work_id ORDER BY w.sort_title',
+      ))
+        PodcastSubscription(
+          workId: row['work_id'] as String,
+          title: row['title'] as String? ?? '',
+          feedUrl: row['feed_url'] as String,
+          subscribedAt: DateTime.fromMillisecondsSinceEpoch(
+            row['subscribed_at'] as int,
+            isUtc: true,
+          ),
+          keepLatest: row['keep_latest'] as int? ?? 0,
+          lastCheckedAt: row['last_checked_at'] == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(
+                  row['last_checked_at'] as int,
+                  isUtc: true,
+                ),
+          lastError: row['last_error'] as String?,
+          seen: _decodeSeen(row['seen_json']),
+        ),
+    ];
+  }
+
+  static Set<String> _decodeSeen(Object? value) {
+    if (value is! String) return const {};
+    try {
+      final decoded = jsonDecode(value);
+      return decoded is List ? decoded.whereType<String>().toSet() : const {};
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  void subscribePodcast({
+    required String workId,
+    required String feedUrl,
+    required DateTime subscribedAt,
+  }) {
+    _database.execute(
+      'INSERT INTO podcast_subscriptions (work_id, feed_url, subscribed_at) '
+      'VALUES (?, ?, ?) ON CONFLICT(work_id) DO UPDATE SET '
+      'feed_url = excluded.feed_url',
+      [workId, feedUrl, subscribedAt.millisecondsSinceEpoch],
+    );
+  }
+
+  void unsubscribePodcast(String workId) => _database.execute(
+    'DELETE FROM podcast_subscriptions WHERE work_id = ?',
+    [workId],
+  );
+
+  /// What one check found: when, what failed, which episodes are now known.
+  void recordPodcastCheck({
+    required String workId,
+    required DateTime checkedAt,
+    String? error,
+    Set<String> seen = const {},
+  }) {
+    // The newest few hundred are plenty to recognise a feed's episodes.
+    final kept = seen.length > 500 ? seen.skip(seen.length - 500) : seen;
+    _database.execute(
+      'UPDATE podcast_subscriptions SET last_checked_at = ?, last_error = ?, '
+      'seen_json = ? WHERE work_id = ?',
+      [
+        checkedAt.millisecondsSinceEpoch,
+        error,
+        jsonEncode(kept.toList()),
+        workId,
+      ],
+    );
   }
 
   /// Bounds the progress history and remembers pruned operation ids.

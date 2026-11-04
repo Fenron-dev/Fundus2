@@ -19,6 +19,7 @@ import '../import/media_areas.dart';
 import '../import/mediavault_metadata.dart';
 import '../import/plex_library.dart';
 import '../import/sidecar_metadata.dart';
+import '../model/podcast_subscription.dart';
 import '../model/usage_summary.dart';
 import '../model/device_profile.dart';
 import '../model/fundus_id.dart';
@@ -1721,6 +1722,52 @@ final class FundusLibrary {
   /// The work a subtitle file belongs to.
   String? workIdForSubtitle(String fileId) =>
       _database.workIdForSubtitle(fileId);
+
+  List<PodcastSubscription> podcastSubscriptions() =>
+      _database.podcastSubscriptions();
+
+  /// Fetches the show's new episodes from now on. Only a feed reached over
+  /// HTTPS can be subscribed: an episode is a file written into the vault,
+  /// and its address must not be something anybody on the way can change.
+  void subscribePodcast(String workId) {
+    _ensureWritable();
+    final work = _database.workSummary(workId);
+    final feed = work?.externalIds['feed'];
+    final uri = feed == null ? null : Uri.tryParse(feed);
+    if (work == null || work.sourceId != FundusDatabase.localSourceId) {
+      throw StateError('Nur Werke dieser Bibliothek lassen sich abonnieren.');
+    }
+    if (uri == null || !uri.isScheme('https') || uri.host.isEmpty) {
+      throw const FormatException(
+        'Für ein Abo braucht der Podcast eine Feed-Adresse mit https.',
+      );
+    }
+    _database.subscribePodcast(
+      workId: workId,
+      feedUrl: uri.toString(),
+      subscribedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  void unsubscribePodcast(String workId) {
+    _ensureWritable();
+    _database.unsubscribePodcast(workId);
+  }
+
+  void recordPodcastCheck({
+    required String workId,
+    required DateTime checkedAt,
+    String? error,
+    Set<String> seen = const {},
+  }) {
+    if (isReadOnly) return;
+    _database.recordPodcastCheck(
+      workId: workId,
+      checkedAt: checkedAt,
+      error: error,
+      seen: seen,
+    );
+  }
 
   /// Writes down a stretch of listening, watching or reading on this device.
   ///

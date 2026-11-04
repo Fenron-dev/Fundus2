@@ -460,6 +460,12 @@ class _Facts extends StatelessWidget {
           const SizedBox(height: FundusSpace.x4),
           _External(work: work, centred: centred),
         ],
+        if (work.kind == 'podcast' &&
+            work.summary.externalIds['feed'] != null &&
+            work.summary.sourceId == FundusDatabase.localSourceId) ...[
+          const SizedBox(height: FundusSpace.x4),
+          _PodcastSubscriptionSwitch(work: work),
+        ],
       ],
     );
   }
@@ -485,6 +491,62 @@ class _Facts extends StatelessWidget {
 /// zur Quelle und die Bedingung dafür, dass ein späterer Abgleich dasselbe
 /// Werk wiederfindet. Was fehlt, sagt es — und lässt sich von hier aus
 /// nachholen.
+/// Whether this show's new episodes are fetched on their own.
+class _PodcastSubscriptionSwitch extends StatelessWidget {
+  const _PodcastSubscriptionSwitch({required this.work});
+
+  final WorkView work;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final vault = scope.library.library;
+    final theme = Theme.of(context);
+    if (vault == null) return const SizedBox.shrink();
+    final subscription = vault
+        .podcastSubscriptions()
+        .where((entry) => entry.workId == work.id)
+        .firstOrNull;
+    final checked = subscription?.lastCheckedAt;
+    final note = subscription == null
+        ? 'Neue Folgen landen dann von selbst in diesem Ordner.'
+        : subscription.lastError ??
+              (checked == null
+                  ? 'Wird beim nächsten Abgleich geprüft.'
+                  : 'Zuletzt geprüft ${_External._ago(checked)}.');
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Neue Folgen automatisch laden'),
+      subtitle: Text(
+        note,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: subscription?.lastError == null
+              ? context.fundus.textFaint
+              : context.fundus.danger,
+        ),
+      ),
+      value: subscription != null,
+      onChanged: vault.isReadOnly
+          ? null
+          : (value) {
+              try {
+                if (value) {
+                  vault.subscribePodcast(work.id);
+                  unawaited(scope.podcasts.checkNow());
+                } else {
+                  vault.unsubscribePodcast(work.id);
+                }
+              } on FormatException catch (error) {
+                ScaffoldMessenger.maybeOf(
+                  context,
+                )?.showSnackBar(SnackBar(content: Text(error.message)));
+              }
+              scope.library.refreshWork(work.id);
+            },
+    );
+  }
+}
+
 class _External extends StatelessWidget {
   const _External({required this.work, required this.centred});
 

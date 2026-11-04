@@ -13,6 +13,7 @@ export 'src/library/fundus_library.dart';
 export 'src/library/remote_catalogue.dart';
 export 'src/library/work_annotations.dart';
 export 'src/model/device_profile.dart';
+export 'src/model/podcast_subscription.dart';
 export 'src/model/usage_summary.dart';
 export 'src/model/content_updates.dart';
 export 'src/model/offline_plan.dart';

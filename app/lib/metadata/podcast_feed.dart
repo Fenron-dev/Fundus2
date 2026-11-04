@@ -12,11 +12,26 @@ final class FeedEpisode {
     this.description,
     this.publishedAt,
     this.fileName,
+    this.enclosureUrl,
+    this.enclosureType,
+    this.enclosureBytes,
+    this.guid,
   });
 
   final String title;
   final String? description;
   final DateTime? publishedAt;
+
+  /// Where the episode's file is, as the feed says.
+  final Uri? enclosureUrl;
+  final String? enclosureType;
+  final int? enclosureBytes;
+
+  /// The feed's own name for the episode; stable where the title is not.
+  final String? guid;
+
+  /// What identifies this episode across checks.
+  String get identity => guid ?? enclosureUrl?.toString() ?? title;
 
   /// The file name the enclosure points at, where there is one. It is the
   /// surest way to match an entry to a file on disk — surer than the title,
@@ -73,6 +88,16 @@ List<FeedEpisode> parseFeed(String body) {
         ),
         publishedAt: _date(_text(item, 'pubDate')),
         fileName: _enclosureName(item),
+        enclosureUrl: _enclosureUrl(item),
+        enclosureType: item
+            .findElements('enclosure')
+            .firstOrNull
+            ?.getAttribute('type'),
+        enclosureBytes: int.tryParse(
+          item.findElements('enclosure').firstOrNull?.getAttribute('length') ??
+              '',
+        ),
+        guid: _text(item, 'guid'),
       ),
     );
   }
@@ -83,6 +108,11 @@ String? _text(XmlElement item, String name) {
   final element = item.findElements(name).firstOrNull;
   final value = element?.innerText.trim();
   return value == null || value.isEmpty ? null : value;
+}
+
+Uri? _enclosureUrl(XmlElement item) {
+  final url = item.findElements('enclosure').firstOrNull?.getAttribute('url');
+  return url == null ? null : Uri.tryParse(url.trim());
 }
 
 String? _enclosureName(XmlElement item) {

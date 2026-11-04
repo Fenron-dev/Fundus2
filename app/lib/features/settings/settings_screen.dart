@@ -1465,6 +1465,7 @@ class _Playback extends StatelessWidget {
           ),
         ),
         const _LanguageCard(),
+        const _PodcastSubscriptionsCard(),
         SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2433,6 +2434,83 @@ class _MetadataState extends State<_Metadata> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The podcasts that fetch their new episodes, and a way to ask right now.
+class _PodcastSubscriptionsCard extends StatelessWidget {
+  const _PodcastSubscriptionsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    final subscriptions =
+        scope.library.library?.podcastSubscriptions() ?? const [];
+    final report = scope.podcasts.lastReport;
+    return SettingsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Podcast-Abos', style: theme.textTheme.titleMedium),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            subscriptions.isEmpty
+                ? 'Noch kein Podcast abonniert. Das geht in einem '
+                      'Podcast-Werk mit Feed: „Neue Folgen automatisch laden".'
+                : 'Alle sechs Stunden sieht Fundus in den Feeds nach und legt '
+                      'neue Folgen in den Ordner des Podcasts — auf dem '
+                      'Telefon nur im WLAN.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          for (final subscription in subscriptions)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(subscription.title),
+              subtitle: Text(
+                subscription.lastError ??
+                    (subscription.lastCheckedAt == null
+                        ? 'noch nicht geprüft'
+                        : 'geprüft ${_Sharing._moment(subscription.lastCheckedAt!)}'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: subscription.lastError == null
+                      ? tokens.textFaint
+                      : tokens.danger,
+                ),
+              ),
+            ),
+          if (subscriptions.isNotEmpty) ...[
+            const SizedBox(height: FundusSpace.x2),
+            Row(
+              children: [
+                OutlinedButton(
+                  onPressed: scope.podcasts.isChecking
+                      ? null
+                      : () => scope.podcasts.checkNow(),
+                  child: Text(
+                    scope.podcasts.isChecking ? 'Prüft …' : 'Jetzt prüfen',
+                  ),
+                ),
+                const SizedBox(width: FundusSpace.x3),
+                if (report != null)
+                  Expanded(
+                    child: Text(
+                      report.skippedReason ??
+                          '${report.downloaded} neue Folgen'
+                              '${report.failed > 0 ? ', ${report.failed} Feeds nicht erreichbar' : ''}.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

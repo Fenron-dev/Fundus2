@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../data/library_controller.dart';
+import '../data/podcast_subscriptions.dart';
 import '../data/server_host.dart';
 import '../data/peer_connection.dart';
 import '../data/download_controller.dart';
@@ -210,6 +211,10 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     library: library,
     downloads: downloads,
   );
+
+  /// New episodes of subscribed podcasts, fetched into their folders.
+  late final PodcastSubscriptionController podcasts =
+      PodcastSubscriptionController(library: library);
   int _revision = 0;
 
   AppSettings get settings => widget.settings;
@@ -233,6 +238,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     super.initState();
     shakeSleepTimer;
     usage.attach();
+    podcasts.addListener(_bump);
+    podcasts.start();
     navigation.addListener(_bump);
     settings.addListener(_bump);
     settings.addListener(_syncDeviceName);
@@ -725,6 +732,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     offline.removeListener(_bump);
     sync.onCheckpointsConfirmed = null;
     offline.dispose();
+    podcasts.removeListener(_bump);
+    podcasts.dispose();
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);
     player.isPrivateWork = null;
