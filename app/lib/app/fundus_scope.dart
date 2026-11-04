@@ -247,6 +247,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     fullscreen.addListener(_bump);
     sync.addListener(_bump);
     host.addListener(_bump);
+    host.addListener(_offerPairingNotice);
     // Additional server libraries are remembered independently from the
     // active vault. On sandboxed Apple platforms each one still needs its
     // security-scoped bookmark restored before the server opens it.
@@ -321,6 +322,48 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   final Set<String> _offeredMetadataConflicts = {};
   String _conflictKey(MetadataImportConflict conflict) =>
       jsonEncode(conflict.toJson());
+
+  bool _pairingNoticeOpen = false;
+
+  /// Says so when a device has just been paired with this machine, and
+  /// offers to take its access back at once.
+  void _offerPairingNotice() {
+    if (!mounted || _pairingNoticeOpen || host.newlyPaired.isEmpty) return;
+    _pairingNoticeOpen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final devices = host.newlyPaired;
+      host.acknowledgePairings();
+      try {
+        for (final device in devices) {
+          if (!mounted) return;
+          final revoke = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Neues Gerät gekoppelt'),
+              content: Text(
+                '„${device.name}“ hat sich eben mit diesem Rechner gekoppelt '
+                'und kann jetzt auf die freigegebenen Bibliotheken zugreifen. '
+                'Warst du das nicht, entziehe den Zugang gleich hier.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Zugang entziehen'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('In Ordnung'),
+                ),
+              ],
+            ),
+          );
+          if (revoke == true) await host.revoke(device.id);
+        }
+      } finally {
+        _pairingNoticeOpen = false;
+      }
+    });
+  }
 
   void _offerMetadataConflict() {
     if (!mounted ||
@@ -676,6 +719,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     fullscreen.removeListener(_bump);
     sync.removeListener(_bump);
     host.removeListener(_bump);
+    host.removeListener(_offerPairingNotice);
     peerLibraries.removeListener(_bump);
     downloads.removeListener(_bump);
     offline.removeListener(_bump);

@@ -4182,6 +4182,43 @@ class _Sharing extends StatelessWidget {
             for (final device in host.pairedDevices)
               _PairedDeviceAccessTile(device: device, host: host),
           ],
+          if (host.unpairedForInactivity.isNotEmpty) ...[
+            const SizedBox(height: FundusSpace.x2),
+            Text(
+              'Automatisch entkoppelt, weil lange nicht verbunden: '
+              '${host.unpairedForInactivity.map((device) => device.name).join(', ')}.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: tokens.textMuted,
+              ),
+            ),
+          ],
+          const SizedBox(height: FundusSpace.x4),
+          Text(
+            'Unbenutzte Geräte entkoppeln',
+            style: theme.textTheme.labelLarge,
+          ),
+          const SizedBox(height: FundusSpace.x1),
+          Text(
+            'Ein verkauftes oder verlorenes Telefon behält seinen Zugang '
+            'sonst für immer. Nach der gewählten Zeit ohne Verbindung muss '
+            'es neu gekoppelt werden.',
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.textFaint),
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          Wrap(
+            spacing: FundusSpace.x2,
+            runSpacing: FundusSpace.x2,
+            children: [
+              for (final days in const [0, 30, 90, 180, 365])
+                ChoiceChip(
+                  selected:
+                      FundusScope.of(context).settings.autoUnpairDays == days,
+                  onSelected: (_) =>
+                      FundusScope.of(context).settings.setAutoUnpairDays(days),
+                  label: Text(days == 0 ? 'Nie' : 'nach $days Tagen'),
+                ),
+            ],
+          ),
         ],
       ),
     );

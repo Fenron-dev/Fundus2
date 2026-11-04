@@ -106,12 +106,18 @@ final class FundusPairingAuthority {
   FundusPairingAuthority({
     Iterable<FundusPairedDevice> devices = const [],
     this.onChanged,
+    this.onPaired,
     Random? random,
   }) : _random = random ?? Random.secure(),
        _devices = {for (final device in devices) device.id: device};
 
   final Random _random;
   final PairedDevicesChanged? onChanged;
+
+  /// Told about every device that has just been paired, so whoever sits at
+  /// this machine hears about it — a pairing nobody noticed is the one that
+  /// should not have happened.
+  final void Function(FundusPairedDevice device)? onPaired;
   final Map<String, FundusPairedDevice> _devices;
   FundusPairingSession? _session;
   int _failedAttempts = 0;
@@ -207,6 +213,7 @@ final class FundusPairingAuthority {
     _devices[device.id] = device;
     cancel();
     await _notifyChanged();
+    onPaired?.call(device);
     return FundusPairingResult(device: device, token: token);
   }
 
@@ -248,6 +255,28 @@ final class FundusPairingAuthority {
 
   Future<void> revoke(String deviceId) async {
     if (_devices.remove(deviceId) != null) await _notifyChanged();
+  }
+
+  /// Unpairs every device that has not been heard from for [unused].
+  ///
+  /// A phone that was sold or lost keeps a valid token forever otherwise.
+  /// Returns the devices taken off.
+  Future<List<FundusPairedDevice>> revokeInactive(
+    Duration unused, {
+    DateTime? now,
+  }) async {
+    final limit = (now ?? DateTime.now()).toUtc().subtract(unused);
+    final stale = [
+      for (final device in _devices.values)
+        if ((device.lastSeenAt ?? device.pairedAt).toUtc().isBefore(limit))
+          device,
+    ];
+    if (stale.isEmpty) return const [];
+    for (final device in stale) {
+      _devices.remove(device.id);
+    }
+    await _notifyChanged();
+    return stale;
   }
 
   Future<void> rename(String deviceId, String name) async {

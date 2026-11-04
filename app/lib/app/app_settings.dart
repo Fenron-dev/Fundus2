@@ -484,6 +484,16 @@ class AppSettings extends ChangeNotifier {
     return 0;
   }
 
+  /// After how many days without a request a paired device is unpaired; 0
+  /// keeps every pairing until somebody revokes it.
+  int get autoUnpairDays {
+    final value = _values['auto_unpair_days'];
+    return value is num ? value.toInt().clamp(0, 3650) : 0;
+  }
+
+  Future<void> setAutoUnpairDays(int days) =>
+      _set('auto_unpair_days', days.clamp(0, 3650));
+
   /// Whether the small progress/annotation exchange runs when the app starts.
   /// This never triggers a filesystem scan.
   bool get syncProgressOnStartup =>

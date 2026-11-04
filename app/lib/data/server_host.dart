@@ -113,6 +113,43 @@ class ServerHostController extends ChangeNotifier {
   Uri? get address => _address;
 
   FundusPairingSession? get pairingSession => _pairing?.activeSession;
+
+  /// Devices paired since somebody last looked, for the notice that says so.
+  List<FundusPairedDevice> get newlyPaired => _newlyPaired;
+  List<FundusPairedDevice> _newlyPaired = const [];
+
+  void acknowledgePairings() {
+    if (_newlyPaired.isEmpty) return;
+    _newlyPaired = const [];
+    notifyListeners();
+  }
+
+  /// What the last automatic unpairing took off, for the device list.
+  List<FundusPairedDevice> get unpairedForInactivity => _unpairedForInactivity;
+  List<FundusPairedDevice> _unpairedForInactivity = const [];
+  DateTime? _lastInactiveCheck;
+
+  /// Unpairs devices unused for longer than the setting allows. Checked when
+  /// sharing starts and at most once a day after that.
+  Future<void> _revokeInactive() async {
+    final days = settings.autoUnpairDays;
+    final pairing = _pairing;
+    if (days <= 0 || pairing == null) return;
+    final now = DateTime.now();
+    final last = _lastInactiveCheck;
+    if (last != null && now.difference(last) < const Duration(days: 1)) {
+      return;
+    }
+    _lastInactiveCheck = now;
+    final removed = await pairing.revokeInactive(Duration(days: days));
+    if (removed.isEmpty) return;
+    _unpairedForInactivity = removed;
+    FundusLog.instance.info('pairing.revoked_inactive', {
+      'count': removed.length,
+    });
+    if (!_disposed) notifyListeners();
+  }
+
   List<FundusPairedDevice> get pairedDevices => _pairing?.devices ?? const [];
   List<ServerLibraryStatus> get libraries => List.unmodifiable(_libraries);
   @visibleForTesting
@@ -302,10 +339,11 @@ class ServerHostController extends ChangeNotifier {
         await _releaseRegistry();
         return;
       }
-      _presenceTick ??= Timer.periodic(
-        const Duration(seconds: 15),
-        (_) => unawaited(checkHealth()),
-      );
+      _presenceTick ??= Timer.periodic(const Duration(seconds: 15), (_) {
+        unawaited(checkHealth());
+        // Guarded to once a day inside.
+        unawaited(_revokeInactive());
+      });
     } on Object catch (error) {
       await _closeSocket();
       await _releaseRegistry();
@@ -849,7 +887,13 @@ class ServerHostController extends ChangeNotifier {
         await store.savePairedDevices(devices);
         if (!_disposed) notifyListeners();
       },
+      onPaired: (device) {
+        _newlyPaired = [..._newlyPaired, device];
+        FundusLog.instance.info('pairing.paired', {'device': device.id});
+        if (!_disposed) notifyListeners();
+      },
     );
+    await _revokeInactive();
     return identity;
   }
 
