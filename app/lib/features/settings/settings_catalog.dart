@@ -45,6 +45,12 @@ abstract final class SettingsAreas {
       description: 'Leserichtung, Doppelseiten, Schriftgröße.',
     ),
     SettingsArea(
+      key: 'statistik',
+      label: 'Statistik & Jahresrückblick',
+      icon: FundusIcons.activity,
+      description: 'Wie viel Zeit mit welchen Werken, Jahr für Jahr.',
+    ),
+    SettingsArea(
       key: 'bibliotheken',
       label: 'Bibliotheken',
       icon: FundusIcons.vault,

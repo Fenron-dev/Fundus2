@@ -32,6 +32,7 @@ import '../media/reader_controller.dart';
 import '../media/shake_sleep_timer_controller.dart';
 import '../media/text_reader_controller.dart';
 import '../media/text_speech_controller.dart';
+import '../media/usage_recorder.dart';
 import '../media/speech_model_controller.dart';
 import '../features/work/progress_choice_sheet.dart';
 import '../features/library/metadata_import_conflict_dialog.dart';
@@ -157,6 +158,15 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   );
   late final ShakeSleepTimerController shakeSleepTimer =
       ShakeSleepTimerController(player);
+
+  /// Listening, watching and reading time for the statistics; local only.
+  late final UsageRecorder usage = UsageRecorder(
+    player: player,
+    reader: reader,
+    textReader: textReader,
+    library: () => library.library,
+    deviceId: settings.deviceKey,
+  );
   late final SpeechModelController speechModels = SpeechModelController(
     settings: settings,
     servers: () {
@@ -222,6 +232,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     shakeSleepTimer;
+    usage.attach();
     navigation.addListener(_bump);
     settings.addListener(_bump);
     settings.addListener(_syncDeviceName);
@@ -463,6 +474,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // wechselt — und ein Stand, der erst beim Schließen loszieht, ist
       // genau dann nie losgezogen. Deshalb geht er hier.
       _pushOpenWork();
+      usage.flush(partial: true);
       player.saveProgress(checkpoint: true);
       if (reader.isOpen) reader.saveProgress(checkpoint: true);
       if (textReader.isOpen) textReader.saveProgress(checkpoint: true);
@@ -645,6 +657,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    usage.detach();
     WidgetsBinding.instance.removeObserver(this);
     _stopCatchingUp();
     _stopLibraryScanTimer();

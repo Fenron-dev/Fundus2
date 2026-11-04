@@ -99,3 +99,12 @@ abstract final class FundusSpeechMetrics {
   static const settingsHeight = 720.0;
   static const transportWidth = 720.0;
 }
+
+/// Sizes of the small charts in the statistics.
+abstract final class FundusChartMetrics {
+  /// Height of the twelve monthly bars of a year.
+  static const monthBarsHeight = 120.0;
+
+  /// Thickness of a horizontal share bar.
+  static const shareBarHeight = 6.0;
+}

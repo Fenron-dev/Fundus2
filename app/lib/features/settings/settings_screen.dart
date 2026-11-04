@@ -36,6 +36,7 @@ import 'settings_catalog.dart';
 import 'maintenance_page.dart';
 import 'settings_shell.dart';
 import 'speech_settings_page.dart';
+import 'statistics_page.dart';
 import '../library/metadata_import_conflict_dialog.dart';
 
 /// Settings, with the scope of each one visible.
@@ -66,6 +67,7 @@ class SettingsScreen extends StatelessWidget {
       'synchronisation' => const _Sync(),
       'schutz' => const _Protection(),
       'diagnose' => const _Diagnostics(),
+      'statistik' => const StatisticsPage(),
       _ => _Unknown(category: category!),
     };
   }

@@ -8,6 +8,7 @@ import '../import/document_importer.dart';
 import '../library/remote_catalogue.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
+import '../model/usage_summary.dart';
 import '../model/content_updates.dart';
 import '../model/library_playlist.dart';
 import '../model/library_source.dart';
@@ -2556,6 +2557,106 @@ final class FundusDatabase {
     _database.execute(
       'UPDATE files SET publication_manifest_json = ? WHERE id = ?',
       [jsonEncode(manifest.toJson()), fileId],
+    );
+  }
+
+  /// Writes down one stretch of listening, watching or reading.
+  void recordPlayEvent({
+    required String workId,
+    required DateTime startedAt,
+    required DateTime endedAt,
+    required int secondsPlayed,
+    required String deviceId,
+    String userId = 'default',
+  }) {
+    if (!tableExists('play_events') || secondsPlayed <= 0) return;
+    _database.execute(
+      'INSERT INTO play_events (id, work_id, started_at, ended_at, '
+      'seconds_played, device_id, user_id) '
+      'SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS '
+      '(SELECT 1 FROM works WHERE id = ?)',
+      [
+        FundusId.generate(),
+        workId,
+        startedAt.millisecondsSinceEpoch,
+        endedAt.millisecondsSinceEpoch,
+        secondsPlayed,
+        deviceId,
+        userId,
+        workId,
+      ],
+    );
+  }
+
+  /// Adds up the play events between [from] and [until].
+  UsageSummary usageSummary({
+    required DateTime from,
+    required DateTime until,
+    Set<String> excludedWorkIds = const {},
+    int topCount = 10,
+    String userId = 'default',
+  }) {
+    if (!tableExists('play_events')) {
+      return UsageSummary(from: from, until: until);
+    }
+    final rows = _database.select(
+      '''
+      SELECT e.work_id, e.started_at, e.seconds_played, w.title, w.kind
+      FROM play_events e JOIN works w ON w.id = e.work_id
+      WHERE e.user_id = ? AND e.started_at >= ? AND e.started_at < ?
+      ''',
+      [userId, from.millisecondsSinceEpoch, until.millisecondsSinceEpoch],
+    );
+    var total = 0;
+    final byKind = <String, int>{};
+    final byMonth = <int, int>{};
+    final byWork = <String, ({String title, String kind, int seconds})>{};
+    final days = <DateTime>{};
+    for (final row in rows) {
+      final workId = row['work_id'] as String;
+      if (excludedWorkIds.contains(workId)) continue;
+      final seconds = (row['seconds_played'] as num).toInt();
+      final started = DateTime.fromMillisecondsSinceEpoch(
+        row['started_at'] as int,
+      );
+      final kind = row['kind'] as String? ?? '';
+      total += seconds;
+      byKind[kind] = (byKind[kind] ?? 0) + seconds;
+      byMonth[started.month] = (byMonth[started.month] ?? 0) + seconds;
+      final previous = byWork[workId];
+      byWork[workId] = (
+        title: row['title'] as String? ?? '',
+        kind: kind,
+        seconds: (previous?.seconds ?? 0) + seconds,
+      );
+      days.add(DateTime(started.year, started.month, started.day));
+    }
+    final top = byWork.entries.toList()
+      ..sort((a, b) => b.value.seconds.compareTo(a.value.seconds));
+    final finished = _database.select(
+      'SELECT work_id FROM progress WHERE user_id = ? AND finished = 1 '
+      'AND updated_at >= ? AND updated_at < ?',
+      [userId, from.millisecondsSinceEpoch, until.millisecondsSinceEpoch],
+    );
+    return UsageSummary(
+      from: from,
+      until: until,
+      totalSeconds: total,
+      secondsByKind: byKind,
+      secondsByMonth: byMonth,
+      topWorks: [
+        for (final entry in top.take(topCount))
+          (
+            workId: entry.key,
+            title: entry.value.title,
+            kind: entry.value.kind,
+            seconds: entry.value.seconds,
+          ),
+      ],
+      activeDays: days,
+      finishedWorks: finished
+          .where((row) => !excludedWorkIds.contains(row['work_id']))
+          .length,
     );
   }
 

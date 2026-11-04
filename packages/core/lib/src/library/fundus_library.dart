@@ -19,6 +19,7 @@ import '../import/media_areas.dart';
 import '../import/mediavault_metadata.dart';
 import '../import/plex_library.dart';
 import '../import/sidecar_metadata.dart';
+import '../model/usage_summary.dart';
 import '../model/device_profile.dart';
 import '../model/fundus_id.dart';
 import '../model/content_updates.dart';
@@ -1720,6 +1721,37 @@ final class FundusLibrary {
   /// The work a subtitle file belongs to.
   String? workIdForSubtitle(String fileId) =>
       _database.workIdForSubtitle(fileId);
+
+  /// Writes down a stretch of listening, watching or reading on this device.
+  ///
+  /// Kept in the index only: it says when somebody was at what, which is
+  /// nobody else's business, so it is neither synced nor written to sidecars.
+  void recordPlayEvent({
+    required String workId,
+    required DateTime startedAt,
+    required DateTime endedAt,
+    required int secondsPlayed,
+    required String deviceId,
+  }) {
+    if (isReadOnly) return;
+    _database.recordPlayEvent(
+      workId: workId,
+      startedAt: startedAt,
+      endedAt: endedAt,
+      secondsPlayed: secondsPlayed,
+      deviceId: deviceId,
+    );
+  }
+
+  UsageSummary usageSummary({
+    required DateTime from,
+    required DateTime until,
+    Set<String> excludedWorkIds = const {},
+  }) => _database.usageSummary(
+    from: from,
+    until: until,
+    excludedWorkIds: excludedWorkIds,
+  );
 
   /// Files that travel with a work's content without being content: its
   /// subtitles. Same shape as [contentFiles], so an offline copy is fetched
