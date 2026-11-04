@@ -85,6 +85,10 @@ class AppSettings extends ChangeNotifier {
   Future<void> _persistQueue = Future<void>.value();
   bool _secureStorageAvailable = true;
   final Map<String, String> _storedSensitiveValues = {};
+
+  /// Credentials that were still in plain text in the file when it was read.
+  /// They stay there, untouched, until the keychain has taken them over.
+  final Map<String, Object?> _plainSensitiveOnDisk = {};
   bool get secureStorageAvailable => _secureStorageAvailable;
   Map<String, Object?> _values;
 
@@ -117,6 +121,10 @@ class AppSettings extends ChangeNotifier {
       }
     }
     final secureStorage = storage ?? const FlutterSecureStorage();
+    final plainOnDisk = {
+      for (final key in _sensitiveKeys)
+        if (values.containsKey(key)) key: values[key],
+    };
     var hadPlainSensitiveValues = false;
     var secureReadsSucceeded = true;
     final secured = <String, String>{};
@@ -138,6 +146,7 @@ class AppSettings extends ChangeNotifier {
     final settings = AppSettings._(file, values, secureStorage: secureStorage);
     settings._secureStorageAvailable = secureReadsSucceeded;
     settings._storedSensitiveValues.addAll(secured);
+    settings._plainSensitiveOnDisk.addAll(plainOnDisk);
     if (hadPlainSensitiveValues) await settings._persist();
     if (settings.deviceKey.isEmpty) {
       settings._values['device_key'] = _generateKey();
@@ -985,19 +994,18 @@ class AppSettings extends ChangeNotifier {
         _secureStorageAvailable = storedSecurely;
         notifyListeners();
       }
-      // Keep legacy files until successful migration; never erase pairings
-      // merely because the keychain is temporarily unavailable.
-      if (!storedSecurely) return;
       await _file.parent.create(recursive: true);
       final partial = File('${_file.path}.part');
-      final persisted = Map<String, Object?>.from(snapshot);
-      if (storedSecurely) {
-        for (final key in _sensitiveKeys) {
-          persisted.remove(key);
-        }
-      }
+      // Ordinary preferences are written either way; only credentials depend
+      // on the keychain. Without it they stay in memory for this session,
+      // and whatever the file still held in plain text stays exactly as it
+      // was: never erased because the keychain is down, never extended.
+      final persisted = Map<String, Object?>.from(snapshot)
+        ..removeWhere((key, _) => _sensitiveKeys.contains(key));
+      if (!storedSecurely) persisted.addAll(_plainSensitiveOnDisk);
       await partial.writeAsString(jsonEncode(persisted), flush: true);
       await partial.rename(_file.path);
+      if (storedSecurely) _plainSensitiveOnDisk.clear();
       if (!Platform.isWindows) {
         // Preferences still reveal paths and device names. Credentials live
         // exclusively in the platform store after successful migration.

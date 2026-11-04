@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:fundus_design/fundus_design.dart';
 
 import '../../app/app_navigation.dart';
+import '../../app/file_manager.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/library_controller.dart';
 import '../../data/peer_connection.dart';
@@ -354,7 +355,7 @@ class _FailureNotice extends StatelessWidget {
     );
   }
 
-  static bool get _canReveal => Platform.isMacOS || Platform.isWindows;
+  static bool get _canReveal => canRevealInFileManager;
 
   /// Asks the system to open the folder, which is what mounts a share.
   ///
@@ -362,11 +363,7 @@ class _FailureNotice extends StatelessWidget {
   /// already has the message does not need a second one saying the offer did
   /// not work either.
   static Future<void> _reveal(String path) async {
-    try {
-      await Process.run(Platform.isWindows ? 'explorer' : 'open', [path]);
-    } on Object {
-      // Nothing to add.
-    }
+    await revealInFileManager(path);
   }
 }
 

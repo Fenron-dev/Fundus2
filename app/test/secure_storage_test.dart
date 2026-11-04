@@ -79,6 +79,33 @@ void main() {
     },
   );
   test(
+    'without the keychain ordinary settings are still saved, credentials not',
+    () async {
+      storage.failWrites = true;
+      final settings = await AppSettings.load(
+        settingsFile: file,
+        storage: storage,
+      );
+      await settings.setTmdbKey('session-only');
+      await settings.setNavigationCollapsed(true);
+      expect(settings.secureStorageAvailable, isFalse);
+
+      final saved = jsonDecode(await file.readAsString()) as Map;
+      expect(saved['navigation_collapsed'], isTrue);
+      // The legacy value stays where it was; the new one is never written.
+      expect(saved['tmdb_key'], 'legacy-secret');
+      expect(await file.readAsString(), isNot(contains('session-only')));
+
+      // Once the keychain works again the credential moves there and the
+      // plain-text copy disappears.
+      storage.failWrites = false;
+      await settings.setNavigationCollapsed(false);
+      expect(storage.values['tmdb_key'], jsonEncode('session-only'));
+      expect(await file.readAsString(), isNot(contains('legacy-secret')));
+      expect(await file.readAsString(), isNot(contains('session-only')));
+    },
+  );
+  test(
     'server key migration retains certificate and pairing identity',
     () async {
       final directory = Directory('${root.path}/server');

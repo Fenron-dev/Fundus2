@@ -7,6 +7,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../app/file_manager.dart';
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
 import '../../data/download_controller.dart';
@@ -744,7 +745,7 @@ class _LocationButton extends StatelessWidget {
     if (library == null ||
         work.summary.sourcePath.isEmpty ||
         MediaQuery.sizeOf(context).width < 700 ||
-        !(Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+        !canRevealInFileManager) {
       return const SizedBox.shrink();
     }
     return OutlinedButton.icon(
@@ -762,11 +763,8 @@ class _LocationButton extends StatelessWidget {
     // folder opened by the OS is the actual work directory.
     final path = library.workDirectoryPath(workId);
     if (path == null || path.isEmpty) return;
-    try {
-      await Process.run(Platform.isWindows ? 'explorer' : 'open', [path]);
-    } on Object {
-      // A disconnected network mount is already reflected by the work state.
-    }
+    // A disconnected network mount is already reflected by the work state.
+    await revealInFileManager(path);
   }
 }
 

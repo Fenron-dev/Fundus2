@@ -1038,7 +1038,7 @@ class _Diagnostics extends StatelessWidget {
                 'Sicherer Speicher',
                 scope.settings.secureStorageAvailable
                     ? 'verfügbar'
-                    : 'Nicht verfügbar – neue Zugangsdaten bleiben nur für diese Sitzung erhalten. Bitte den Betriebssystem-Schlüsselspeicher prüfen.',
+                    : 'Nicht verfügbar – Kopplungen, API-Schlüssel und die Schutz-PIN gelten nur für diese Sitzung; die übrigen Einstellungen werden gespeichert. Bitte den Schlüsselspeicher des Betriebssystems prüfen.',
               ),
               SettingsFact(
                 'Portable Sicherung',
