@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/work_view.dart';
+import 'package:fundus/media/media_byte_source.dart';
 import 'package:fundus/media/playback_controller.dart';
 import 'package:fundus/media/playback_preference.dart';
 import 'package:fundus/media/playback_engine.dart';
@@ -65,10 +66,17 @@ final class FakeEngine implements PlaybackEngine {
   @override
   Stream<MediaTracks> get tracksStream => _tracks.stream;
 
+  final List<List<ExternalSubtitle>> subtitlesOpened = [];
+
   @override
-  Future<void> open(Uri uri, {Duration start = Duration.zero}) async {
+  Future<void> open(
+    Uri uri, {
+    Duration start = Duration.zero,
+    List<ExternalSubtitle> subtitles = const [],
+  }) async {
     opened.add(uri);
     starts.add(start);
+    subtitlesOpened.add(subtitles);
     await onOpen?.call();
   }
 
@@ -169,6 +177,25 @@ void main() {
     expect(controller.sources, hasLength(2));
     expect(engine.opened, hasLength(1));
     expect(engine.playing, isTrue);
+  });
+
+  test('Untertiteldateien neben einem Film gehen an die Engine', () async {
+    final film = Directory('${root.path}/Filme/Nordwind')
+      ..createSync(recursive: true);
+    File('${film.path}/Nordwind.mkv').writeAsBytesSync(List.filled(64, 1));
+    File('${film.path}/Nordwind.de.srt').writeAsStringSync('1\nHallo\n');
+    await library.index().drain<void>();
+    final summary = library.listWorks().firstWhere(
+      (entry) => entry.title == 'Nordwind',
+    );
+
+    await controller.open(library, WorkView.fromSummary(summary));
+
+    final subtitles = engine.subtitlesOpened.last;
+    expect(subtitles, hasLength(1));
+    expect(subtitles.single.language, 'de');
+    expect(subtitles.single.title, 'Deutsch (Datei)');
+    expect(subtitles.single.uri.toFilePath(), endsWith('Nordwind.de.srt'));
   });
 
   test('TTS-Segmente nutzen den Player ohne Buchstand als Zeitdatei', () async {

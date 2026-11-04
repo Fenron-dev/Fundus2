@@ -1405,6 +1405,15 @@ final class FundusDatabase {
         [workId, fileId, index, 'content'],
       );
     }
+    final subtitles = candidate.subtitleFiles;
+    for (var index = 0; index < subtitles.length; index++) {
+      final fileId = fileIds[subtitles[index].relativePath];
+      if (fileId == null) continue;
+      _database.execute(
+        'INSERT INTO work_files (work_id, file_id, position, role) VALUES (?, ?, ?, ?)',
+        [workId, fileId, index, 'subtitle'],
+      );
+    }
     final coverId = candidate.coverFile == null
         ? null
         : fileIds[candidate.coverFile!.relativePath];
@@ -2529,6 +2538,64 @@ final class FundusDatabase {
       'UPDATE files SET publication_manifest_json = ? WHERE id = ?',
       [jsonEncode(manifest.toJson()), fileId],
     );
+  }
+
+  /// The subtitle files of a work, wherever their bytes are.
+  List<
+    ({
+      String fileId,
+      String path,
+      String filename,
+      String sourceId,
+      String? offlinePath,
+      String availability,
+      int sizeBytes,
+      String contentRevision,
+    })
+  >
+  subtitleFiles(String workId) {
+    final rows = _database.select(
+      '''
+      SELECT f.id, f.path, f.filename, f.size, f.source_id, f.offline_path,
+             f.availability, f.file_modified_at, f.content_hash,
+             json_extract(w.metadata_json, '\$._remote_file_revisions') AS remote_revisions
+      FROM work_files wf
+      JOIN files f ON f.id = wf.file_id
+      JOIN works w ON w.id = wf.work_id
+      WHERE wf.work_id = ? AND wf.role = 'subtitle' AND f.status = 'available'
+        AND substr(f.filename, 1, 2) <> '._'
+      ORDER BY wf.position, f.filename COLLATE NOCASE
+      ''',
+      [workId],
+    );
+    final remoteRevisions = rows.isEmpty
+        ? const <String, Object?>{}
+        : _decodeRemoteRevisions(rows.first['remote_revisions']);
+    return [
+      for (final row in rows)
+        (
+          fileId: row['id'] as String,
+          path: row['path'] as String,
+          filename: row['filename'] as String,
+          sourceId: row['source_id'] as String? ?? localSourceId,
+          offlinePath: row['offline_path'] as String?,
+          availability: row['availability'] as String? ?? 'available',
+          sizeBytes: (row['size'] as num).toInt(),
+          contentRevision: row['source_id'] != localSourceId
+              ? remoteRevisions[row['id']] as String? ?? ''
+              : '${row['file_modified_at']}:${row['content_hash'] ?? ''}',
+        ),
+    ];
+  }
+
+  /// The work a subtitle file belongs to.
+  String? workIdForSubtitle(String fileId) {
+    final rows = _database.select(
+      "SELECT work_id FROM work_files WHERE file_id = ? AND role = 'subtitle' "
+      'LIMIT 1',
+      [fileId],
+    );
+    return rows.isEmpty ? null : rows.first['work_id'] as String;
   }
 
   /// Finds the owning work without scanning every work's track list.
@@ -4572,7 +4639,9 @@ final class FundusDatabase {
       if (work.id.trim().isEmpty) {
         throw ArgumentError.value(work.id, 'work.id', 'Darf nicht leer sein.');
       }
-      for (final file in work.files) {
+      for (final file in work.files.expand(
+        (file) => [file, ...file.subtitles],
+      )) {
         if (file.id.trim().isEmpty) {
           throw ArgumentError.value(
             file.id,
@@ -4603,7 +4672,9 @@ final class FundusDatabase {
           );
         }
       }
-      for (final file in work.files) {
+      for (final file in work.files.expand(
+        (file) => [file, ...file.subtitles],
+      )) {
         final fileRows = _database.select(
           'SELECT source_id FROM files WHERE id = ?',
           [file.id],
@@ -4665,7 +4736,11 @@ final class FundusDatabase {
       ...work.metadata,
       // An opaque remote change token is not a media content checksum.
       '_remote_file_revisions': {
-        for (final file in work.files) file.id: file.contentRevision,
+        for (final file in work.files) ...{
+          file.id: file.contentRevision,
+          for (final subtitle in file.subtitles)
+            subtitle.id: subtitle.contentRevision,
+        },
       },
       'remote_has_cover': work.hasCover,
       'title': work.title,
@@ -4706,45 +4781,55 @@ final class FundusDatabase {
     );
 
     _database.execute('DELETE FROM work_files WHERE work_id = ?', [work.id]);
+    void writeFile(RemoteFileRecord file) => _database.execute(
+      '''
+      INSERT INTO files (
+        id, source_id, path, filename, extension, size, mime_type,
+        duration_ms, availability, file_modified_at, indexed_at, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'remote', ?, ?, 'available')
+      ON CONFLICT(id) DO UPDATE SET
+        source_id = excluded.source_id,
+        path = excluded.path,
+        filename = excluded.filename,
+        extension = excluded.extension,
+        size = excluded.size,
+        mime_type = excluded.mime_type,
+        duration_ms = excluded.duration_ms,
+        availability = 'remote',
+        indexed_at = excluded.indexed_at,
+        status = 'available'
+      ''',
+      [
+        file.id,
+        sourceId,
+        // The extension belongs in the path: a reader decides by it
+        // whether a file is a comic, and `peer/3f9a` looks like nothing.
+        'peer/${file.id}${file.extension}',
+        file.filename,
+        file.extension,
+        file.sizeBytes,
+        file.mimeType,
+        file.durationMs,
+        0,
+        now,
+      ],
+    );
+    var subtitlePosition = 0;
     for (final file in work.files) {
-      _database.execute(
-        '''
-        INSERT INTO files (
-          id, source_id, path, filename, extension, size, mime_type,
-          duration_ms, availability, file_modified_at, indexed_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'remote', ?, ?, 'available')
-        ON CONFLICT(id) DO UPDATE SET
-          source_id = excluded.source_id,
-          path = excluded.path,
-          filename = excluded.filename,
-          extension = excluded.extension,
-          size = excluded.size,
-          mime_type = excluded.mime_type,
-          duration_ms = excluded.duration_ms,
-          availability = 'remote',
-          indexed_at = excluded.indexed_at,
-          status = 'available'
-        ''',
-        [
-          file.id,
-          sourceId,
-          // The extension belongs in the path: a reader decides by it
-          // whether a file is a comic, and `peer/3f9a` looks like nothing.
-          'peer/${file.id}${file.extension}',
-          file.filename,
-          file.extension,
-          file.sizeBytes,
-          file.mimeType,
-          file.durationMs,
-          0,
-          now,
-        ],
-      );
+      writeFile(file);
       _database.execute(
         'INSERT INTO work_files (work_id, file_id, position, role) '
         "VALUES (?, ?, ?, 'content')",
         [work.id, file.id, file.position],
       );
+      for (final subtitle in file.subtitles) {
+        writeFile(subtitle);
+        _database.execute(
+          'INSERT OR IGNORE INTO work_files (work_id, file_id, position, role) '
+          "VALUES (?, ?, ?, 'subtitle')",
+          [work.id, subtitle.id, subtitlePosition++],
+        );
+      }
     }
 
     _database.execute(

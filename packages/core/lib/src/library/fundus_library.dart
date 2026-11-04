@@ -35,6 +35,7 @@ import '../model/person_profile.dart';
 import '../model/work_property.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
+import '../playback/subtitles.dart';
 import 'remote_catalogue.dart';
 import 'metadata_image_store.dart';
 import '../publication/epub_package.dart';
@@ -1606,7 +1607,7 @@ final class FundusLibrary {
   }
 
   List<LibraryPlaybackTrack> playbackTracks(String workId) {
-    return _database
+    final tracks = _database
         .playbackTracks(workId)
         .map((track) {
           // A downloaded copy is a file like any other, and from here on it
@@ -1644,7 +1645,102 @@ final class FundusLibrary {
           );
         })
         .toList(growable: false);
+    final subtitleRows = _database.subtitleFiles(workId);
+    if (subtitleRows.isEmpty || tracks.isEmpty) return tracks;
+    final byId = {for (final row in subtitleRows) row.fileId: row};
+    final matched = matchSubtitles(
+      [
+        for (final track in tracks)
+          (fileId: track.fileId, filename: track.title),
+      ],
+      [
+        for (final row in subtitleRows)
+          (
+            fileId: row.fileId,
+            filename: row.filename,
+            relativePath: row.path,
+            sizeBytes: row.sizeBytes,
+            contentRevision: row.contentRevision,
+          ),
+      ],
+    );
+    return [
+      for (final track in tracks)
+        LibraryPlaybackTrack(
+          fileId: track.fileId,
+          relativePath: track.relativePath,
+          absolutePath: track.absolutePath,
+          sourceId: track.sourceId,
+          title: track.title,
+          index: track.index,
+          duration: track.duration,
+          audioMetadata: track.audioMetadata,
+          episode: track.episode,
+          sizeBytes: track.sizeBytes,
+          contentRevision: track.contentRevision,
+          subtitles: [
+            for (final subtitle in matched[track.fileId] ?? const [])
+              ?_locatedSubtitle(subtitle, byId[subtitle.fileId]!),
+          ],
+        ),
+    ];
   }
+
+  /// Where a subtitle's bytes are, by the same rules as a track's.
+  LibrarySubtitle? _locatedSubtitle(
+    LibrarySubtitle subtitle,
+    ({
+      String fileId,
+      String path,
+      String filename,
+      String sourceId,
+      String? offlinePath,
+      String availability,
+      int sizeBytes,
+      String contentRevision,
+    })
+    row,
+  ) {
+    final copy = row.offlinePath;
+    final remote = row.sourceId != FundusDatabase.localSourceId && copy == null;
+    final absolutePath =
+        copy ?? (remote ? '' : p.normalize(p.join(root.path, row.path)));
+    // A subtitle is never worth a path outside the vault.
+    if (!remote && copy == null && !p.isWithin(root.path, absolutePath)) {
+      return null;
+    }
+    return subtitle.withLocation(
+      absolutePath: absolutePath,
+      sourceId: remote ? row.sourceId : FundusDatabase.localSourceId,
+    );
+  }
+
+  /// The work a subtitle file belongs to.
+  String? workIdForSubtitle(String fileId) =>
+      _database.workIdForSubtitle(fileId);
+
+  /// Files that travel with a work's content without being content: its
+  /// subtitles. Same shape as [contentFiles], so an offline copy is fetched
+  /// and removed the same way.
+  List<
+    ({
+      String fileId,
+      String filename,
+      String? offlinePath,
+      String availability,
+      int sizeBytes,
+    })
+  >
+  companionFiles(String workId) => [
+    for (final row in _database.subtitleFiles(workId))
+      (
+        fileId: row.fileId,
+        filename: row.filename,
+        offlinePath: row.offlinePath,
+        availability: row.availability,
+        sizeBytes: row.sizeBytes,
+      ),
+  ];
 
   /// Resolves a file through the indexed relation instead of walking all
   /// works. The server uses this for every stream request.

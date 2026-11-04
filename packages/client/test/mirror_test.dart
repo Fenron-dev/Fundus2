@@ -138,6 +138,29 @@ void main() {
     );
   });
 
+  test('Untertitel eines Films kommen mit auf das Telefon', () async {
+    final film = Directory('${theirs.root.path}/Filme/Nordwind')
+      ..createSync(recursive: true);
+    File('${film.path}/Nordwind.mkv').writeAsBytesSync(List.filled(64, 1));
+    File('${film.path}/Nordwind.de.srt').writeAsStringSync('1\nHallo\n');
+    await for (final _ in theirs.index()) {}
+    await share();
+    registerPeer();
+    await mirror().run();
+
+    final work = mine.listWorks().firstWhere(
+      (work) => work.title == 'Nordwind',
+    );
+    final track = mine.playbackTracks(work.id).single;
+    final subtitle = track.subtitles.single;
+    expect(subtitle.isRemote, isTrue);
+    expect(subtitle.language, 'de');
+    expect(
+      subtitle.fileId,
+      theirs.playbackTracks(work.id).single.subtitles.single.fileId,
+    );
+  });
+
   test('ein zweiter Durchlauf verdoppelt nichts', () async {
     registerPeer();
     await mirror().run();

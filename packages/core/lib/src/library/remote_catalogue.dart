@@ -47,6 +47,7 @@ final class RemoteFileRecord {
     this.durationMs,
     this.mimeType,
     this.contentRevision = '',
+    this.subtitles = const [],
   });
 
   final String id;
@@ -57,6 +58,9 @@ final class RemoteFileRecord {
   final int? durationMs;
   final String? mimeType;
   final String contentRevision;
+
+  /// Subtitle files the other side keeps beside this one.
+  final List<RemoteFileRecord> subtitles;
 }
 
 /// What one pass of mirroring changed.

@@ -896,7 +896,7 @@ class PlaybackController extends ChangeNotifier {
     final uri = await source.resolve();
     if (cancelled()) return;
     span.step('resolved');
-    await _engine.open(uri, start: at);
+    await _engine.open(uri, start: at, subtitles: source.subtitles);
     span.done();
     if (cancelled()) return;
     _ended = false;

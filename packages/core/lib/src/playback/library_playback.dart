@@ -1,6 +1,7 @@
 import '../model/media_position.dart';
 import '../scan/audio_technical_metadata.dart';
 import '../video/video_metadata.dart';
+import 'subtitles.dart';
 
 final class LibraryPlaybackTrack {
   const LibraryPlaybackTrack({
@@ -15,6 +16,7 @@ final class LibraryPlaybackTrack {
     this.episode,
     this.sizeBytes = 0,
     this.contentRevision = '',
+    this.subtitles = const [],
   });
 
   final String fileId;
@@ -35,6 +37,9 @@ final class LibraryPlaybackTrack {
   final VideoEpisodeIdentity? episode;
   final int sizeBytes;
   final String contentRevision;
+
+  /// Subtitle files beside this one, matched by name.
+  final List<LibrarySubtitle> subtitles;
 }
 
 final class LibraryPlaybackChapter {

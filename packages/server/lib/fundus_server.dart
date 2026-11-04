@@ -105,6 +105,25 @@ final class SharedFundusLibrary {
     });
   }
 
+  /// A subtitle file of a work this library shares, with that work.
+  ({LibraryWorkSummary work, LibrarySubtitle subtitle})? findSubtitle(
+    String fileId,
+  ) {
+    _ensureFresh();
+    final workId = library.workIdForSubtitle(fileId);
+    if (workId == null) return null;
+    final work = _worksById[workId];
+    if (work == null) return null;
+    for (final track in tracksFor(workId)) {
+      for (final subtitle in track.subtitles) {
+        if (subtitle.fileId == fileId && !subtitle.isRemote) {
+          return (work: work, subtitle: subtitle);
+        }
+      }
+    }
+    return null;
+  }
+
   ({LibraryWorkSummary work, LibraryPlaybackTrack track})? findTrack(
     String fileId,
   ) {
@@ -758,7 +777,19 @@ final class FundusServerHandler {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
     final located = entry.findTrack(fileId);
-    if (located == null) return _notFound('file_not_found');
+    if (located == null) {
+      // A subtitle is served under the same rules as the video it belongs
+      // to: whoever may not see the work does not learn the file exists.
+      final subtitle = entry.findSubtitle(fileId);
+      if (subtitle == null || !_canViewWork(request, subtitle.work)) {
+        return _notFound('file_not_found');
+      }
+      return _serveFile(
+        request,
+        File(subtitle.subtitle.absolutePath),
+        resourceId: fileId,
+      );
+    }
     if (!_canViewWork(request, located.work)) {
       return _notFound('file_not_found');
     }
@@ -2147,6 +2178,16 @@ final class FundusServerHandler {
               'sample_rate_hz': track.audioMetadata!.sampleRateHz,
             },
       if (episode != null) 'episode': videoEpisodeToJson(episode),
+      if (track.subtitles.isNotEmpty)
+        'subtitles': [
+          for (final subtitle in track.subtitles)
+            {
+              'id': subtitle.fileId,
+              'title': subtitle.filename,
+              'size_bytes': subtitle.sizeBytes,
+              'content_revision': subtitle.contentRevision,
+            },
+        ],
     };
   }
 

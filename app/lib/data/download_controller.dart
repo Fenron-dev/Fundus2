@@ -8,6 +8,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:path/path.dart' as p;
 
+import '../app/fundus_log.dart';
 import '../media/peer_file_cache.dart';
 import 'library_controller.dart';
 import 'work_view.dart';
@@ -365,7 +366,11 @@ class DownloadController extends ChangeNotifier {
     final folder = Directory(p.join(root.path, source.libraryId));
     if (!identical(library.library, vault) || _disposed) return 0;
     var removed = 0;
-    for (final file in vault.contentFiles(workId)) {
+    for (final file in [
+      ...vault.contentFiles(workId),
+      // Subtitles go with their video; with `only` they stay unless named.
+      if (only == null) ...vault.companionFiles(workId),
+    ]) {
       if (!identical(library.library, vault) || _disposed) break;
       if (only != null && !only.contains(file.fileId)) continue;
       if (!(mayRemove?.call(file.fileId) ?? true)) continue;
@@ -649,6 +654,8 @@ class DownloadController extends ChangeNotifier {
       }
     }
 
+    await _fetchCompanions(vault, job.workId, cache, permitted, current);
+    if (!current()) return;
     _update(
       job.workId,
       (current) => current.copyWith(
@@ -667,4 +674,45 @@ class DownloadController extends ChangeNotifier {
     List<LibraryPlaybackTrack> tracks,
     String fileId,
   ) => tracks.firstWhere((track) => track.fileId == fileId);
+
+  /// Subtitles come along on a best-effort basis: a film without its
+  /// subtitle file still plays, so a failed one never fails the download.
+  Future<void> _fetchCompanions(
+    FundusLibrary vault,
+    String workId,
+    PeerFileCache cache,
+    Future<bool> Function() permitted,
+    bool Function() current,
+  ) async {
+    final subtitles = {
+      for (final track in vault.playbackTracks(workId))
+        for (final subtitle in track.subtitles)
+          if (subtitle.isRemote) subtitle.fileId: subtitle,
+    };
+    for (final subtitle in subtitles.values) {
+      if (!current()) return;
+      try {
+        final path = await cache.fileFor(
+          LibraryPlaybackTrack(
+            fileId: subtitle.fileId,
+            relativePath: subtitle.relativePath,
+            absolutePath: '',
+            sourceId: subtitle.sourceId,
+            title: subtitle.filename,
+            index: 0,
+            sizeBytes: subtitle.sizeBytes,
+            contentRevision: subtitle.contentRevision,
+          ),
+          mayTransfer: permitted,
+          maxBytes: subtitle.sizeBytes > 0 ? subtitle.sizeBytes : null,
+        );
+        if (!current()) return;
+        vault.setOfflineCopy(fileId: subtitle.fileId, path: path);
+      } on Object catch (error) {
+        FundusLog.instance.warn('offline.subtitle.failed', {
+          'error': error.runtimeType.toString(),
+        });
+      }
+    }
+  }
 }

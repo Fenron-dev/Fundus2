@@ -719,7 +719,15 @@ final class FundusRemoteClient {
     );
   }
 
-  static RemoteFileRecord _fileFrom(Map<String, Object?> value, int fallback) {
+  /// More than any real release carries; a catalogue is no place for a list
+  /// that grows without end.
+  static const _maxSubtitlesPerFile = 64;
+
+  static RemoteFileRecord _fileFrom(
+    Map<String, Object?> value,
+    int fallback, {
+    bool nested = false,
+  }) {
     final id = '${value['id'] ?? ''}';
     if (!FundusId.isSafe(id)) {
       throw const FormatException(
@@ -739,7 +747,24 @@ final class FundusRemoteClient {
       contentRevision: value['content_revision'] is String
           ? value['content_revision'] as String
           : '',
+      subtitles: [
+        if (value['subtitles'] case final List subtitles when !nested)
+          for (final (index, subtitle)
+              in subtitles.take(_maxSubtitlesPerFile).indexed)
+            if (subtitle case final Map entry)
+              ?_subtitleFrom(Map<String, Object?>.from(entry), index),
+      ],
     );
+  }
+
+  /// A subtitle that does not look like one is dropped, not trusted.
+  static RemoteFileRecord? _subtitleFrom(
+    Map<String, Object?> value,
+    int index,
+  ) {
+    final record = _fileFrom(value, index, nested: true);
+    final format = record.extension.replaceFirst('.', '');
+    return subtitleExtensions.contains(format) ? record : null;
   }
 
   /// Small structural metadata for explicitly followed publications. Never

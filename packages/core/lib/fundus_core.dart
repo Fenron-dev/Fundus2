@@ -30,6 +30,7 @@ export 'src/model/media_position.dart';
 export 'src/model/metadata_import_conflict.dart';
 export 'src/model/playback_session.dart';
 export 'src/playback/library_playback.dart';
+export 'src/playback/subtitles.dart';
 export 'src/publication/publication_engine.dart';
 export 'src/publication/epub_package.dart';
 export 'src/publication/publication_manifest.dart';

@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'media_areas.dart';
 import 'abs_importer.dart';
 import 'mediavault_metadata.dart';
+import '../playback/subtitles.dart';
 import '../scan/library_scanner.dart';
 
 final class DocumentImportCandidate {
@@ -49,9 +50,23 @@ final class DocumentImportCandidate {
         .where((file) => wanted.contains(file.extension))
         .toList(growable: false);
     // A folder with nothing of the expected type is still a work; showing
-    // what is in it beats showing nothing.
-    return matching.isEmpty ? files : matching;
+    // what is in it beats showing nothing. Its subtitles are not content.
+    if (matching.isNotEmpty) return matching;
+    return _videoKinds.contains(kind)
+        ? files
+              .where((file) => !subtitleExtensions.contains(file.extension))
+              .toList(growable: false)
+        : files;
   }
+
+  /// Subtitle files of a film or series, kept beside its videos.
+  List<ScannedFile> get subtitleFiles => _videoKinds.contains(kind)
+      ? files
+            .where((file) => subtitleExtensions.contains(file.extension))
+            .toList(growable: false)
+      : const [];
+
+  static const _videoKinds = {'movie', 'tv', 'anime'};
 
   // Die Schlüssel sind die Arten, unter denen ein Werk wirklich abgelegt
   // wird. „ebook" stand hier, angelegt wird aber „book" — dadurch behielt
@@ -205,13 +220,20 @@ final class DocumentImporter {
   List<DocumentImportCandidate> group(Iterable<ScannedFile> files) {
     final grouped = <String, _DocumentGroup>{};
     for (final file in files) {
-      if (!_extensions.contains(file.extension)) continue;
+      final subtitle = subtitleExtensions.contains(file.extension);
+      if (!subtitle && !_extensions.contains(file.extension)) continue;
       final area = _areas.locateFile(file.relativePath);
       if (area == null || area.remainder.isEmpty) continue;
       final kind = _workKind(area.kind);
       final remainder = area.remainder;
       final rootPath = area.rootPath;
       final standalone = remainder.length == 1;
+      // A subtitle only ever accompanies a video; on its own, or anywhere
+      // else, it is not a work.
+      if (subtitle &&
+          (standalone || !DocumentImportCandidate._videoKinds.contains(kind))) {
+        continue;
+      }
       final sourcePath = standalone
           ? file.relativePath
           : p.posix.join(rootPath, remainder.first);
@@ -232,17 +254,21 @@ final class DocumentImporter {
     }
     final candidates = [
       for (final group in grouped.values)
-        DocumentImportCandidate(
-          kind: group.kind,
-          directory: group.sourcePath,
-          title: group.title,
-          files: group.files..sort(_compareFiles),
-          coverFile: _cover(group.files, group.kind, title: group.title),
-          metadata: {
-            if (group.contentSensitivity != null)
-              'content_sensitivity': group.contentSensitivity,
-          },
-        ),
+        // Subtitles without their video are left alone, as before.
+        if (group.files.any(
+          (file) => !subtitleExtensions.contains(file.extension),
+        ))
+          DocumentImportCandidate(
+            kind: group.kind,
+            directory: group.sourcePath,
+            title: group.title,
+            files: group.files..sort(_compareFiles),
+            coverFile: _cover(group.files, group.kind, title: group.title),
+            metadata: {
+              if (group.contentSensitivity != null)
+                'content_sensitivity': group.contentSensitivity,
+            },
+          ),
     ];
     candidates.sort((left, right) {
       final kind = left.kind.compareTo(right.kind);

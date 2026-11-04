@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../app/fundus_log.dart';
+import 'media_byte_source.dart';
 
 /// One selectable track of a file — a language, a commentary, a subtitle.
 final class MediaTrackOption {
@@ -67,7 +68,11 @@ abstract interface class PlaybackEngine {
   /// The resume point belongs here rather than in a seek afterwards: a player
   /// that is told to seek before the file is loaded silently starts at zero,
   /// which is exactly how a saved position gets lost.
-  Future<void> open(Uri uri, {Duration start = Duration.zero});
+  Future<void> open(
+    Uri uri, {
+    Duration start = Duration.zero,
+    List<ExternalSubtitle> subtitles = const [],
+  });
 
   Future<void> play();
   Future<void> pause();
@@ -343,7 +348,11 @@ final class MediaKitEngine implements PlaybackEngine {
   Stream<bool> get completedStream => _player.stream.completed;
 
   @override
-  Future<void> open(Uri uri, {Duration start = Duration.zero}) async {
+  Future<void> open(
+    Uri uri, {
+    Duration start = Duration.zero,
+    List<ExternalSubtitle> subtitles = const [],
+  }) async {
     await _nativeTuning;
     // Streaming speech has a short, bounded producer queue. Network-file
     // read-ahead/probing must not wait for megabytes before output can start.
@@ -372,7 +381,17 @@ final class MediaKitEngine implements PlaybackEngine {
       );
     }
     final resume = start > Duration.zero ? start : null;
+    // Listening before the file opens: its length is the sign that it has
+    // loaded, and an external subtitle added any earlier is dropped by mpv.
+    final loaded = _player.stream.duration
+        .firstWhere((value) => value > Duration.zero)
+        .timeout(_readyTimeout);
     await _player.open(Media(uri.toString(), start: resume), play: false);
+    if (subtitles.isNotEmpty) {
+      unawaited(_addSubtitlesWhenLoaded(loaded, subtitles));
+    } else {
+      unawaited(loaded.then((_) {}, onError: (Object _) {}));
+    }
     if (_isWindows) {
       await _configureWindowsPresentation();
       unawaited(
@@ -395,6 +414,41 @@ final class MediaKitEngine implements PlaybackEngine {
     }
     if (_player.state.position < resume - const Duration(seconds: 2)) {
       await _player.seek(resume);
+    }
+  }
+
+  /// Adds the subtitle files beside a video once it has loaded.
+  ///
+  /// Added, not selected: whether subtitles show is the remembered choice of
+  /// language, as for the tracks inside the file.
+  Future<void> _addSubtitlesWhenLoaded(
+    Future<Duration> loaded,
+    List<ExternalSubtitle> subtitles,
+  ) async {
+    try {
+      await loaded;
+    } on Object {
+      // No length reported; try anyway, the file may still be there.
+    }
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    for (final subtitle in subtitles) {
+      try {
+        await platform.command([
+          'sub-add',
+          subtitle.uri.isScheme('file')
+              ? subtitle.uri.toFilePath()
+              : subtitle.uri.toString(),
+          'auto',
+          subtitle.title,
+          ?subtitle.language,
+        ]);
+      } on Object catch (error) {
+        // No file name: a protected work's subtitles say what it is.
+        FundusLog.instance.warn('player.subtitle.failed', {
+          'error': error.runtimeType.toString(),
+        });
+      }
     }
   }
 

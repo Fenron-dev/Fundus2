@@ -33,6 +33,22 @@ abstract interface class MediaByteSource {
 
   /// Whether the bytes can be reached right now.
   Future<bool> isReachable();
+
+  /// Subtitle files beside this one, reachable the same way it is.
+  List<ExternalSubtitle> get subtitles;
+}
+
+/// A subtitle file the engine can add to the open video.
+final class ExternalSubtitle {
+  const ExternalSubtitle({
+    required this.uri,
+    required this.title,
+    this.language,
+  });
+
+  final Uri uri;
+  final String title;
+  final String? language;
 }
 
 /// A file on this device — the vault's own media, or an offline copy.
@@ -43,17 +59,20 @@ final class LocalFileSource implements MediaByteSource {
     required this.path,
     this.duration,
     this.origin = FundusOrigin.local,
+    this.subtitles = const [],
   });
 
   factory LocalFileSource.fromTrack(
     LibraryPlaybackTrack track, {
     FundusOrigin origin = FundusOrigin.local,
+    FundusStreamProxy? proxy,
   }) => LocalFileSource(
     fileId: track.fileId,
     title: track.title,
     path: track.absolutePath,
     duration: track.duration,
     origin: origin,
+    subtitles: subtitlesForTrack(track, proxy: proxy),
   );
 
   @override
@@ -75,6 +94,9 @@ final class LocalFileSource implements MediaByteSource {
 
   @override
   Future<bool> isReachable() => File(path).exists();
+
+  @override
+  final List<ExternalSubtitle> subtitles;
 }
 
 /// A file on a Fundus this device is paired with.
@@ -91,6 +113,7 @@ final class RemoteFileSource implements MediaByteSource {
     required this.uri,
     this.duration,
     this.origin = FundusOrigin.stream,
+    this.subtitles = const [],
   });
 
   factory RemoteFileSource.fromTrack(
@@ -101,6 +124,7 @@ final class RemoteFileSource implements MediaByteSource {
     title: track.title,
     uri: proxy.uriFor(track.fileId, extension: _extensionOf(track.title)),
     duration: track.duration,
+    subtitles: subtitlesForTrack(track, proxy: proxy),
   );
 
   @override
@@ -119,6 +143,9 @@ final class RemoteFileSource implements MediaByteSource {
 
   @override
   Future<Uri> resolve() async => uri;
+
+  @override
+  final List<ExternalSubtitle> subtitles;
 
   @override
   Future<bool> isReachable() async {
@@ -159,4 +186,25 @@ MediaByteSource sourceForTrack(
   FundusStreamProxy? proxy,
 }) => track.isRemote && proxy != null
     ? RemoteFileSource.fromTrack(track, proxy: proxy)
-    : LocalFileSource.fromTrack(track, origin: origin);
+    : LocalFileSource.fromTrack(track, origin: origin, proxy: proxy);
+
+/// The subtitles of a track, each from wherever its own bytes are: a copy or
+/// a vault file on this device, otherwise through the peer's stream proxy.
+List<ExternalSubtitle> subtitlesForTrack(
+  LibraryPlaybackTrack track, {
+  FundusStreamProxy? proxy,
+}) => [
+  for (final subtitle in track.subtitles)
+    if (!subtitle.isRemote && subtitle.absolutePath.isNotEmpty)
+      ExternalSubtitle(
+        uri: Uri.file(subtitle.absolutePath),
+        title: subtitle.label,
+        language: subtitle.language,
+      )
+    else if (subtitle.isRemote && proxy != null)
+      ExternalSubtitle(
+        uri: proxy.uriFor(subtitle.fileId, extension: '.${subtitle.format}'),
+        title: subtitle.label,
+        language: subtitle.language,
+      ),
+];
