@@ -48,6 +48,14 @@ final class MediaTracks {
   bool get hasChoice => audio.length > 1 || subtitles.length > 1;
 }
 
+/// A chapter mark inside one file, as the file itself names it.
+final class FileChapter {
+  const FileChapter({required this.title, required this.start});
+
+  final String title;
+  final Duration start;
+}
+
 /// What a playback engine has to be able to do.
 ///
 /// The controller above it holds the rules — resume, track order, when a
@@ -82,6 +90,13 @@ abstract interface class PlaybackEngine {
 
   Future<void> selectAudioTrack(String id);
   Future<void> selectSubtitleTrack(String id);
+
+  /// The chapter marks of the open file, once it has loaded. Empty where the
+  /// file has none or the engine cannot tell.
+  Future<List<FileChapter>> fileChapters();
+
+  /// Evens out loud and quiet passages, or stops doing so.
+  Future<void> setNightMode(bool enabled);
 
   /// The shape of the picture, once the file has reported one.
   ///
@@ -386,6 +401,7 @@ final class MediaKitEngine implements PlaybackEngine {
     final loaded = _player.stream.duration
         .firstWhere((value) => value > Duration.zero)
         .timeout(_readyTimeout);
+    _loaded = loaded.then<void>((_) {}, onError: (Object _) {});
     await _player.open(Media(uri.toString(), start: resume), play: false);
     if (subtitles.isNotEmpty) {
       unawaited(_addSubtitlesWhenLoaded(loaded, subtitles));
@@ -414,6 +430,60 @@ final class MediaKitEngine implements PlaybackEngine {
     }
     if (_player.state.position < resume - const Duration(seconds: 2)) {
       await _player.seek(resume);
+    }
+  }
+
+  Future<void> _loaded = Future<void>.value();
+
+  @override
+  Future<List<FileChapter>> fileChapters() async {
+    await _loaded;
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return const [];
+    try {
+      final count = int.tryParse(
+        await platform.getProperty('chapter-list/count'),
+      );
+      if (count == null || count <= 0) return const [];
+      return [
+        for (var index = 0; index < count && index < 200; index++)
+          FileChapter(
+            title: (await platform.getProperty(
+              'chapter-list/$index/title',
+            )).trim(),
+            start: Duration(
+              milliseconds:
+                  ((double.tryParse(
+                                await platform.getProperty(
+                                  'chapter-list/$index/time',
+                                ),
+                              ) ??
+                              0) *
+                          1000)
+                      .round(),
+            ),
+          ),
+      ];
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// libavfilter's dynamic normaliser: lifts quiet dialogue and tames peaks
+  /// gradually, without the pumping of a hard compressor.
+  static const _nightFilter = 'lavfi=[dynaudnorm=f=200:g=15:p=0.9:m=8]';
+
+  @override
+  Future<void> setNightMode(bool enabled) async {
+    await _nativeTuning;
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    try {
+      await platform.setProperty('af', enabled ? _nightFilter : '');
+    } on Object catch (error) {
+      FundusLog.instance.warn('player.night_mode.failed', {
+        'error': error.runtimeType.toString(),
+      });
     }
   }
 

@@ -296,6 +296,13 @@ class _Transport extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               Center(child: video),
+              const Align(
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: EdgeInsets.all(FundusSpace.x8),
+                  child: _SkipSegment(),
+                ),
+              ),
               if (player.isBetweenEpisodes)
                 const Align(
                   alignment: Alignment.bottomRight,
@@ -848,6 +855,33 @@ class _SleepButton extends StatelessWidget {
 /// A series is watched one after another, so the next one starts by itself.
 /// What makes that bearable rather than pushy is that it says so first, and
 /// that stopping it is one tap on the same card.
+/// „Intro überspringen" while the file's own chapter marks say so.
+///
+/// It listens to the position directly: a once-a-second clock must not
+/// rebuild the whole player, only this button.
+class _SkipSegment extends StatelessWidget {
+  const _SkipSegment();
+
+  @override
+  Widget build(BuildContext context) {
+    final player = FundusScope.of(context).player;
+    return ValueListenableBuilder<Duration>(
+      valueListenable: player.positionListenable,
+      builder: (context, _, _) {
+        final segment = player.activeSegment;
+        if (segment == null || player.isBetweenEpisodes) {
+          return const SizedBox.shrink();
+        }
+        return FilledButton.tonalIcon(
+          onPressed: () => player.skipSegment(segment),
+          icon: Icon(FundusIcons.skipForward, size: FundusIcons.sizeSm),
+          label: Text(segment.kind.action),
+        );
+      },
+    );
+  }
+}
+
 class _NextEpisode extends StatelessWidget {
   const _NextEpisode();
 

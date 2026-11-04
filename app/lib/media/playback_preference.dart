@@ -37,6 +37,8 @@ final class PlaybackPreference {
     this.autoplayDelay = const Duration(seconds: 8),
     this.shuffle = false,
     this.repeat = RepeatMode.none,
+    this.skipIntros = false,
+    this.nightMode = false,
   });
 
   factory PlaybackPreference.fromJson(Map<String, Object?> value) =>
@@ -51,6 +53,8 @@ final class PlaybackPreference {
         autoplayDelay: _secondsOf(value['autoplay_delay'], 8),
         shuffle: value['shuffle'] == true,
         repeat: _repeatOf(value['repeat']),
+        skipIntros: value['skip_intros'] == true,
+        nightMode: value['night_mode'] == true,
       );
 
   /// Playback speed. Bounded on both sides: below a half nothing is
@@ -94,6 +98,14 @@ final class PlaybackPreference {
 
   final RepeatMode repeat;
 
+  /// Whether an intro, opening or recap the file marks as a chapter is
+  /// skipped without asking. Off by default: the button is always offered.
+  final bool skipIntros;
+
+  /// Quiet passages louder and loud ones quieter, for the evening when the
+  /// explosions should not wake anybody and the dialogue still be heard.
+  final bool nightMode;
+
   static const rates = <double>[0.75, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
   static const skips = <int>[5, 10, 15, 30, 45, 60, 90];
   static const sleepChoices = <int>[5, 10, 15, 30, 45, 60, 90];
@@ -110,6 +122,8 @@ final class PlaybackPreference {
     'autoplay_delay': autoplayDelay.inSeconds,
     'shuffle': shuffle,
     'repeat': repeat.name,
+    'skip_intros': skipIntros,
+    'night_mode': nightMode,
   };
 
   PlaybackPreference copyWith({
@@ -123,6 +137,8 @@ final class PlaybackPreference {
     Duration? autoplayDelay,
     bool? shuffle,
     RepeatMode? repeat,
+    bool? skipIntros,
+    bool? nightMode,
   }) => PlaybackPreference(
     rate: rate ?? this.rate,
     skipBack: skipBack ?? this.skipBack,
@@ -135,6 +151,8 @@ final class PlaybackPreference {
     autoplayDelay: autoplayDelay ?? this.autoplayDelay,
     shuffle: shuffle ?? this.shuffle,
     repeat: repeat ?? this.repeat,
+    skipIntros: skipIntros ?? this.skipIntros,
+    nightMode: nightMode ?? this.nightMode,
   );
 
   static RepeatMode _repeatOf(Object? value) =>

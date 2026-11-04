@@ -1519,6 +1519,42 @@ class _Playback extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text('Filme & Serien', style: theme.textTheme.titleMedium),
+              const SizedBox(height: FundusSpace.x2),
+              Text(
+                'Wo eine Datei Intro, Rückblick oder Abspann als Kapitel '
+                'markiert, bietet der Player an, sie zu überspringen.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: tokens.textMuted,
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: habits.skipIntros,
+                onChanged: (value) =>
+                    scope.setPlaybackHabits(habits.copyWith(skipIntros: value)),
+                title: const Text(
+                  'Intro und Rückblick automatisch überspringen',
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: habits.nightMode,
+                onChanged: (value) =>
+                    scope.setPlaybackHabits(habits.copyWith(nightMode: value)),
+                title: const Text('Nachtmodus'),
+                subtitle: const Text(
+                  'Leise Stellen lauter, laute leiser — Dialoge bleiben '
+                  'verständlich, ohne dass Explosionen jemanden wecken.',
+                ),
+              ),
+            ],
+          ),
+        ),
+        SettingsCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text('Nächste Folge', style: theme.textTheme.titleMedium),
               const SizedBox(height: FundusSpace.x2),
               Text(

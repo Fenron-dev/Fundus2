@@ -11,6 +11,7 @@ import '../app/fundus_log.dart';
 import '../data/work_view.dart';
 import 'media_byte_source.dart';
 import 'playback_engine.dart';
+import 'skippable_segments.dart';
 import 'playback_preference.dart';
 import 'track_preference.dart';
 
@@ -35,7 +36,14 @@ class PlaybackController extends ChangeNotifier {
 
   /// How this device plays — speed, skip distances, the sleep timer. Kept by
   /// the scope in the vault's device profile.
-  PlaybackPreference habits = const PlaybackPreference();
+  PlaybackPreference get habits => _habits;
+  set habits(PlaybackPreference value) {
+    final night = value.nightMode != _habits.nightMode;
+    _habits = value;
+    if (night) unawaited(_engineOrNull?.setNightMode(value.nightMode));
+  }
+
+  PlaybackPreference _habits = const PlaybackPreference();
   Future<void> Function(PlaybackPreference value)? onHabitsChanged;
 
   Timer? _sleepTimer;
@@ -73,7 +81,13 @@ class PlaybackController extends ChangeNotifier {
   /// library that is only browsed should not pay for that — nor should a
   /// widget test need it installed.
   PlaybackEngine? _engineOrNull;
-  PlaybackEngine get _engine => _engineOrNull ??= MediaKitEngine();
+  PlaybackEngine get _engine => _engineOrNull ??= _newEngine();
+
+  PlaybackEngine _newEngine() {
+    final engine = MediaKitEngine();
+    if (_habits.nightMode) unawaited(engine.setNightMode(true));
+    return engine;
+  }
 
   final String deviceId;
   String deviceName;
@@ -451,6 +465,7 @@ class PlaybackController extends ChangeNotifier {
     _order = const [];
     _chapters = const [];
     _trackChapters = const [];
+    _segments = const [];
     _setPosition(Duration.zero);
     _duration = null;
     _expanded = false;
@@ -600,6 +615,7 @@ class PlaybackController extends ChangeNotifier {
     _queueName = null;
     _chapters = const [];
     _trackChapters = const [];
+    _segments = const [];
     _index = 0;
     _order = const [0];
     _expanded = false;
@@ -788,6 +804,7 @@ class PlaybackController extends ChangeNotifier {
     _setPosition(Duration.zero);
     _duration = null;
     _trackChapters = const [];
+    _segments = const [];
     _tracks = const MediaTracks();
   }
 
@@ -861,6 +878,7 @@ class PlaybackController extends ChangeNotifier {
     // its tracks however it likes.
     _tracks = const MediaTracks();
     _trackChapters = const [];
+    _segments = const [];
     _handPicked = false;
     _clearBetweenEpisodes();
     // Stand und Länge gehören ab jetzt der neuen Datei. Vorher standen sie
@@ -904,6 +922,47 @@ class PlaybackController extends ChangeNotifier {
     // After playback has started, never before it: reading the chapters means
     // walking the file's tags, and nobody should wait for a picture.
     unawaited(_loadTrackChapters(source.fileId));
+    unawaited(_loadSegments(source.fileId));
+  }
+
+  /// Intro, recap and credits as the running file marks them.
+  List<SkippableSegment> _segments = const [];
+  final Set<Duration> _autoSkipped = {};
+
+  /// The stretch that can be skipped right now, if any.
+  SkippableSegment? get activeSegment {
+    for (final segment in _segments) {
+      if (segment.contains(_position)) return segment;
+    }
+    return null;
+  }
+
+  Future<void> _loadSegments(String fileId) async {
+    if (!showsVideo) return;
+    try {
+      final chapters = await _engine.fileChapters();
+      if (_disposed || currentSource?.fileId != fileId) return;
+      _segments = skippableSegments(chapters, duration: _duration);
+      _autoSkipped.clear();
+      notifyListeners();
+    } on Object catch (failure) {
+      FundusLog.instance.warn('player.segments', {
+        'error': failure.runtimeType.toString(),
+      });
+    }
+  }
+
+  /// Leaves the stretch: to its end, or for the credits on to the next
+  /// episode where there is one.
+  Future<void> skipSegment([SkippableSegment? segment]) async {
+    final target = segment ?? activeSegment;
+    if (target == null) return;
+    _autoSkipped.add(target.start);
+    if (target.kind == SkippableKind.credits && _nextIndex() != null) {
+      await next();
+      return;
+    }
+    await seek(target.end);
   }
 
   /// Fragt, ob die Datei da ist — und fragt notfalls ein zweites Mal.
@@ -945,6 +1004,15 @@ class PlaybackController extends ChangeNotifier {
         final previousTitle = chapterTitle;
         final previousImage = chapterImagePath;
         _setPosition(value);
+        if (_habits.skipIntros && _segments.isNotEmpty) {
+          final segment = activeSegment;
+          // Once per stretch: whoever seeks back into it wants to see it.
+          if (segment != null &&
+              segment.kind != SkippableKind.credits &&
+              _autoSkipped.add(segment.start)) {
+            unawaited(seek(segment.end));
+          }
+        }
         if (_resumeTries > 0 &&
             value - _brokeOffAt > const Duration(minutes: 1)) {
           _resumeTries = 0;
@@ -1461,6 +1529,7 @@ class PlaybackController extends ChangeNotifier {
     _order = const [];
     _chapters = const [];
     _trackChapters = const [];
+    _segments = const [];
     _setPosition(Duration.zero);
     _duration = null;
     _expanded = false;

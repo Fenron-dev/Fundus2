@@ -67,6 +67,14 @@ final class FakeEngine implements PlaybackEngine {
   Stream<MediaTracks> get tracksStream => _tracks.stream;
 
   final List<List<ExternalSubtitle>> subtitlesOpened = [];
+  List<FileChapter> chapters = const [];
+  final List<bool> nightModes = [];
+
+  @override
+  Future<List<FileChapter>> fileChapters() async => chapters;
+
+  @override
+  Future<void> setNightMode(bool enabled) async => nightModes.add(enabled);
 
   @override
   Future<void> open(
