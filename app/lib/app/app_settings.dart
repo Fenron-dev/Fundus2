@@ -98,6 +98,7 @@ class AppSettings extends ChangeNotifier {
     'hardcover_token',
     'mal_client_id',
     'protection_pin',
+    'tracking_credentials',
   };
 
   static Future<AppSettings> load({
@@ -932,6 +933,37 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setMetadataLanguage(String value) =>
       _set('metadata_language', value);
+
+  /// Tokens and client data of the tracking services, by service. Kept with
+  /// the other credentials in the platform's secure storage.
+  Map<String, Map<String, Object?>> get trackingCredentials {
+    final value = _values['tracking_credentials'];
+    if (value is! Map) return const {};
+    return {
+      for (final entry in value.entries)
+        if (entry.key is String && entry.value is Map)
+          entry.key as String: Map<String, Object?>.from(entry.value as Map),
+    };
+  }
+
+  Future<void> setTrackingCredentials(
+    String service,
+    Map<String, Object?>? value,
+  ) => _set(
+    'tracking_credentials',
+    {...trackingCredentials, service: ?value}
+      ..removeWhere((key, _) => key == service && value == null),
+  );
+
+  /// What was last reported and what still waits to be, by service and
+  /// work. Holds no secrets: ids and numbers only.
+  Map<String, Object?> get trackingState {
+    final value = _values['tracking_state'];
+    return value is Map ? Map<String, Object?>.from(value) : const {};
+  }
+
+  Future<void> setTrackingState(Map<String, Object?> value) =>
+      _set('tracking_state', value);
 
   /// The security bookmarks that let macOS reach a folder again after a
   /// restart, by folder. They belong to this machine and this installation,

@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import '../data/library_controller.dart';
 import '../data/podcast_subscriptions.dart';
 import '../data/remote_player.dart';
+import '../data/tracking_controller.dart';
 import '../data/server_host.dart';
 import '../data/peer_connection.dart';
 import '../data/download_controller.dart';
@@ -216,6 +217,12 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// New episodes of subscribed podcasts, fetched into their folders.
   late final PodcastSubscriptionController podcasts =
       PodcastSubscriptionController(library: library);
+
+  /// What was watched and read, told to AniList, MyAnimeList and Trakt.
+  late final TrackingController tracking = TrackingController(
+    settings: settings,
+    library: library,
+  );
   int _revision = 0;
 
   AppSettings get settings => widget.settings;
@@ -241,6 +248,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     usage.attach();
     podcasts.addListener(_bump);
     podcasts.start();
+    tracking.addListener(_bump);
+    tracking.start();
     navigation.addListener(_bump);
     settings.addListener(_bump);
     settings.addListener(_syncDeviceName);
@@ -536,6 +545,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
       // genau dann nie losgezogen. Deshalb geht er hier.
       _pushOpenWork();
       usage.flush(partial: true);
+      unawaited(tracking.reconcile());
       player.saveProgress(checkpoint: true);
       if (reader.isOpen) reader.saveProgress(checkpoint: true);
       if (textReader.isOpen) textReader.saveProgress(checkpoint: true);
@@ -745,6 +755,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     offline.dispose();
     podcasts.removeListener(_bump);
     podcasts.dispose();
+    tracking.removeListener(_bump);
+    tracking.dispose();
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);
     player.isPrivateWork = null;

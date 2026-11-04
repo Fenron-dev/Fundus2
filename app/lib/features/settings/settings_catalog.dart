@@ -45,6 +45,12 @@ abstract final class SettingsAreas {
       description: 'Leserichtung, Doppelseiten, Schriftgröße.',
     ),
     SettingsArea(
+      key: 'tracking',
+      label: 'Fortschritt melden',
+      icon: FundusIcons.sync,
+      description: 'AniList, MyAnimeList und Trakt über Gesehenes informieren.',
+    ),
+    SettingsArea(
       key: 'statistik',
       label: 'Statistik & Jahresrückblick',
       icon: FundusIcons.activity,
