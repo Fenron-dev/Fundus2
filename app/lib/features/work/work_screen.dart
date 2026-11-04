@@ -7,6 +7,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_design/fundus_design.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../player/remote_control_sheet.dart';
 import '../../app/file_manager.dart';
 import '../../app/app_navigation.dart';
 import '../../app/fundus_scope.dart';
@@ -765,6 +766,7 @@ class _Actions extends StatelessWidget {
           _OfflineButton(work: work),
           if (work.summary.sourceId != FundusDatabase.localSourceId)
             OfflineSettingsButton(workId: work.id),
+          _PlayOnPeerButton(work: work),
           _LocationButton(work: work),
           _MetadataButtons(work: work),
         ],
@@ -786,12 +788,55 @@ class _Actions extends StatelessWidget {
             _OfflineButton(work: work),
             if (work.summary.sourceId != FundusDatabase.localSourceId)
               OfflineSettingsButton(workId: work.id),
+            _PlayOnPeerButton(work: work),
             _LocationButton(work: work),
             _MoreDetailsButton(work: work),
             _MetadataButtons(work: work),
           ],
         ),
       ],
+    );
+  }
+}
+
+/// „Am Mac abspielen": for a work that lives on a paired machine, play it
+/// there and steer it from here.
+class _PlayOnPeerButton extends StatelessWidget {
+  const _PlayOnPeerButton({required this.work});
+
+  final WorkView work;
+
+  /// Only what plays: a book is read where it is held.
+  static const _playable = {
+    'audiobook',
+    'podcast',
+    'album',
+    'music',
+    'movie',
+    'tv',
+    'series',
+    'anime',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = FundusScope.of(context);
+    final peer = scope.peerLibraries.forSource(work.summary.sourceId);
+    if (peer == null ||
+        work.summary.sourceId == FundusDatabase.localSourceId ||
+        !_playable.contains(work.kind)) {
+      return const SizedBox.shrink();
+    }
+    return OutlinedButton.icon(
+      onPressed: () => playOnPeer(
+        context,
+        client: peer.client,
+        peerName: peer.peer.name,
+        libraryId: peer.libraryId,
+        workId: work.id,
+      ),
+      icon: Icon(FundusIcons.devices, size: FundusIcons.sizeSm),
+      label: Text('Auf „${peer.peer.name}“ abspielen'),
     );
   }
 }

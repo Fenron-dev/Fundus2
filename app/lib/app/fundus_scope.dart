@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/library_controller.dart';
 import '../data/podcast_subscriptions.dart';
+import '../data/remote_player.dart';
 import '../data/server_host.dart';
 import '../data/peer_connection.dart';
 import '../data/download_controller.dart';
@@ -277,6 +278,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     player.isPrivateWork = (work) =>
         protection.mode != ProtectionMode.off && work.summary.isHhh;
     player.browsableWorks = () => library.works;
+    host.remoteControl = PlayerRemoteControl(
+      player: player,
+      library: library,
+      play: play,
+    );
     player.playWorkById = (workId) async {
       final work = library.workById(workId);
       if (work != null) await play(work);

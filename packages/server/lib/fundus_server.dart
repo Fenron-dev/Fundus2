@@ -8,8 +8,10 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
 export 'src/pairing.dart';
+export 'src/remote_control.dart';
 
 import 'src/pairing.dart';
+import 'src/remote_control.dart';
 import 'src/comic_archive.dart';
 import 'src/speech_models.dart';
 
@@ -211,7 +213,11 @@ final class FundusServerHandler {
     this.requestObserver,
     this.onLibraryUnusable,
     this.speechModelDirectory,
+    this.remoteControl,
   }) : registry = registry ?? FundusLibraryRegistry();
+
+  /// The player of this machine, for paired devices allowed to steer it.
+  final FundusRemoteControl? remoteControl;
 
   final String token;
   final String serverId;
@@ -313,7 +319,9 @@ final class FundusServerHandler {
       ..post(
         '/v1/libraries/<libraryId>/progress/<workId>/revisions/<revision>/restore',
         _restoreProgressRevision,
-      );
+      )
+      ..get('/v1/remote/state', _remoteState)
+      ..post('/v1/remote/commands', _remoteCommand);
     return Pipeline()
         .addMiddleware(_requestBodyLimit())
         .addMiddleware(_compression())
@@ -528,8 +536,89 @@ final class FundusServerHandler {
       'portable_reader_profiles',
       'publication_manifests',
       'speech_model_transfer',
+      if (remoteControl != null) 'remote_control',
     ],
   });
+
+  /// Only a paired device that was explicitly granted it may steer playback.
+  bool _mayControl(Request request) {
+    final device = request.context['fundus_device_id'] as String?;
+    return remoteControl != null &&
+        device != null &&
+        (pairingAuthority?.remoteControlAllowed(device) ?? false);
+  }
+
+  Response _remoteState(Request request) {
+    if (!_mayControl(request)) {
+      return _json({'error': 'remote_control_not_allowed'}, statusCode: 403);
+    }
+    final state = remoteControl!.state();
+    final entry = state.libraryId == null
+        ? null
+        : registry.lookup(state.libraryId!);
+    final work = state.workId == null ? null : entry?.findWork(state.workId!);
+    // Something is playing that this device may not see: it learns that
+    // something plays, and nothing about what.
+    final hidden =
+        state.workId != null && (work == null || !_canViewWork(request, work));
+    return _json({
+      'idle': state.isIdle,
+      'playing': state.playing,
+      'position_seconds': state.position.inMilliseconds / 1000,
+      if (state.duration case final duration?)
+        'duration_seconds': duration.inMilliseconds / 1000,
+      if (!hidden) ...{
+        'library_id': state.libraryId,
+        'work_id': state.workId,
+        'title': state.title,
+        'track_title': state.trackTitle,
+      } else
+        'private': true,
+    }).change(headers: {'cache-control': 'no-store'});
+  }
+
+  Future<Response> _remoteCommand(Request request) async {
+    if (!_mayControl(request)) {
+      return _json({'error': 'remote_control_not_allowed'}, statusCode: 403);
+    }
+    final decoded = await _readJson(request);
+    if (decoded == null) return _badRequest('invalid_remote_command');
+    if (decoded['action'] == 'play_work') {
+      final libraryId = decoded['library_id'];
+      final workId = decoded['work_id'];
+      if (libraryId is! String || workId is! String) {
+        return _badRequest('invalid_remote_command');
+      }
+      final entry = registry.lookup(libraryId);
+      final device = request.context['fundus_device_id'] as String?;
+      final work = entry?.findWork(workId);
+      if (entry == null ||
+          work == null ||
+          !_canViewWork(request, work) ||
+          (device != null &&
+              !(pairingAuthority?.libraryAllowed(device, libraryId) ?? true))) {
+        return _notFound('work_not_found');
+      }
+      final started = await remoteControl!.playWork(libraryId, workId);
+      return started
+          ? _json({'ok': true})
+          : _json({'error': 'remote_play_failed'}, statusCode: 409);
+    }
+    final action = FundusRemoteAction.parse(decoded['action']);
+    if (action == null) return _badRequest('invalid_remote_command');
+    final seconds = decoded['position_seconds'];
+    if (action == FundusRemoteAction.seek &&
+        (seconds is! num || !seconds.isFinite || seconds < 0)) {
+      return _badRequest('invalid_remote_command');
+    }
+    await remoteControl!.command(
+      action,
+      position: seconds is num
+          ? Duration(milliseconds: (seconds * 1000).round())
+          : null,
+    );
+    return _json({'ok': true});
+  }
 
   Future<Response> _speechModelManifest(Request request) async {
     final directory = speechModelDirectory?.call();

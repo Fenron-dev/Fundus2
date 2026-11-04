@@ -767,6 +767,29 @@ final class FundusRemoteClient {
     return subtitleExtensions.contains(format) ? record : null;
   }
 
+  /// What the player of that machine is doing, for a remote control.
+  Future<RemotePlayerState> remotePlayerState() async =>
+      RemotePlayerState.fromJson(await _get('/v1/remote/state'));
+
+  /// Starts a work over there, where it was left.
+  Future<void> remotePlay({
+    required String libraryId,
+    required String workId,
+  }) => _post(
+    '/v1/remote/commands',
+    body: {'action': 'play_work', 'library_id': libraryId, 'work_id': workId},
+  );
+
+  /// `pause`, `resume`, `seek`, `skip_forward`, `skip_backward`, `next`,
+  /// `previous` or `stop`.
+  Future<void> remoteCommand(String action, {Duration? position}) => _post(
+    '/v1/remote/commands',
+    body: {
+      'action': action,
+      if (position != null) 'position_seconds': position.inMilliseconds / 1000,
+    },
+  );
+
   /// Small structural metadata for explicitly followed publications. Never
   /// downloads the book body and never trusts a manifest for another revision.
   Future<PublicationManifest?> publicationManifest(
@@ -1206,4 +1229,49 @@ final class _ModelDigestSink implements Sink<Digest> {
   void add(Digest data) => value = data;
   @override
   void close() {}
+}
+
+/// The player of a paired machine, as its remote control shows it.
+final class RemotePlayerState {
+  const RemotePlayerState({
+    this.idle = true,
+    this.playing = false,
+    this.position = Duration.zero,
+    this.duration,
+    this.libraryId,
+    this.workId,
+    this.title,
+    this.trackTitle,
+    this.private = false,
+  });
+
+  factory RemotePlayerState.fromJson(Map<String, Object?> value) {
+    Duration? seconds(Object? raw) => raw is num && raw.isFinite && raw >= 0
+        ? Duration(milliseconds: (raw * 1000).round())
+        : null;
+    String? text(Object? raw) => raw is String && raw.isNotEmpty ? raw : null;
+    return RemotePlayerState(
+      idle: value['idle'] != false,
+      playing: value['playing'] == true,
+      position: seconds(value['position_seconds']) ?? Duration.zero,
+      duration: seconds(value['duration_seconds']),
+      libraryId: text(value['library_id']),
+      workId: text(value['work_id']),
+      title: text(value['title']),
+      trackTitle: text(value['track_title']),
+      private: value['private'] == true,
+    );
+  }
+
+  final bool idle;
+  final bool playing;
+  final Duration position;
+  final Duration? duration;
+  final String? libraryId;
+  final String? workId;
+  final String? title;
+  final String? trackTitle;
+
+  /// Something plays that this device may not see.
+  final bool private;
 }

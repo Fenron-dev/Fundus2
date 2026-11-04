@@ -13,6 +13,7 @@ final class FundusPairedDevice {
     this.lastSeenAt,
     this.allowAdultExplicit = false,
     this.allowedLibraryIds,
+    this.allowRemoteControl = false,
   });
 
   final String id;
@@ -26,6 +27,30 @@ final class FundusPairedDevice {
   /// allow-list for this device; an empty set therefore sees no catalogue.
   final Set<String>? allowedLibraryIds;
 
+  /// Whether the device may start and steer playback on this machine. Off
+  /// unless granted: a phone that can read a library has not therefore been
+  /// asked to play things on somebody's speakers.
+  final bool allowRemoteControl;
+
+  FundusPairedDevice copyWith({
+    String? name,
+    DateTime? lastSeenAt,
+    bool? allowAdultExplicit,
+    Set<String>? Function()? allowedLibraryIds,
+    bool? allowRemoteControl,
+  }) => FundusPairedDevice(
+    id: id,
+    name: name ?? this.name,
+    tokenHash: tokenHash,
+    pairedAt: pairedAt,
+    lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+    allowAdultExplicit: allowAdultExplicit ?? this.allowAdultExplicit,
+    allowedLibraryIds: allowedLibraryIds == null
+        ? this.allowedLibraryIds
+        : allowedLibraryIds(),
+    allowRemoteControl: allowRemoteControl ?? this.allowRemoteControl,
+  );
+
   Map<String, Object?> toJson() => {
     'id': id,
     'name': name,
@@ -36,6 +61,7 @@ final class FundusPairedDevice {
     'allow_adult_explicit': allowAdultExplicit,
     if (allowedLibraryIds != null)
       'allowed_library_ids': allowedLibraryIds!.toList()..sort(),
+    'allow_remote_control': allowRemoteControl,
   };
 
   static FundusPairedDevice? fromJson(Object? value) {
@@ -64,6 +90,7 @@ final class FundusPairedDevice {
                 .where((id) => id.trim().isNotEmpty)
                 .toSet()
           : null,
+      allowRemoteControl: value['allow_remote_control'] == true,
     );
   }
 }
@@ -240,15 +267,7 @@ final class FundusPairingAuthority {
         now.difference(previous) < const Duration(seconds: 10)) {
       return;
     }
-    _devices[device.id] = FundusPairedDevice(
-      id: device.id,
-      name: device.name,
-      tokenHash: device.tokenHash,
-      pairedAt: device.pairedAt,
-      lastSeenAt: now,
-      allowAdultExplicit: device.allowAdultExplicit,
-      allowedLibraryIds: device.allowedLibraryIds,
-    );
+    _devices[device.id] = device.copyWith(lastSeenAt: now);
     final callback = onChanged;
     if (callback != null) unawaited(callback(devices));
   }
@@ -283,35 +302,29 @@ final class FundusPairingAuthority {
     final current = _devices[deviceId];
     final normalized = name.trim();
     if (current == null || normalized.isEmpty || normalized.length > 80) return;
-    _devices[deviceId] = FundusPairedDevice(
-      id: current.id,
-      name: normalized,
-      tokenHash: current.tokenHash,
-      pairedAt: current.pairedAt,
-      lastSeenAt: current.lastSeenAt,
-      allowAdultExplicit: current.allowAdultExplicit,
-      allowedLibraryIds: current.allowedLibraryIds,
-    );
+    _devices[deviceId] = current.copyWith(name: normalized);
     await _notifyChanged();
   }
 
   Future<void> setAdultExplicitAllowed(String deviceId, bool allowed) async {
     final current = _devices[deviceId];
     if (current == null || current.allowAdultExplicit == allowed) return;
-    _devices[deviceId] = FundusPairedDevice(
-      id: current.id,
-      name: current.name,
-      tokenHash: current.tokenHash,
-      pairedAt: current.pairedAt,
-      lastSeenAt: current.lastSeenAt,
-      allowAdultExplicit: allowed,
-      allowedLibraryIds: current.allowedLibraryIds,
-    );
+    _devices[deviceId] = current.copyWith(allowAdultExplicit: allowed);
     await _notifyChanged();
   }
 
   bool adultExplicitAllowed(String deviceId) =>
       _devices[deviceId]?.allowAdultExplicit ?? false;
+
+  Future<void> setRemoteControlAllowed(String deviceId, bool allowed) async {
+    final current = _devices[deviceId];
+    if (current == null || current.allowRemoteControl == allowed) return;
+    _devices[deviceId] = current.copyWith(allowRemoteControl: allowed);
+    await _notifyChanged();
+  }
+
+  bool remoteControlAllowed(String deviceId) =>
+      _devices[deviceId]?.allowRemoteControl ?? false;
 
   /// Whether a paired device may see one of the currently shared libraries.
   /// The absence of an allow-list preserves the original all-libraries
@@ -331,15 +344,7 @@ final class FundusPairingAuthority {
           ?.map((id) => id.trim())
           .where((id) => id.isNotEmpty)
           .toSet();
-      _devices[deviceId] = FundusPairedDevice(
-        id: device.id,
-        name: device.name,
-        tokenHash: device.tokenHash,
-        pairedAt: device.pairedAt,
-        lastSeenAt: device.lastSeenAt,
-        allowAdultExplicit: device.allowAdultExplicit,
-        allowedLibraryIds: normalized,
-      );
+      _devices[deviceId] = device.copyWith(allowedLibraryIds: () => normalized);
       await _notifyChanged();
     }
   }

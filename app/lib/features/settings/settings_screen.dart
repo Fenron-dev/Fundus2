@@ -4407,6 +4407,15 @@ class _PairedDeviceAccessTile extends StatelessWidget {
       children: [
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
+          title: const Text('Fernbedienung erlauben'),
+          subtitle: const Text(
+            'Das Gerät darf hier Werke starten, anhalten und springen.',
+          ),
+          value: device.allowRemoteControl,
+          onChanged: (value) => host.setRemoteControlAllowed(device.id, value),
+        ),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
           title: const Text('Alle freigegebenen Bibliotheken'),
           subtitle: const Text('Neue Bibliotheken sind automatisch sichtbar.'),
           value: allSelected,

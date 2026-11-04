@@ -290,6 +290,7 @@ class ServerHostController extends ChangeNotifier {
         speechModelDirectory: () =>
             settings.phononServerModelDirectory ??
             settings.phononModelDirectory,
+        remoteControl: remoteControl,
       );
       _socket = await _listen(handler, identity);
       if (_disposed || !_wantsSharing) {
@@ -631,6 +632,15 @@ class ServerHostController extends ChangeNotifier {
     Set<String>? libraryIds,
   ) async {
     await _pairing?.setAllowedLibraries(deviceId, libraryIds);
+    notifyListeners();
+  }
+
+  /// This machine's player for paired devices allowed to steer it; set by
+  /// the scope before sharing starts.
+  FundusRemoteControl? remoteControl;
+
+  Future<void> setRemoteControlAllowed(String deviceId, bool allowed) async {
+    await _pairing?.setRemoteControlAllowed(deviceId, allowed);
     notifyListeners();
   }
 
