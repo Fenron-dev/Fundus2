@@ -14,7 +14,9 @@ import '../../media/playback_preference.dart';
 import '../../media/phonon_model_store.dart';
 import '../../media/text_speech_controller.dart';
 import '../settings/speech_settings_page.dart';
+import '../../metadata/word_lookup.dart';
 import 'speech_model_status.dart';
+import 'word_lookup_sheet.dart';
 
 /// The reader for running text, laid over the shell.
 ///
@@ -1279,6 +1281,25 @@ class _ParagraphState extends State<_Paragraph> {
           // Einfügen: die Leiste ist auf einem Telefon schmal, und was hinten
           // steht, findet niemand.
           buttonItems: [
+            if (selected &&
+                WordLookup.clean(
+                      text.substring(selection.start, selection.end),
+                    ) !=
+                    null)
+              ContextMenuButtonItem(
+                label: 'Nachschlagen',
+                onPressed: () {
+                  final word = text.substring(selection.start, selection.end);
+                  state.hideToolbar();
+                  unawaited(
+                    showWordLookupSheet(
+                      context,
+                      word: word,
+                      language: reader.work?.summary.language,
+                    ),
+                  );
+                },
+              ),
             if (selected)
               ContextMenuButtonItem(
                 label: 'Aussprache hinzufügen',
