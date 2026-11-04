@@ -153,6 +153,11 @@ class PlaybackController extends ChangeNotifier {
   /// stehen. Gesetzt vom Schutzmodus; ohne ihn ist nichts privat.
   bool Function(WorkView work)? isPrivateWork;
 
+  /// What a car or a watch may list, and how to start one of it. Set by the
+  /// scope, which knows the library; the media session only asks.
+  List<WorkView> Function()? browsableWorks;
+  Future<void> Function(String workId)? playWorkById;
+
   /// Sagt der Mediensitzung, dass sich die Antwort von [isPrivateWork]
   /// geändert haben kann, etwa weil der Schutzmodus umgestellt wurde.
   void privacyChanged() => notifyListeners();

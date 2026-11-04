@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android Auto: Fundus offers its audiobooks, podcasts and music to the
+     car through the media session it already runs for background playback. -->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>

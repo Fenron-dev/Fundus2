@@ -276,6 +276,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     // gerade geöffnet ist.
     player.isPrivateWork = (work) =>
         protection.mode != ProtectionMode.off && work.summary.isHhh;
+    player.browsableWorks = () => library.works;
+    player.playWorkById = (workId) async {
+      final work = library.workById(workId);
+      if (work != null) await play(work);
+    };
     library.hides = _hidesFromLists;
     library.includeProtectedTags = protection.isUnlocked;
     library.prepareContentSubscriptions = _prepareContentSubscriptions;
@@ -737,6 +742,8 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);
     player.isPrivateWork = null;
+    player.browsableWorks = null;
+    player.playWorkById = null;
     peerLibraries.removeListener(_wireSources);
     _pushTimer?.cancel();
     _stopCatchingUp();

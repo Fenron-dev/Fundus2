@@ -89,6 +89,30 @@ void main() {
     },
   );
 
+  test('Android Auto sieht Hörbücher, aber keine geschützten', () async {
+    await library.open(root, createIfMissing: true);
+    await library.scan();
+    player.browsableWorks = () => library.works;
+    final started = <String>[];
+    player.playWorkById = (id) async => started.add(id);
+
+    final root0 = await handler.getChildren(AudioService.browsableRootId);
+    expect(root0.map((item) => item.title), contains('Hörbücher'));
+    expect(root0.every((item) => item.playable == false), isTrue);
+    final books = await handler.getChildren('fundus-audiobooks');
+    expect(books.single.title, contains('Der Schacht'));
+    expect(books.single.playable, isTrue);
+
+    await handler.playFromMediaId(books.single.id);
+    expect(started, [library.works.single.id]);
+
+    // Schutzmodus an: das Werk verschwindet und lässt sich nicht starten.
+    player.isPrivateWork = (_) => true;
+    expect(await handler.getChildren('fundus-audiobooks'), isEmpty);
+    await handler.playFromMediaId(books.single.id);
+    expect(started, hasLength(1));
+  });
+
   test('die Knöpfe der Sitzung steuern denselben Player', () async {
     await library.open(root, createIfMissing: true);
     await library.scan();

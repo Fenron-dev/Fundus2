@@ -58,6 +58,10 @@
 
         <!-- Die Sitzung, die Android sagt: dieser Prozess arbeitet noch.
              Ohne sie endet ein Hörbuch, sobald das Fenster verschwindet. -->
+        <!-- Android Auto lists what the media session's browse tree offers. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"

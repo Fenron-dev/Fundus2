@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../app/fundus_log.dart';
 
+import '../data/work_view.dart';
 import 'playback_controller.dart';
 
 /// Keeping playback alive when the app is not on screen.
@@ -162,6 +163,93 @@ final class FundusAudioHandler extends BaseAudioHandler {
     playbackState.add(
       current.copyWith(updatePosition: _player.position, speed: _player.rate),
     );
+  }
+
+  static const _recent = 'fundus-recent';
+  static const _audiobooks = 'fundus-audiobooks';
+  static const _podcasts = 'fundus-podcasts';
+  static const _music = 'fundus-music';
+  static const _workPrefix = 'work:';
+
+  /// Only what plays without a screen belongs in a car.
+  static const _audioKinds = {'audiobook', 'podcast', 'album', 'music'};
+
+  /// Works the car may show: audio, and nothing the protection mode hides.
+  List<WorkView> _browsable() {
+    final all = _player.browsableWorks?.call() ?? const <WorkView>[];
+    final private = _player.isPrivateWork;
+    return [
+      for (final work in all)
+        if (_audioKinds.contains(work.kind) &&
+            !(private?.call(work) ?? work.summary.isHhh))
+          work,
+    ];
+  }
+
+  MediaItem _itemFor(WorkView work) => MediaItem(
+    id: '$_workPrefix${work.id}',
+    title: work.title,
+    artist: work.subtitle.isEmpty ? null : work.subtitle,
+    artUri: work.coverPath == null ? null : Uri.file(work.coverPath!),
+    playable: true,
+  );
+
+  static MediaItem _folder(String id, String title) =>
+      MediaItem(id: id, title: title, playable: false);
+
+  /// The tree Android Auto browses: what to continue, then by kind.
+  @override
+  Future<List<MediaItem>> getChildren(
+    String parentMediaId, [
+    Map<String, dynamic>? options,
+  ]) async {
+    final works = _browsable();
+    List<MediaItem> listed(Iterable<WorkView> selection) => [
+      for (final work in selection.take(200)) _itemFor(work),
+    ];
+    Iterable<WorkView> recent() {
+      final started =
+          works.where((work) => work.summary.lastListenedAt != null).toList()
+            ..sort(
+              (a, b) => b.summary.lastListenedAt!.compareTo(
+                a.summary.lastListenedAt!,
+              ),
+            );
+      return started.take(20);
+    }
+
+    Iterable<WorkView> ofKind(Set<String> kinds) =>
+        works.where((work) => kinds.contains(work.kind)).toList()..sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
+    return switch (parentMediaId) {
+      AudioService.browsableRootId => [
+        _folder(_recent, 'Weiterhören'),
+        if (works.any((work) => work.kind == 'audiobook'))
+          _folder(_audiobooks, 'Hörbücher'),
+        if (works.any((work) => work.kind == 'podcast'))
+          _folder(_podcasts, 'Podcasts'),
+        if (works.any((work) => work.kind == 'album' || work.kind == 'music'))
+          _folder(_music, 'Musik'),
+      ],
+      AudioService.recentRootId || _recent => listed(recent()),
+      _audiobooks => listed(ofKind(const {'audiobook'})),
+      _podcasts => listed(ofKind(const {'podcast'})),
+      _music => listed(ofKind(const {'album', 'music'})),
+      _ => const [],
+    };
+  }
+
+  @override
+  Future<void> playFromMediaId(
+    String mediaId, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    if (!mediaId.startsWith(_workPrefix)) return;
+    final workId = mediaId.substring(_workPrefix.length);
+    // Only something the car was allowed to list can be started from it.
+    if (!_browsable().any((work) => work.id == workId)) return;
+    await _player.playWorkById?.call(workId);
   }
 
   @override
