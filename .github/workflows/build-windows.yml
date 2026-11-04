@@ -11,7 +11,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-windows-preview
+  # Only runs that really build share the group, so a newer build replaces an
+  # older one. A run that skips (CI failed, `[skip build]`, a pull request)
+  # gets a group of its own and must not cancel a build that is still going.
+  group: >-
+    ${{ (github.event_name != 'workflow_run' ||
+    (github.event.workflow_run.conclusion == 'success' &&
+    github.event.workflow_run.event == 'push' &&
+    github.event.workflow_run.head_repository.full_name == github.repository &&
+    !contains(github.event.workflow_run.head_commit.message, '[skip build]'))) &&
+    'build-windows-preview' || format('build-windows-idle-{0}', github.run_id) }}
   cancel-in-progress: true
 
 env:

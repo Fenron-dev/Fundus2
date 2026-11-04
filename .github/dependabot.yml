@@ -10,6 +10,10 @@ updates:
       github-actions:
         patterns: ['*']
     open-pull-requests-limit: 5
+  # Dependabot resolves pub updates with the newest Flutter that
+  # `environment.flutter` in the root pubspec.yaml allows. That range follows
+  # the Flutter version of the workflows; without it every proposal assumed
+  # a newer SDK than CI has and failed there.
   - package-ecosystem: pub
     directory: /
     schedule:

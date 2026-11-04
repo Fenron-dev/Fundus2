@@ -34,7 +34,12 @@ Actions-Minuten sparen: Zwischenstände tragen `[skip ci]` in der Commit-Nachric
 Vorschau-Builds. Reine Text-Commits (`docs/**`, `*.md`) lösen nichts aus.
 Phonon wird pro Plattform zwischengespeichert und nur neu gebaut, wenn sich
 Engine-Stand oder `tools/patch_phonon_voices.py` ändern; unter Android läuft
-der Phonon-Build in einem eigenen Job ohne Signatur-Secrets.
+der Phonon-Build in einem eigenen Job ohne Signatur-Secrets. Ein Lauf, der
+nicht baut (rotes CI, `[skip build]`), bricht einen laufenden Build nicht ab.
+
+Flutter steht in allen Workflows auf 3.41.4. Die Root-`pubspec.yaml` begrenzt
+`environment.flutter` auf 3.41.x, damit Dependabot mit derselben Flutter-Linie
+auflöst wie CI. Ein Flutter-Upgrade hebt Workflows und diese Grenze gemeinsam.
 
 ## Workspace
 

@@ -4,6 +4,10 @@ publish_to: none
 
 environment:
   sdk: ^3.11.1
+  # The workflows build with Flutter 3.41.4. Dependabot resolves with the
+  # newest Flutter this range allows, so its proposals fit what CI runs.
+  # A Flutter upgrade raises this range and the workflows together.
+  flutter: '>=3.41.4 <3.42.0'
 
 workspace:
   - app
