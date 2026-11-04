@@ -18,3 +18,19 @@ Future<OfflineConditions> readOfflineConditions() async {
     return const OfflineConditions();
   }
 }
+
+/// Free bytes where [path] lives, or null where the platform does not say.
+///
+/// Only Android answers today. A desktop has its own disk and its own way of
+/// warning; a phone that fills up silently stops recording photos.
+Future<int?> readFreeBytes(String path) async {
+  if (!Platform.isAndroid) return null;
+  try {
+    final value = await const MethodChannel('dev.fundus/offline_conditions')
+        .invokeMethod<Object?>('freeBytes', {'path': path})
+        .timeout(const Duration(seconds: 3));
+    return value is int ? value : null;
+  } on Object {
+    return null;
+  }
+}

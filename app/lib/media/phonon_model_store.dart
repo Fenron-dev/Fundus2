@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:archive/archive_io.dart';
@@ -75,6 +76,95 @@ final class PhononModelStore {
   static bool isFundusImportedModel(String modelDirectory) =>
       p.basename(p.dirname(modelDirectory)) == 'phonon-models' &&
       p.basename(modelDirectory).startsWith('model-');
+
+  /// Fundus-managed model folders that nothing refers to any more, with their
+  /// size. Folders chosen elsewhere on the disk are never listed: only what
+  /// Fundus itself put under `phonon-models/` is its own to remove.
+  static Future<List<({String path, int bytes})>> unusedModels({
+    required String applicationSupportPath,
+    required Set<String> keep,
+  }) => Isolate.run(() => _unusedModels(applicationSupportPath, keep));
+
+  /// Removes what [unusedModels] lists, plus leftovers of interrupted imports
+  /// and of downloads that were abandoned more than [staleDownloads] ago.
+  /// Returns the number of bytes freed.
+  static Future<int> pruneUnusedModels({
+    required String applicationSupportPath,
+    required Set<String> keep,
+    Duration staleDownloads = const Duration(days: 7),
+  }) => Isolate.run(
+    () => _pruneUnusedModels(applicationSupportPath, keep, staleDownloads),
+  );
+}
+
+List<({String path, int bytes})> _unusedModels(
+  String supportPath,
+  Set<String> keep,
+) {
+  final root = Directory(p.join(supportPath, 'phonon-models'));
+  if (!root.existsSync()) return const [];
+  final kept = {for (final path in keep) p.normalize(path)};
+  final result = <({String path, int bytes})>[];
+  for (final entity in root.listSync(followLinks: false)) {
+    if (entity is! Directory) continue;
+    final name = p.basename(entity.path);
+    if (!name.startsWith('model-')) continue;
+    if (kept.any(
+      (path) => p.equals(path, entity.path) || p.isWithin(entity.path, path),
+    )) {
+      continue;
+    }
+    result.add((path: entity.path, bytes: _directoryBytes(entity)));
+  }
+  return result;
+}
+
+int _pruneUnusedModels(
+  String supportPath,
+  Set<String> keep,
+  Duration staleDownloads,
+) {
+  var freed = 0;
+  for (final model in _unusedModels(supportPath, keep)) {
+    try {
+      Directory(model.path).deleteSync(recursive: true);
+      freed += model.bytes;
+    } on FileSystemException {
+      // A folder still open elsewhere is tried again next time.
+    }
+  }
+  final root = Directory(p.join(supportPath, 'phonon-models'));
+  if (!root.existsSync()) return freed;
+  final oldest = DateTime.now().subtract(staleDownloads);
+  for (final entity in root.listSync(followLinks: false)) {
+    if (entity is! Directory) continue;
+    final name = p.basename(entity.path);
+    // An import is staged and renamed within one call; a leftover is a crash.
+    final stale =
+        name.startsWith('.import-') ||
+        (name.startsWith('.download-') &&
+            entity.statSync().modified.isBefore(oldest));
+    if (!stale) continue;
+    try {
+      final bytes = _directoryBytes(entity);
+      entity.deleteSync(recursive: true);
+      freed += bytes;
+    } on FileSystemException {
+      // Same as above.
+    }
+  }
+  return freed;
+}
+
+int _directoryBytes(Directory directory) {
+  var total = 0;
+  for (final entity in directory.listSync(
+    recursive: true,
+    followLinks: false,
+  )) {
+    if (entity is File) total += entity.lengthSync();
+  }
+  return total;
 }
 
 String _extractCpuModelArchive(String archivePath, String supportPath) {
@@ -169,12 +259,18 @@ String _extractCpuModelArchive(String archivePath, String supportPath) {
           p.joinAll([staging.path, ...p.posix.split(entry.path)]),
         );
         destination.parent.createSync(recursive: true);
-        final bytes = entry.file.readBytes();
-        if (bytes == null || bytes.length != entry.file.size) {
+        // Streamed to disk: a model file can be hundreds of megabytes, and a
+        // phone should not have to hold it in memory just to copy it.
+        final output = OutputFileStream(destination.path);
+        try {
+          entry.file.writeContent(output);
+        } finally {
+          output.closeSync();
+        }
+        if (destination.lengthSync() != entry.file.size) {
           throw const FormatException('Eine Modell-Datei ist beschädigt.');
         }
-        destination.writeAsBytesSync(bytes, flush: true);
-        hashes[entry.path] = sha256.convert(bytes).toString();
+        hashes[entry.path] = _sha256OfFile(destination);
       }
       final integrity = File(
         p.join(staging.path, PhononModelStore.integrityFileName),
@@ -297,7 +393,7 @@ void _writeIntegrityManifest(Directory root) {
         'Der Phonon-Modellordner enthält einen ungültigen Pfad.',
       );
     }
-    hashes[relative] = sha256.convert(file.readAsBytesSync()).toString();
+    hashes[relative] = _sha256OfFile(file);
   }
   File(p.join(root.path, PhononModelStore.integrityFileName)).writeAsStringSync(
     jsonEncode({'schema_version': 1, 'files': hashes}),
@@ -321,6 +417,33 @@ List<File> _modelFiles(Directory root) {
     throw const FormatException('Der Modellordner enthält zu viele Dateien.');
   }
   return files;
+}
+
+/// Reads in blocks; the weights must never be loaded into memory whole.
+String _sha256OfFile(File file) {
+  final result = _DigestSink();
+  final hash = sha256.startChunkedConversion(result);
+  final input = file.openSync();
+  try {
+    final buffer = Uint8List(1024 * 1024);
+    while (true) {
+      final read = input.readIntoSync(buffer);
+      if (read <= 0) break;
+      hash.add(Uint8List.sublistView(buffer, 0, read));
+    }
+  } finally {
+    input.closeSync();
+  }
+  hash.close();
+  return result.value.toString();
+}
+
+final class _DigestSink implements Sink<Digest> {
+  late Digest value;
+  @override
+  void add(Digest data) => value = data;
+  @override
+  void close() {}
 }
 
 String? _safeArchivePath(String path) {

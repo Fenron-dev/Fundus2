@@ -132,6 +132,17 @@ class PlaybackController extends ChangeNotifier {
   Future<void> Function()? stopSpeechForSleepTimer;
   Future<void> Function()? resumeSpeechFromMediaControl;
 
+  /// Ob ein Werk außerhalb der App nicht beim Namen genannt werden darf.
+  ///
+  /// Sperrbildschirm, Benachrichtigung, Bluetooth und Autodisplay zeigen, was
+  /// die Mediensitzung meldet — und sie sehen alle, die neben dem Gerät
+  /// stehen. Gesetzt vom Schutzmodus; ohne ihn ist nichts privat.
+  bool Function(WorkView work)? isPrivateWork;
+
+  /// Sagt der Mediensitzung, dass sich die Antwort von [isPrivateWork]
+  /// geändert haben kann, etwa weil der Schutzmodus umgestellt wurde.
+  void privacyChanged() => notifyListeners();
+
   @override
   void notifyListeners() {
     if (!_disposed) super.notifyListeners();

@@ -11,6 +11,7 @@ import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
+import android.os.StatFs
 import android.provider.Settings
 import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -65,7 +66,16 @@ class MainActivity : AudioServiceFragmentActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             "dev.fundus/offline_conditions",
         ).setMethodCallHandler { call, result ->
-            if (call.method != "read") {
+            if (call.method == "freeBytes") {
+                // Free space where the app keeps its own files; a large
+                // download asks before it fills the phone.
+                try {
+                    val path = call.argument<String>("path") ?: filesDir.absolutePath
+                    result.success(StatFs(path).availableBytes)
+                } catch (_: Exception) {
+                    result.success(null)
+                }
+            } else if (call.method != "read") {
                 result.notImplemented()
             } else {
                 try {

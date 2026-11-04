@@ -313,8 +313,10 @@ Future<void> editSpeechProfile(
                               ? null
                               : () async {
                                   update(() => busy = true);
-                                  final selected = await scope.speechModels
-                                      .ensureAvailable(retry: true);
+                                  final selected =
+                                      await requestSpeechModelFromServer(
+                                        dialogContext,
+                                      );
                                   if (dialogContext.mounted) {
                                     update(() {
                                       directory = selected ?? directory;

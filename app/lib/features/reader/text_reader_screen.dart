@@ -14,6 +14,7 @@ import '../../media/playback_preference.dart';
 import '../../media/phonon_model_store.dart';
 import '../../media/text_speech_controller.dart';
 import '../settings/speech_settings_page.dart';
+import 'speech_model_status.dart';
 
 /// The reader for running text, laid over the shell.
 ///
@@ -762,7 +763,9 @@ Future<void> _toggleTextSpeech(BuildContext context) async {
   if (!scope.textSpeech.isActive &&
       (modelDirectory == null || !Directory(modelDirectory).existsSync())) {
     if (Platform.isAndroid) {
-      modelDirectory = await scope.speechModels.ensureAvailable(retry: true);
+      modelDirectory =
+          scope.speechModels.installed ??
+          await requestSpeechModelFromServer(context);
     }
     if (!context.mounted) return;
     if (modelDirectory == null || !Directory(modelDirectory).existsSync()) {

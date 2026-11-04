@@ -252,6 +252,11 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     sync.onCheckpointsConfirmed = () => unawaited(offline.run());
     photos.addListener(_bump);
     protection.addListener(_applyProtection);
+    // Der Sperrbildschirm ist nie entsperrt: solange der Schutzmodus an ist,
+    // nennt die Mediensitzung ein geschütztes Werk nicht, auch wenn die App
+    // gerade geöffnet ist.
+    player.isPrivateWork = (work) =>
+        protection.mode != ProtectionMode.off && work.summary.isHhh;
     library.hides = _hidesFromLists;
     library.includeProtectedTags = protection.isUnlocked;
     library.prepareContentSubscriptions = _prepareContentSubscriptions;
@@ -559,9 +564,6 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// look it up, and get null for a work that lies on this disk — which is
   /// exactly what „local" means to a player.
   void _wireSources() {
-    if (Platform.isAndroid && peerLibraries.hasConnection) {
-      unawaited(speechModels.ensureAvailable());
-    }
     FundusStreamProxy? proxyFor(String sourceId) =>
         peerLibraries.forSource(sourceId)?.proxy;
 
@@ -668,6 +670,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     offline.dispose();
     photos.removeListener(_bump);
     protection.removeListener(_applyProtection);
+    player.isPrivateWork = null;
     peerLibraries.removeListener(_wireSources);
     _pushTimer?.cancel();
     _stopCatchingUp();
@@ -701,6 +704,7 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
   /// lists have to be built again — otherwise unlocking would show nothing
   /// until something else happened to trigger a reload.
   void _applyProtection() {
+    player.privacyChanged();
     library.hides = _hidesFromLists;
     library.includeProtectedTags = protection.isUnlocked;
     if (reader.work case final work? when _hidesFromLists(work)) reader.close();

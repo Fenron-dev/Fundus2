@@ -98,15 +98,32 @@ final class FundusRemoteClient {
     }
   }
 
-  /// Streams to a new, app-owned staging file. Never buffers model weights in
+  /// Streams to an app-owned staging file. Never buffers model weights in
   /// memory, follows redirects, or accepts bytes differing from the offer.
+  ///
+  /// With [resume], a shorter file already at [destination] is continued with
+  /// a range request instead of being fetched again: a few hundred megabytes
+  /// over a phone's Wi-Fi should not start from zero after every hiccup. The
+  /// checksum still covers the whole file, the part already on disk included.
+  /// A server that ignores the range answers with the whole file, which then
+  /// simply replaces the partial one.
   Future<void> downloadSpeechModelFile({
     required SpeechModelManifest model,
     required int index,
     required File destination,
     void Function(int received)? onProgress,
+    bool resume = false,
   }) async {
     final entry = model.files[index];
+    var have = 0;
+    if (resume && await destination.exists()) {
+      have = await destination.length();
+      if (have >= entry.bytes) {
+        // Complete or longer than announced: nothing to continue from.
+        await destination.delete();
+        have = 0;
+      }
+    }
     RandomAccessFile? output;
     try {
       final request =
@@ -115,21 +132,39 @@ final class FundusRemoteClient {
               baseUri.resolve('/v1/tts/models/${model.id}/files/$index'),
             )
             ..followRedirects = false
-            ..headers.addAll({..._headers, 'accept-encoding': 'identity'});
+            ..headers.addAll({
+              ..._headers,
+              'accept-encoding': 'identity',
+              if (have > 0) 'range': 'bytes=$have-',
+            });
       final response = await _http.send(request).timeout(timeout);
-      if (response.statusCode != 200 ||
+      final continued =
+          have > 0 &&
+          response.statusCode == 206 &&
+          (response.headers['content-range'] ?? '').startsWith('bytes $have-');
+      final expectedLength = continued ? entry.bytes - have : entry.bytes;
+      if ((response.statusCode != 200 && !continued) ||
           (response.contentLength != null &&
-              response.contentLength != entry.bytes)) {
+              response.contentLength != expectedLength)) {
         await response.stream.listen((_) {}).cancel();
         throw FundusRemoteException(
           'Die Sprachmodell-Datei konnte nicht vollständig vom Server geladen werden.',
           statusCode: response.statusCode,
         );
       }
-      output = await destination.open(mode: FileMode.writeOnly);
       final hashResult = _ModelDigestSink();
       final hash = sha256.startChunkedConversion(hashResult);
       var received = 0;
+      if (continued) {
+        await for (final chunk in destination.openRead(0, have)) {
+          hash.add(chunk);
+        }
+        received = have;
+        output = await destination.open(mode: FileMode.append);
+        onProgress?.call(received);
+      } else {
+        output = await destination.open(mode: FileMode.writeOnly);
+      }
       await for (final chunk in response.stream.timeout(timeout)) {
         received += chunk.length;
         if (received > entry.bytes) {
@@ -142,13 +177,21 @@ final class FundusRemoteClient {
         onProgress?.call(received);
       }
       hash.close();
-      if (received != entry.bytes ||
-          hashResult.value?.toString() != entry.sha256) {
+      await output.flush();
+      if (received != entry.bytes) {
+        throw const FormatException(
+          'Die Sprachmodell-Datei wurde nicht vollständig übertragen.',
+        );
+      }
+      if (hashResult.value?.toString() != entry.sha256) {
+        await output.close();
+        output = null;
+        // A wrong file must not be continued next time.
+        if (await destination.exists()) await destination.delete();
         throw const FormatException(
           'Die Prüfsumme der Sprachmodell-Datei stimmt nicht. Bitte erneut laden.',
         );
       }
-      await output.flush();
     } finally {
       await output?.close();
     }

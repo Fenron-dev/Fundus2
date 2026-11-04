@@ -28,6 +28,10 @@ final class FundusAudioHandler extends BaseAudioHandler {
 
   final PlaybackController _player;
   final List<StreamSubscription<dynamic>> _focusSubscriptions = [];
+
+  /// Was die Sitzung für ein geschütztes Werk meldet.
+  static const privateMediaId = 'fundus-private';
+  static const privateTitle = 'Wiedergabe läuft';
   AudioSession? _session;
   bool _hasFocus = false;
 
@@ -104,15 +108,26 @@ final class FundusAudioHandler extends BaseAudioHandler {
       return;
     }
 
+    // Ein geschütztes Werk bleibt auch auf dem Sperrbildschirm, in der
+    // Benachrichtigung und auf dem Autodisplay ungenannt — ohne Titel, ohne
+    // Untertitel und ohne Cover. Die Knöpfe funktionieren trotzdem.
+    final private = _player.isPrivateWork?.call(work) ?? false;
     mediaItem.add(
-      MediaItem(
-        id: _player.currentSource?.fileId ?? work.id,
-        title: _player.currentSource?.title ?? work.title,
-        album: work.title,
-        artist: work.subtitle.isEmpty ? null : work.subtitle,
-        duration: _player.duration,
-        artUri: work.coverPath == null ? null : Uri.file(work.coverPath!),
-      ),
+      private
+          ? MediaItem(
+              id: privateMediaId,
+              title: privateTitle,
+              album: 'Fundus',
+              duration: _player.duration,
+            )
+          : MediaItem(
+              id: _player.currentSource?.fileId ?? work.id,
+              title: _player.currentSource?.title ?? work.title,
+              album: work.title,
+              artist: work.subtitle.isEmpty ? null : work.subtitle,
+              duration: _player.duration,
+              artUri: work.coverPath == null ? null : Uri.file(work.coverPath!),
+            ),
     );
 
     playbackState.add(

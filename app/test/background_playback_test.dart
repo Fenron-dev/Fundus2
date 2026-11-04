@@ -63,6 +63,32 @@ void main() {
     expect(state.playing, isTrue);
   });
 
+  test(
+    'ein geschütztes Werk bleibt auf dem Sperrbildschirm ungenannt',
+    () async {
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      var private = true;
+      player.isPrivateWork = (_) => private;
+      await player.open(library.library!, library.works.first);
+
+      var item = handler.mediaItem.value!;
+      expect(item.id, FundusAudioHandler.privateMediaId);
+      expect(item.title, FundusAudioHandler.privateTitle);
+      expect(item.album, isNot(contains('Der Schacht')));
+      expect(item.artist, isNull);
+      expect(item.artUri, isNull);
+      // Die Knöpfe bleiben nutzbar.
+      expect(handler.playbackState.value.playing, isTrue);
+
+      // Schutzmodus aus: die Sitzung nennt das Werk wieder.
+      private = false;
+      player.privacyChanged();
+      item = handler.mediaItem.value!;
+      expect(item.album, contains('Der Schacht'));
+    },
+  );
+
   test('die Knöpfe der Sitzung steuern denselben Player', () async {
     await library.open(root, createIfMissing: true);
     await library.scan();
