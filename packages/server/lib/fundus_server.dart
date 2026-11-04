@@ -1838,7 +1838,12 @@ final class FundusServerHandler {
     return _json({
       'work_id': workId,
       'revisions': [
-        for (final revision in entry.library.listProgressRevisions(workId))
+        // The history is pruned as it is written; the limit only caps what
+        // one answer can cost on a library that has not been opened since.
+        for (final revision in entry.library.listProgressRevisions(
+          workId,
+          limit: 200,
+        ))
           _progressRevisionJson(revision),
       ],
     });

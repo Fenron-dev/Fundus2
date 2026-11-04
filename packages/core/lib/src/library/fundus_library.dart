@@ -1896,8 +1896,10 @@ final class FundusLibrary {
     return work == null ? null : _withAbsoluteCoverPath(work);
   }
 
-  List<LibraryPlaybackRevision> listProgressRevisions(String workId) =>
-      _database.listProgressRevisions(workId);
+  List<LibraryPlaybackRevision> listProgressRevisions(
+    String workId, {
+    int? limit,
+  }) => _database.listProgressRevisions(workId, limit: limit);
 
   List<LibraryPlaybackRevision> listCheckpointRevisions(
     String workId, {

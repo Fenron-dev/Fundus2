@@ -236,7 +236,20 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 26;
+  static const schemaVersion = 27;
+
+  /// How much progress history one work keeps.
+  ///
+  /// Every autosave used to stay forever; read aloud, that is one row per
+  /// sentence. The history is for three things, and these are what is kept:
+  /// where each device stands (its newest row), its last deliberate stop
+  /// points, and a short trail of recent autosaves.
+  static const progressAutosavesKept = 20;
+  static const progressCheckpointsKeptPerDevice = 10;
+
+  /// How long the operation id of a pruned row is still recognised, so that
+  /// a retried write counts once even after its row is gone.
+  static const progressOperationMemory = Duration(days: 7);
 
   /// The identifier of the vault that is open in this database file. The
   /// locally opened vault is a source like any other — that is the point of
@@ -2760,34 +2773,52 @@ final class FundusDatabase {
     return rows.isEmpty ? null : rows.first['kind'] as String?;
   }
 
-  List<LibraryPlaybackRevision> listProgressRevisions(String workId) {
+  /// The progress history of a work, newest first.
+  List<LibraryPlaybackRevision> listProgressRevisions(
+    String workId, {
+    int? limit,
+  }) {
     final rows = _database.select(
       '''
       SELECT revision, operation_id, snapshot_json, created_at
       FROM progress_revisions
-      WHERE work_id = ? AND user_id = 'default'
+      WHERE work_id = ? AND user_id = 'default' AND json_valid(snapshot_json)
       ORDER BY revision DESC
+      LIMIT ?
       ''',
-      [workId],
+      [workId, limit ?? -1],
     );
     return [for (final row in rows) _progressRevisionFromRow(workId, row)];
   }
 
   /// Intentional stop points, newest first, limited per device.
+  ///
+  /// Selected in SQL: the work screen asks on every build, and decoding the
+  /// whole history in Dart for three rows per device was the slow part.
   List<LibraryPlaybackRevision> listCheckpointRevisions(
     String workId, {
     int perDevice = 3,
   }) {
-    final counts = <String, int>{};
-    final result = <LibraryPlaybackRevision>[];
-    for (final revision in listProgressRevisions(workId)) {
-      if (!revision.checkpoint) continue;
-      final count = counts[revision.deviceId] ?? 0;
-      if (count >= perDevice) continue;
-      counts[revision.deviceId] = count + 1;
-      result.add(revision);
-    }
-    return result;
+    final rows = _database.select(
+      r'''
+      SELECT revision, operation_id, snapshot_json, created_at FROM (
+        SELECT revision, operation_id, snapshot_json, created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(snapshot_json, '$.device_id')
+            ORDER BY revision DESC
+          ) AS device_rank
+        FROM progress_revisions
+        WHERE work_id = ? AND user_id = 'default'
+          AND CASE WHEN json_valid(snapshot_json)
+            THEN json_extract(snapshot_json, '$.checkpoint') = 1
+            ELSE 0 END
+      )
+      WHERE device_rank <= ?
+      ORDER BY revision DESC
+      ''',
+      [workId, perDevice],
+    );
+    return [for (final row in rows) _progressRevisionFromRow(workId, row)];
   }
 
   LibraryPlaybackProgress restoreProgressRevision({
@@ -2797,9 +2828,18 @@ final class FundusDatabase {
     String deviceName = '',
     required String operationId,
   }) {
-    final selected = listProgressRevisions(
-      workId,
-    ).where((item) => item.revision == revision).firstOrNull;
+    final rows = _database.select(
+      '''
+      SELECT revision, operation_id, snapshot_json, created_at
+      FROM progress_revisions
+      WHERE work_id = ? AND user_id = 'default' AND revision = ?
+        AND json_valid(snapshot_json)
+      ''',
+      [workId, revision],
+    );
+    final selected = rows.isEmpty
+        ? null
+        : _progressRevisionFromRow(workId, rows.first);
     if (selected == null || selected.fileId == null) {
       throw StateError('Fortschrittsrevision ist nicht wiederherstellbar.');
     }
@@ -2876,8 +2916,10 @@ final class FundusDatabase {
   }) {
     return transaction(() {
       final processed = _database.select(
-        'SELECT 1 FROM progress_revisions WHERE operation_id = ?',
-        [operationId],
+        'SELECT 1 FROM progress_revisions WHERE operation_id = ? '
+        'UNION ALL SELECT 1 FROM progress_operations WHERE operation_id = ? '
+        'LIMIT 1',
+        [operationId, operationId],
       );
       if (processed.isNotEmpty) {
         return loadProgress(workId) ??
@@ -2977,8 +3019,84 @@ final class FundusDatabase {
         ''',
         [workId, revision, operationId, snapshot, now],
       );
+      _pruneProgressRevisions(workId: workId, now: clock);
       return loadProgress(workId)!;
     });
+  }
+
+  /// Drops the progress rows nobody will ask for again.
+  ///
+  /// Kept per work: the newest row of every device, its newest
+  /// [progressCheckpointsKeptPerDevice] stop points, and the newest
+  /// [progressAutosavesKept] autosaves. The ids of dropped rows stay known
+  /// for [progressOperationMemory]; [rememberSince] limits that to rows
+  /// created after it.
+  void _pruneProgressRevisions({
+    String? workId,
+    String userId = 'default',
+    required int now,
+    int? rememberSince,
+  }) {
+    final rows = _database.select(
+      '''
+      WITH facts AS (
+        SELECT id, work_id, user_id, revision,
+          CASE WHEN json_valid(snapshot_json)
+            THEN json_extract(snapshot_json, '\$.device_id') END AS device,
+          CASE WHEN json_valid(snapshot_json)
+            THEN (CASE WHEN json_extract(snapshot_json, '\$.checkpoint') = 1
+              THEN 1 ELSE 0 END)
+            ELSE 0 END AS checkpoint
+        FROM progress_revisions
+        ${workId == null ? '' : 'WHERE work_id = ? AND user_id = ?'}
+      ), ranked AS (
+        SELECT id, checkpoint,
+          ROW_NUMBER() OVER (
+            PARTITION BY work_id, user_id, device ORDER BY revision DESC
+          ) AS device_rank,
+          ROW_NUMBER() OVER (
+            PARTITION BY work_id, user_id, device, checkpoint
+            ORDER BY revision DESC
+          ) AS device_kind_rank,
+          ROW_NUMBER() OVER (
+            PARTITION BY work_id, user_id, checkpoint ORDER BY revision DESC
+          ) AS kind_rank
+        FROM facts
+      )
+      SELECT id FROM ranked
+      WHERE device_rank > 1
+        AND NOT (checkpoint = 1 AND device_kind_rank <= ?)
+        AND NOT (checkpoint = 0 AND kind_rank <= ?)
+      ''',
+      [
+        if (workId != null) ...[workId, userId],
+        progressCheckpointsKeptPerDevice,
+        progressAutosavesKept,
+      ],
+    );
+    final ids = [for (final row in rows) row['id'] as int];
+    const chunkSize = 500;
+    for (var start = 0; start < ids.length; start += chunkSize) {
+      final end = start + chunkSize < ids.length
+          ? start + chunkSize
+          : ids.length;
+      final chunk = ids.sublist(start, end);
+      final marks = List.filled(chunk.length, '?').join(', ');
+      _database.execute(
+        'INSERT OR IGNORE INTO progress_operations (operation_id, seen_at) '
+        'SELECT operation_id, ? FROM progress_revisions '
+        'WHERE id IN ($marks) AND operation_id IS NOT NULL '
+        'AND created_at >= ?',
+        [now, ...chunk, rememberSince ?? 0],
+      );
+      _database.execute(
+        'DELETE FROM progress_revisions WHERE id IN ($marks)',
+        chunk,
+      );
+    }
+    _database.execute('DELETE FROM progress_operations WHERE seen_at < ?', [
+      now - progressOperationMemory.inMilliseconds,
+    ]);
   }
 
   PlaybackSession savePlaybackSession(
@@ -5378,6 +5496,33 @@ final class FundusDatabase {
     if (_database.userVersion == 23 && !readOnly) _migrateToVersion24();
     if (_database.userVersion == 24 && !readOnly) _migrateToVersion25();
     if (_database.userVersion == 25 && !readOnly) _migrateToVersion26();
+    if (_database.userVersion == 26 && !readOnly) _migrateToVersion27();
+  }
+
+  /// Bounds the progress history and remembers pruned operation ids.
+  void _migrateToVersion27() {
+    transaction(() {
+      _database.execute(
+        'CREATE TABLE IF NOT EXISTS progress_operations ('
+        'operation_id TEXT PRIMARY KEY, seen_at INTEGER NOT NULL) '
+        'WITHOUT ROWID',
+      );
+      _database.execute(
+        'CREATE INDEX IF NOT EXISTS progress_operations_seen_lookup '
+        'ON progress_operations (seen_at)',
+      );
+      if (tableExists('progress_revisions') &&
+          columnExists('progress_revisions', 'operation_id')) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        // Rows older than the memory window are not worth remembering: no
+        // retry of them is still on its way.
+        _pruneProgressRevisions(
+          now: now,
+          rememberSince: now - progressOperationMemory.inMilliseconds,
+        );
+      }
+      _database.userVersion = 27;
+    });
   }
 
   void _migrateToVersion26() {
