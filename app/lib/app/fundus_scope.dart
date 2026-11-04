@@ -214,9 +214,20 @@ class FundusScopeState extends State<FundusScope> with WidgetsBindingObserver {
     downloads: downloads,
   );
 
-  /// New episodes of subscribed podcasts, fetched into their folders.
+  /// New episodes of subscribed podcasts, fetched into their folders under
+  /// the device rules of „Automatisch mitnehmen".
   late final PodcastSubscriptionController podcasts =
-      PodcastSubscriptionController(library: library);
+      PodcastSubscriptionController(
+        library: library,
+        policy: () {
+          try {
+            return settings.offlinePolicy;
+          } on FormatException {
+            // An unreadable rule set means the careful defaults: Wi-Fi only.
+            return const OfflinePolicy();
+          }
+        },
+      );
 
   /// What was watched and read, told to AniList, MyAnimeList and Trakt.
   late final TrackingController tracking = TrackingController(

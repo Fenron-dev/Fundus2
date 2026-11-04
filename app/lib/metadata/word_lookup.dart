@@ -27,8 +27,10 @@ final class WordDefinition {
 ///
 /// Only ever asked on an explicit tap: the selected word is the one thing
 /// that leaves the device, never the book, its title or the position. German
-/// Wiktionary answers German texts in German; everything else is asked of
-/// the English one, which describes words of most languages.
+/// Wiktionary is asked first, for the section of the book's language: its
+/// meanings are German, which for an English novel is as good as a
+/// translation („gift (Englisch)": Geschenk, Begabung). What it does not
+/// know, English Wiktionary explains.
 final class WordLookup {
   WordLookup({http.Client? client})
     : _client = client ?? createMetadataHttpClient();
@@ -38,16 +40,25 @@ final class WordLookup {
   static const _timeout = Duration(seconds: 8);
   static const maximumMeanings = 6;
 
-  /// [language] is the book's, as an ISO code or a name; null asks German
-  /// first because the interface is German.
+  /// [language] is the book's, as an ISO code or a name; null counts as
+  /// German because the interface is German.
   Future<WordDefinition?> lookup(String word, {String? language}) async {
     final cleaned = clean(word);
     if (cleaned == null) return null;
     final german = language == null || _isGerman(language);
-    for (final variant in _variants(cleaned)) {
-      final found = german
-          ? await _german(variant) ?? await _english(variant, 'de')
-          : await _english(variant, _code(language));
+    final code = german ? 'de' : _code(language);
+    final section = german ? 'Deutsch' : _germanNames[code];
+    final variants = _variants(cleaned);
+    // German meanings for every spelling first, then English explanations:
+    // „Gift" at the start of an English sentence is still a present.
+    if (section != null) {
+      for (final variant in variants) {
+        final found = await _german(variant, section: section, strict: !german);
+        if (found != null) return found;
+      }
+    }
+    for (final variant in variants) {
+      final found = await _english(variant, code);
       if (found != null) return found;
     }
     return null;
@@ -80,7 +91,11 @@ final class WordLookup {
     return {word, lower, capital}.toList(growable: false);
   }
 
-  Future<WordDefinition?> _german(String word) async {
+  Future<WordDefinition?> _german(
+    String word, {
+    required String section,
+    required bool strict,
+  }) async {
     final uri = Uri.https('de.wiktionary.org', '/w/api.php', {
       'action': 'query',
       'format': 'json',
@@ -97,7 +112,11 @@ final class WordLookup {
       if (page is! Map || page.containsKey('missing')) continue;
       final extract = page['extract'];
       if (extract is! String) continue;
-      final parsed = parseGermanExtract(extract);
+      final parsed = parseGermanExtract(
+        extract,
+        language: section,
+        strict: strict,
+      );
       if (parsed.meanings.isEmpty) continue;
       final title = page['title'] is String ? page['title'] as String : word;
       return WordDefinition(
@@ -150,10 +169,26 @@ final class WordLookup {
   }
 
   /// Reads the „Bedeutungen" of a German Wiktionary page as plain text.
+  ///
+  /// German Wiktionary gives each language of a word a section of its own,
+  /// „== gift (Englisch) ==". With [language], only that section counts. A
+  /// page without such headings is read whole unless [strict]: German words
+  /// keep working should the layout change, while a foreign word never
+  /// borrows the meanings of a German one spelt the same.
   static ({String? partOfSpeech, List<String> meanings}) parseGermanExtract(
-    String extract,
-  ) {
-    final lines = extract.split('\n').map((line) => line.trim()).toList();
+    String extract, {
+    String? language,
+    bool strict = false,
+  }) {
+    var lines = extract.split('\n').map((line) => line.trim()).toList();
+    if (language != null) {
+      final section = _languageSection(lines, language);
+      if (section != null) {
+        lines = section;
+      } else if (strict || lines.any((line) => _languageOf(line) != null)) {
+        return (partOfSpeech: null, meanings: const []);
+      }
+    }
     String? partOfSpeech;
     final meanings = <String>[];
     var inMeanings = false;
@@ -188,6 +223,57 @@ final class WordLookup {
     }
     return (partOfSpeech: partOfSpeech, meanings: meanings);
   }
+
+  /// The lines of the section for [language], without its heading.
+  static List<String>? _languageSection(List<String> lines, String language) {
+    final wanted = language.toLowerCase();
+    for (var index = 0; index < lines.length; index++) {
+      if (_languageOf(lines[index])?.toLowerCase() != wanted) continue;
+      var end = index + 1;
+      while (end < lines.length && _sectionTitle(lines[end]) == null) {
+        end++;
+      }
+      return lines.sublist(index + 1, end);
+    }
+    return null;
+  }
+
+  /// The title of a language heading, „== gift (Englisch) ==", or null for
+  /// any other line, the „=== Substantiv ===" below it included.
+  static String? _sectionTitle(String line) {
+    final heading = RegExp(r'^(=+)\s*(.+?)\s*(=+)$').firstMatch(line);
+    if (heading == null ||
+        heading.group(1)!.length != 2 ||
+        heading.group(3)!.length != 2) {
+      return null;
+    }
+    return heading.group(2);
+  }
+
+  /// „Englisch" from „== gift (Englisch) ==".
+  static String? _languageOf(String line) {
+    final title = _sectionTitle(line);
+    if (title == null) return null;
+    return RegExp(r'\(([^()]+)\)$').firstMatch(title)?.group(1)?.trim();
+  }
+
+  /// What German Wiktionary calls a language in its section headings.
+  static const _germanNames = {
+    'en': 'Englisch',
+    'fr': 'Französisch',
+    'es': 'Spanisch',
+    'it': 'Italienisch',
+    'pt': 'Portugiesisch',
+    'nl': 'Niederländisch',
+    'sv': 'Schwedisch',
+    'da': 'Dänisch',
+    'pl': 'Polnisch',
+    'ru': 'Russisch',
+    'la': 'Latein',
+    'ja': 'Japanisch',
+    'zh': 'Chinesisch',
+    'ko': 'Koreanisch',
+  };
 
   /// Reads the REST definitions of English Wiktionary for one language.
   static ({String? partOfSpeech, List<String> meanings})

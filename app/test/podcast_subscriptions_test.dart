@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fundus/app/offline_conditions.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/podcast_subscriptions.dart';
 import 'package:fundus/metadata/podcast_feed.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -58,10 +60,11 @@ void main() {
     await root.delete(recursive: true);
   });
 
-  test('new episodes arrive, old and unsafe ones do not', () async {
+  /// A show with an old episode, a new one behind a redirect and a new one
+  /// whose redirect drops to plain http.
+  String showFeed() {
     final soon = DateTime.now().add(const Duration(days: 1));
-    final feed =
-        '''<?xml version="1.0"?>
+    return '''<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Die Sendung</title>
 <item><title>Folge 1: Alt</title><guid>ep-1</guid>
   <pubDate>Mon, 06 Jan 2020 05:00:00 +0000</pubDate>
@@ -74,8 +77,12 @@ void main() {
   <pubDate>${rfc822(soon)}</pubDate>
   <enclosure url="https://cdn.example.org/ep3.mp3" type="audio/mpeg"/></item>
 </channel></rss>''';
-    final requested = <String>[];
-    final client = MockClient.streaming((request, _) async {
+  }
+
+  /// Serves [showFeed] and its episodes, noting every address asked for.
+  MockClient showServer(List<String> requested) {
+    final feed = showFeed();
+    return MockClient.streaming((request, _) async {
       requested.add(request.url.toString());
       http.StreamedResponse respond(
         int status,
@@ -108,10 +115,15 @@ void main() {
       }
       return respond(404, const []);
     });
+  }
+
+  test('new episodes arrive, old and unsafe ones do not', () async {
+    final requested = <String>[];
+    final client = showServer(requested);
     final podcasts = PodcastSubscriptionController(
       library: library,
       client: () => client,
-      mayDownload: () async => true,
+      waitReason: () async => null,
     );
     addTearDown(podcasts.dispose);
 
@@ -138,6 +150,91 @@ void main() {
     final again = await podcasts.checkNow();
     expect(again.downloaded, 0);
     expect(requested, isNot(contains('https://mirror.example.org/ep2.mp3')));
+  });
+
+  test('the rules of „Automatisch mitnehmen" decide when episodes come', () {
+    const wifiOnly = OfflinePolicy();
+    const whileCharging = OfflinePolicy(wifiOnly: false, chargingOnly: true);
+    const anytime = OfflinePolicy(wifiOnly: false);
+    String? reason(OfflinePolicy policy, {bool? wifi, bool? charging}) =>
+        PodcastSubscriptionController.waitReasonFor(
+          policy,
+          OfflineConditions(wifi: wifi, charging: charging),
+        );
+
+    expect(reason(wifiOnly, wifi: true), isNull);
+    expect(reason(wifiOnly, wifi: false), contains('WLAN'));
+    // A network the system cannot name is not taken for Wi-Fi.
+    expect(reason(wifiOnly), contains('WLAN'));
+    expect(reason(whileCharging, wifi: false, charging: true), isNull);
+    expect(reason(whileCharging, charging: false), contains('Laden'));
+    expect(reason(anytime, wifi: false, charging: false), isNull);
+  });
+
+  test('a waiting phone fetches nothing and says why', () async {
+    final requested = <String>[];
+    final client = showServer(requested);
+    final podcasts = PodcastSubscriptionController(
+      library: library,
+      client: () => client,
+      waitReason: () async => 'Neue Folgen werden nur beim Laden geholt.',
+    );
+    addTearDown(podcasts.dispose);
+
+    final report = await podcasts.checkNow();
+    expect(report.checked, 0);
+    expect(report.skippedReason, contains('Laden'));
+    expect(podcasts.lastReport?.skippedReason, contains('Laden'));
+    expect(requested, isEmpty);
+  });
+
+  test('a full phone keeps new episodes for later', () async {
+    final requested = <String>[];
+    final client = showServer(requested);
+    final podcasts = PodcastSubscriptionController(
+      library: library,
+      client: () => client,
+      waitReason: () async => null,
+      freeBytes: (_) async => freeSpaceReserveBytes - 1,
+    );
+    addTearDown(podcasts.dispose);
+
+    final report = await podcasts.checkNow();
+    expect(report.downloaded, 0);
+    // The feed is read; no episode is even asked for.
+    expect(requested, ['https://feed.example.org/show.xml']);
+    final subscription = library.library!.podcastSubscriptions().single;
+    expect(subscription.lastError, contains('Speicher'));
+    expect(subscription.seen, contains('ep-1'));
+    expect(subscription.seen, isNot(contains('ep-2')));
+  });
+
+  test('an episode larger than the room left is not written', () async {
+    final requested = <String>[];
+    final client = showServer(requested);
+    final podcasts = PodcastSubscriptionController(
+      library: library,
+      client: () => client,
+      waitReason: () async => null,
+      // Room for the reserve and sixteen bytes; the episode has thirty-two.
+      freeBytes: (_) async => freeSpaceReserveBytes + 16,
+    );
+    addTearDown(podcasts.dispose);
+
+    final report = await podcasts.checkNow();
+    expect(report.downloaded, 0);
+    expect(requested, contains('https://mirror.example.org/ep2.mp3'));
+    final vault = library.library!;
+    final work = vault.listWorks().single;
+    expect(vault.contentFiles(work.id), hasLength(1));
+    final folder = Directory(vault.workDirectoryPath(work.id)!);
+    expect(
+      folder.listSync().where((entry) => entry.path.endsWith('.part')),
+      isEmpty,
+    );
+    final subscription = vault.podcastSubscriptions().single;
+    expect(subscription.seen, isNot(contains('ep-2')));
+    expect(subscription.lastError, isNotNull);
   });
 
   test('episode names cannot leave their folder', () {

@@ -19,6 +19,10 @@ Future<OfflineConditions> readOfflineConditions() async {
   }
 }
 
+/// What stays free beyond a download, so fetching something never fills the
+/// phone. The speech model and podcast episodes keep the same distance.
+const freeSpaceReserveBytes = 200 * 1024 * 1024;
+
 /// Free bytes where [path] lives, or null where the platform does not say.
 ///
 /// Only Android answers today. A desktop has its own disk and its own way of

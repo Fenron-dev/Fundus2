@@ -6,9 +6,6 @@ import '../../app/fundus_scope.dart';
 import '../../app/offline_conditions.dart';
 import '../settings/settings_shell.dart' show formatBytes;
 
-/// Reserve beyond the model itself, so a download never fills the phone.
-const _storageReserve = 200 * 1024 * 1024;
-
 class SpeechModelStatus extends StatelessWidget {
   const SpeechModelStatus({super.key});
   @override
@@ -67,7 +64,7 @@ Future<String?> requestSpeechModelFromServer(BuildContext context) async {
   final support = await getApplicationSupportDirectory();
   final free = await readFreeBytes(support.path);
   if (!context.mounted) return null;
-  if (free != null && free < size + _storageReserve) {
+  if (free != null && free < size + freeSpaceReserveBytes) {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(

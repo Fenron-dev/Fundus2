@@ -18,6 +18,7 @@ import '../../app/app_settings.dart';
 import '../../app/build_info.dart';
 import '../../app/fundus_log.dart';
 import '../../app/fundus_scope.dart';
+import '../../app/offline_conditions.dart';
 import '../../app/pairing_scanner.dart';
 import '../../data/library_controller.dart';
 import '../../data/media_type.dart';
@@ -2463,8 +2464,10 @@ class _PodcastSubscriptionsCard extends StatelessWidget {
                 ? 'Noch kein Podcast abonniert. Das geht in einem '
                       'Podcast-Werk mit Feed: „Neue Folgen automatisch laden".'
                 : 'Alle sechs Stunden sieht Fundus in den Feeds nach und legt '
-                      'neue Folgen in den Ordner des Podcasts — auf dem '
-                      'Telefon nur im WLAN.',
+                      'neue Folgen in den Ordner des Podcasts. Auf dem Telefon '
+                      'gelten die Regeln von „Automatisch mitnehmen" (nur WLAN, '
+                      'nur beim Laden), und es bleiben immer mindestens '
+                      '${formatBytes(freeSpaceReserveBytes)} frei.',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: tokens.textMuted,
             ),

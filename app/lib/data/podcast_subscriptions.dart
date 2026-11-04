@@ -34,19 +34,26 @@ final class PodcastCheckReport {
 /// Only what came out after subscribing counts as new: subscribing to a show
 /// with six hundred episodes must not start six hundred downloads. Every
 /// address, the feed's and each episode's, has to be HTTPS, redirects
-/// included. On a phone episodes wait for Wi-Fi.
+/// included. On a phone the device rules of „Automatisch mitnehmen" apply
+/// (only on Wi-Fi, only while charging), and no episode is fetched that
+/// would leave less than [freeSpaceReserveBytes] free.
 final class PodcastSubscriptionController extends ChangeNotifier {
   PodcastSubscriptionController({
     required this.library,
+    OfflinePolicy Function()? policy,
     http.Client Function()? client,
-    Future<bool> Function()? mayDownload,
+    Future<String?> Function()? waitReason,
+    Future<int?> Function(String path)? freeBytes,
     this.interval = const Duration(hours: 6),
   }) : _client = client ?? createMetadataHttpClient,
-       _mayDownload = mayDownload ?? _wifiOrDesktop;
+       _waitReason =
+           waitReason ?? _deviceRules(policy ?? () => const OfflinePolicy()),
+       _freeBytes = freeBytes ?? readFreeBytes;
 
   final LibraryController library;
   final http.Client Function() _client;
-  final Future<bool> Function() _mayDownload;
+  final Future<String?> Function() _waitReason;
+  final Future<int?> Function(String path) _freeBytes;
   final Duration interval;
 
   /// Larger is no episode; it is a mistake or an attack on the disk.
@@ -71,9 +78,28 @@ final class PodcastSubscriptionController extends ChangeNotifier {
     });
   }
 
-  static Future<bool> _wifiOrDesktop() async {
-    if (!Platform.isAndroid) return true;
-    return (await readOfflineConditions()).wifi == true;
+  /// The rules set for „Automatisch mitnehmen", read when a check starts. A
+  /// desktop has none of them.
+  static Future<String?> Function() _deviceRules(
+    OfflinePolicy Function() policy,
+  ) => () async {
+    if (!Platform.isAndroid) return null;
+    return waitReasonFor(policy(), await readOfflineConditions());
+  };
+
+  /// Why new episodes have to wait under [policy] right now, or null.
+  ///
+  /// A condition the system cannot confirm counts as not met, as it does for
+  /// „Automatisch mitnehmen": better an episode later than mobile data spent.
+  @visibleForTesting
+  static String? waitReasonFor(OfflinePolicy policy, OfflineConditions now) {
+    if (policy.wifiOnly && now.wifi != true) {
+      return 'Neue Folgen werden nur im WLAN geladen.';
+    }
+    if (policy.chargingOnly && now.charging != true) {
+      return 'Neue Folgen werden nur beim Laden geholt.';
+    }
+    return null;
   }
 
   Future<PodcastCheckReport> checkNow() async {
@@ -83,10 +109,11 @@ final class PodcastSubscriptionController extends ChangeNotifier {
     }
     final subscriptions = vault.podcastSubscriptions();
     if (subscriptions.isEmpty) return const PodcastCheckReport();
-    if (!await _mayDownload()) {
-      return _last = const PodcastCheckReport(
-        skippedReason: 'Neue Folgen werden nur im WLAN geladen.',
-      );
+    final waiting = await _waitReason();
+    if (waiting != null) {
+      _last = PodcastCheckReport(skippedReason: waiting);
+      _notify();
+      return _last!;
     }
     _checking = true;
     _notify();
@@ -164,6 +191,11 @@ final class PodcastSubscriptionController extends ChangeNotifier {
         seen.add(episode.identity);
         continue;
       }
+      // Not marked as seen: the episode comes once there is room again.
+      if (!await _roomFor(directory, episode.enclosureBytes)) {
+        failure ??= _noRoom;
+        break;
+      }
       try {
         final name = await _download(
           client,
@@ -174,6 +206,9 @@ final class PodcastSubscriptionController extends ChangeNotifier {
         seen.add(episode.identity);
         written.add((name: name, episode: episode));
         downloaded++;
+      } on _NoRoom {
+        failure ??= _noRoom;
+        break;
       } on Object catch (error) {
         // One broken episode must not cost the others, and an episode that
         // failed is tried again next time rather than marked as done.
@@ -229,8 +264,12 @@ final class PodcastSubscriptionController extends ChangeNotifier {
     }
     final declared = response.contentLength ?? episode.enclosureBytes;
     if (declared != null && declared > maximumEpisodeBytes) {
-      await response.stream.drain<void>();
+      await _discard(response);
       throw const FormatException('Die Folge ist unplausibel groß.');
+    }
+    if (!await _roomFor(directory.path, declared)) {
+      await _discard(response);
+      throw const _NoRoom();
     }
     final name = _uniqueName(directory, episodeFileName(episode, target));
     final file = File(p.join(directory.path, name));
@@ -312,6 +351,21 @@ final class PodcastSubscriptionController extends ChangeNotifier {
     return '$stem$suffix';
   }
 
+  static const _noRoom = 'Zu wenig freier Speicher für neue Folgen.';
+
+  /// Whether [bytes] more still leave the reserve free where [directory]
+  /// lives. Where the platform does not say, a desktop, nothing is refused.
+  Future<bool> _roomFor(String directory, int? bytes) async {
+    final free = await _freeBytes(directory);
+    if (free == null) return true;
+    return free >= (bytes ?? 0) + freeSpaceReserveBytes;
+  }
+
+  /// Ends a refused response without reading it: draining would fetch the
+  /// very bytes that were just turned down.
+  static Future<void> _discard(http.StreamedResponse response) =>
+      response.stream.listen(null).cancel();
+
   static String _uniqueName(Directory directory, String name) {
     var candidate = name;
     var counter = 2;
@@ -341,4 +395,9 @@ final class PodcastSubscriptionController extends ChangeNotifier {
     _firstCheck?.cancel();
     super.dispose();
   }
+}
+
+/// An episode that would not leave enough room on the device.
+final class _NoRoom implements Exception {
+  const _NoRoom();
 }
