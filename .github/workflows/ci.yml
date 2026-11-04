@@ -5,6 +5,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main, 'claude/**']
+    # Text-only commits need neither tests nor the preview builds that follow
+    # a green CI run.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
 
 permissions:

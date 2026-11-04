@@ -9,7 +9,7 @@ environment:
 resolution: workspace
 
 dependencies:
-  archive: ^4.0.9
+  archive: ^4.6.0
   crypto: ^3.0.7
   epubx_kuebiko: ^4.2.1
   path: ^1.9.1

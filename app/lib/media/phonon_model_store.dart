@@ -180,7 +180,8 @@ String _extractCpuModelArchive(String archivePath, String supportPath) {
   final input = InputFileStream(archivePath);
   late final Archive decoded;
   try {
-    decoded = ZipDecoder().decodeStream(input);
+    // Every entry is checked against its CRC while it streams to disk.
+    decoded = ZipDecoder().decodeStream(input, verify: true);
     final files = decoded.files.where((file) => file.isFile).toList();
     if (files.isEmpty || files.length > PhononModelStore.maxFiles) {
       throw const FormatException('Das Modellarchiv enthält zu viele Dateien.');

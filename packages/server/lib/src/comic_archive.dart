@@ -117,7 +117,11 @@ final class ComicArchiveService {
       throw const ComicArchiveException('comic_archive_too_large');
     }
     try {
-      return ZipDecoder().decodeStream(InputFileStream(path));
+      // Damaged data throws, as it did before archive 4.6 made that opt-in.
+      return ZipDecoder().decodeStream(
+        InputFileStream(path),
+        throwOnError: true,
+      );
     } catch (_) {
       throw const ComicArchiveException('comic_archive_invalid');
     }

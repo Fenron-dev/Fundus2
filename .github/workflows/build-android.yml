@@ -14,17 +14,104 @@ concurrency:
   group: build-android-preview
   cancel-in-progress: true
 
+env:
+  PHONON_REF: 49b9033e44ab0fbb935973eca3213757644d1bbb
+  # Flutter 3.41's ndkVersion; Phonon is built with the same one.
+  ANDROID_NDK_VERSION: 28.2.13676358
+  # Raise when the native build below changes in a way the cache key cannot
+  # see, for example new compiler flags or another target.
+  PHONON_CACHE_REVISION: v1
+
 jobs:
   verify:
     if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/ci.yml
-  build:
+
+  # Third-party Rust code is compiled here, in a job that never sees the
+  # signing secrets. Only the finished libraries travel on to the build job.
+  phonon:
     needs: verify
     if: >-
       always() && !cancelled() &&
       (needs.verify.result == 'success' ||
        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository))
+        github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository &&
+        !contains(github.event.workflow_run.head_commit.message, '[skip build]')))
+    runs-on: ubuntu-latest
+    env:
+      FUNDUS_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out build tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.FUNDUS_COMMIT }}
+          persist-credentials: false
+          sparse-checkout: tools
+
+      # The engine is pinned, so the same inputs always give the same
+      # libraries. A hit skips the NDK, the toolchain and the compilation.
+      - name: Reuse an earlier Phonon build
+        id: phonon-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/phonon-android
+          key: phonon-android-${{ env.PHONON_REF }}-ndk${{ env.ANDROID_NDK_VERSION }}-${{ hashFiles('tools/patch_phonon_voices.py') }}-${{ env.PHONON_CACHE_REVISION }}
+
+      - name: Set up Android NDK
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: ndk;${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Set up Rust
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+        with:
+          toolchain: stable
+          cache: false
+          # Warnings in a pinned third-party engine are not ours to fix.
+          build-warnings: warn
+
+      - name: Check out pinned Phonon engine
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: gradium-ai/xn-ptts
+          ref: ${{ env.PHONON_REF }}
+          path: .build/phonon
+          persist-credentials: false
+
+      - name: Add external Phonon voice catalogue support
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
+        run: python3 tools/patch_phonon_voices.py .build/phonon
+
+      - name: Build Phonon for Android
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
+        working-directory: .build/phonon
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS='-C strip=symbols -C link-arg=-Wl,-z,max-page-size=16384 -C target-cpu=generic -C target-feature=+dotprod,+fp16'
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS='-C strip=symbols -C link-arg=-Wl,-z,max-page-size=16384 -C target-cpu=x86-64'
+          unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --version 4.1.2 --locked
+          out="$RUNNER_TEMP/phonon-android"
+          cargo ndk -t arm64-v8a -t x86_64 -o "$out/jniLibs" build --release -p ptts-ffi --locked
+          mkdir -p "$out/assets"
+          cp LICENSE-APACHE LICENSE-MIT "$out/assets/"
+
+      - name: Hand the libraries to the build job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: phonon-android
+          path: ${{ runner.temp }}/phonon-android
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: phonon
+    if: always() && !cancelled() && needs.phonon.result == 'success'
     runs-on: ubuntu-latest
     env:
       FUNDUS_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -34,48 +121,24 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.FUNDUS_COMMIT }}
+          persist-credentials: false
 
       - name: Set up Java
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android NDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          packages: ndk;28.2.13676358
+          packages: ndk;${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+      - name: Add Phonon libraries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          toolchain: stable
-
-      - name: Check out pinned Phonon engine
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: gradium-ai/xn-ptts
-          ref: 49b9033e44ab0fbb935973eca3213757644d1bbb
-          path: .build/phonon
-          persist-credentials: false
-
-      - name: Add external Phonon voice catalogue support
-        run: python3 tools/patch_phonon_voices.py .build/phonon
-
-      - name: Build Phonon for Android
-        working-directory: .build/phonon
-        run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS='-C strip=symbols -C link-arg=-Wl,-z,max-page-size=16384 -C target-cpu=generic -C target-feature=+dotprod,+fp16'
-          export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS='-C strip=symbols -C link-arg=-Wl,-z,max-page-size=16384 -C target-cpu=x86-64'
-          unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
-          rustup target add aarch64-linux-android x86_64-linux-android
-          cargo install cargo-ndk --version 4.1.2 --locked
-          cargo ndk -t arm64-v8a -t x86_64 -o "$RUNNER_TEMP/phonon-jniLibs" build --release -p ptts-ffi --locked
-          mkdir -p "$GITHUB_WORKSPACE/app/android/app/src/main/jniLibs"
-          cp -R "$RUNNER_TEMP/phonon-jniLibs/." "$GITHUB_WORKSPACE/app/android/app/src/main/jniLibs/"
-          mkdir -p "$GITHUB_WORKSPACE/app/android/app/src/main/assets"
-          cp LICENSE-APACHE LICENSE-MIT "$GITHUB_WORKSPACE/app/android/app/src/main/assets/"
+          name: phonon-android
+          path: app/android/app/src/main
 
       # A debug key is generated on every hosted runner and cannot update an
       # APK from an earlier run. Failing here is safer than publishing an APK

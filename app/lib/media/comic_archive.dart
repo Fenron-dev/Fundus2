@@ -279,7 +279,11 @@ final class ComicArchiveService {
 
   Archive _decode(String archivePath) {
     try {
-      return ZipDecoder().decodeStream(InputFileStream(archivePath));
+      // Damaged data throws, as it did before archive 4.6 made that opt-in.
+      return ZipDecoder().decodeStream(
+        InputFileStream(archivePath),
+        throwOnError: true,
+      );
     } catch (_) {
       throw const ComicArchiveException(
         'Das Archiv ist beschädigt oder verschlüsselt.',

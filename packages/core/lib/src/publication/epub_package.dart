@@ -134,7 +134,8 @@ final class EpubPackageAdapter {
     }
     Archive archive;
     try {
-      archive = ZipDecoder().decodeBytes(bytes);
+      // Without the flag archive 4.6 returns an empty archive for non-zips.
+      archive = ZipDecoder().decodeBytes(bytes, throwOnError: true);
     } catch (_) {
       throw const EpubPackageException(
         'Die EPUB-Datei ist kein gültiges ZIP-Paket.',

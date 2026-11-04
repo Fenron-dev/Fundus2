@@ -79,6 +79,43 @@ void main() {
     },
   );
 
+  test('rejects a damaged archive and leaves no model behind', () async {
+    final zip = await _writeArchive(root, [
+      ArchiveFile.string('config.json', '{}'),
+      ArchiveFile.string('tokenizer.json', '{}'),
+      ArchiveFile.string('model.q8.gguf', 'weights-weights-weights')
+        ..compression = CompressionType.none,
+      ArchiveFile.string('default-voice.safetensors', 'voice'),
+    ]);
+    // Same length, different bytes: only the checksum can tell.
+    final bytes = await zip.readAsBytes();
+    final marker = 'weights-weights-weights'.codeUnits;
+    var at = -1;
+    for (var i = 0; i + marker.length <= bytes.length && at < 0; i++) {
+      var match = true;
+      for (var j = 0; j < marker.length && match; j++) {
+        match = bytes[i + j] == marker[j];
+      }
+      if (match) at = i;
+    }
+    expect(at, greaterThanOrEqualTo(0));
+    bytes[at] = 'W'.codeUnitAt(0);
+    await zip.writeAsBytes(bytes);
+
+    await expectLater(
+      PhononModelStore.importCpuModelArchive(
+        archivePath: zip.path,
+        applicationSupportPath: root.path,
+      ),
+      throwsFormatException,
+    );
+    final models = Directory('${root.path}/phonon-models');
+    expect(
+      models.existsSync() ? models.listSync() : const <FileSystemEntity>[],
+      isEmpty,
+    );
+  });
+
   test('rejects archives without weights or a voice', () async {
     final zip = await _writeArchive(root, [
       ArchiveFile.string('config.json', '{}'),

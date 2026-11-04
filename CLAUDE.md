@@ -29,6 +29,13 @@ und `Build Android Preview` (`workflow_dispatch` möglich). Wenn eine Änderung
 nur im echten Build überprüfbar ist, wird das gesagt und der Workflow
 angestoßen — nicht lokal kompiliert.
 
+Actions-Minuten sparen: Zwischenstände tragen `[skip ci]` in der Commit-Nachricht
+(kein CI, keine Builds), `[skip build]` lässt CI laufen, aber keine
+Vorschau-Builds. Reine Text-Commits (`docs/**`, `*.md`) lösen nichts aus.
+Phonon wird pro Plattform zwischengespeichert und nur neu gebaut, wenn sich
+Engine-Stand oder `tools/patch_phonon_voices.py` ändern; unter Android läuft
+der Phonon-Build in einem eigenen Job ohne Signatur-Secrets.
+
 ## Workspace
 
 | Ordner | Inhalt |

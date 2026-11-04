@@ -1,12 +1,25 @@
 version: 2
 updates:
+  # One grouped pull request per ecosystem and month keeps CI runs rare.
+  # Security updates are not tied to this schedule.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ['*']
     open-pull-requests-limit: 5
   - package-ecosystem: pub
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      pub-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # flutter_test pins test_api, so `test` can only move with the Flutter
+      # SDK. Lift this together with the next Flutter upgrade.
+      - dependency-name: test
+        versions: ['>=1.31.0']
     open-pull-requests-limit: 5

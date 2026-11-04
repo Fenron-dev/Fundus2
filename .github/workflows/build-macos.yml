@@ -14,6 +14,12 @@ concurrency:
   group: build-macos-preview
   cancel-in-progress: true
 
+env:
+  PHONON_REF: 49b9033e44ab0fbb935973eca3213757644d1bbb
+  # Raise when the native build below changes in a way the cache key cannot
+  # see, for example new compiler flags.
+  PHONON_CACHE_REVISION: v1
+
 jobs:
   verify:
     if: github.event_name == 'workflow_dispatch'
@@ -24,7 +30,8 @@ jobs:
       always() && !cancelled() &&
       (needs.verify.result == 'success' ||
        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository))
+        github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository &&
+        !contains(github.event.workflow_run.head_commit.message, '[skip build]')))
     runs-on: macos-latest
     env:
       FUNDUS_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -34,26 +41,46 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.FUNDUS_COMMIT }}
+          persist-credentials: false
+
+      # The engine is pinned, so the same inputs always give the same library.
+      - name: Reuse an earlier Phonon build
+        id: phonon-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/phonon-macos
+          key: phonon-macos-${{ runner.arch }}-${{ env.PHONON_REF }}-${{ hashFiles('tools/patch_phonon_voices.py') }}-${{ env.PHONON_CACHE_REVISION }}
 
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           toolchain: stable
+          cache: false
+          # Warnings in a pinned third-party engine are not ours to fix.
+          build-warnings: warn
 
       - name: Check out pinned Phonon engine
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: gradium-ai/xn-ptts
-          ref: 49b9033e44ab0fbb935973eca3213757644d1bbb
+          ref: ${{ env.PHONON_REF }}
           path: .build/phonon
           persist-credentials: false
 
       - name: Add external Phonon voice catalogue support
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
         run: python3 tools/patch_phonon_voices.py .build/phonon
 
       - name: Build Phonon for macOS
+        if: steps.phonon-cache.outputs.cache-hit != 'true'
         working-directory: .build/phonon
-        run: cargo build --release -p ptts-ffi --locked
+        run: |
+          cargo build --release -p ptts-ffi --locked
+          out="$RUNNER_TEMP/phonon-macos"
+          mkdir -p "$out"
+          cp target/release/libptts_ffi.dylib LICENSE-APACHE LICENSE-MIT "$out/"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
@@ -77,10 +104,11 @@ jobs:
       - name: Include Phonon and sign the app bundle
         run: |
           app="app/build/macos/Build/Products/Release/Fundus2.app"
-          cp .build/phonon/target/release/libptts_ffi.dylib "$app/Contents/MacOS/libptts_ffi.dylib"
+          phonon="$RUNNER_TEMP/phonon-macos"
+          cp "$phonon/libptts_ffi.dylib" "$app/Contents/MacOS/libptts_ffi.dylib"
           mkdir -p "$app/Contents/Resources"
-          cp .build/phonon/LICENSE-APACHE "$app/Contents/Resources/PHONON-LICENSE-APACHE.txt"
-          cp .build/phonon/LICENSE-MIT "$app/Contents/Resources/PHONON-LICENSE-MIT.txt"
+          cp "$phonon/LICENSE-APACHE" "$app/Contents/Resources/PHONON-LICENSE-APACHE.txt"
+          cp "$phonon/LICENSE-MIT" "$app/Contents/Resources/PHONON-LICENSE-MIT.txt"
           codesign --force --deep --sign - --entitlements app/macos/Runner/Release.entitlements "$app"
 
       - name: Verify application signature
