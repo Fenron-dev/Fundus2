@@ -444,6 +444,34 @@ class LibraryController extends ChangeNotifier {
     await dismissMetadataConflict(conflict);
   }
 
+  /// Takes over metadata and watched marks from a Plex database that was
+  /// read beforehand. Deviations from decisions made here join the conflicts
+  /// waiting for review, exactly like a sidecar's after a scan.
+  Future<PlexImportReport?> importFromPlex(
+    List<PlexItem> items, {
+    bool watchState = true,
+  }) async {
+    final library = _library;
+    if (library == null || library.isReadOnly) return null;
+    final report = await library.importPlexLibrary(
+      items,
+      watchState: watchState,
+    );
+    if (report.conflicts.isNotEmpty) {
+      final merged = {
+        for (final conflict in _metadataConflicts)
+          '${conflict.workId}:${conflict.sourcePath}': conflict,
+        for (final conflict in report.conflicts)
+          '${conflict.workId}:${conflict.sourcePath}': conflict,
+      };
+      _metadataConflicts = merged.values.toList(growable: false);
+      await library.savePendingMetadataConflicts(_metadataConflicts);
+    }
+    _reload();
+    notifyListeners();
+    return report;
+  }
+
   Future<void> dismissMetadataConflict(MetadataImportConflict conflict) async {
     _metadataConflicts = _metadataConflicts
         .where((candidate) => !identical(candidate, conflict))

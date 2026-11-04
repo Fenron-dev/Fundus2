@@ -39,11 +39,7 @@ class _MetadataImportConflictDialogState
   @override
   Widget build(BuildContext context) {
     final conflict = widget.conflict;
-    final source = switch (conflict.source) {
-      WorkMetadataSource.fero => 'Fero',
-      WorkMetadataSource.abs => 'Audiobookshelf',
-      _ => conflict.source.name,
-    };
+    final source = _sourceLabel(conflict.source);
     return AlertDialog(
       title: const Text('Metadaten-Konflikt'),
       content: SizedBox(
@@ -246,6 +242,9 @@ class _MetadataImportConflictInboxState
 String _sourceLabel(WorkMetadataSource source) => switch (source) {
   WorkMetadataSource.fero => 'Fero',
   WorkMetadataSource.abs => 'Audiobookshelf',
+  WorkMetadataSource.nfo => 'der NFO-Datei',
+  WorkMetadataSource.calibre => 'Calibre',
+  WorkMetadataSource.plex => 'Plex',
   _ => source.name,
 };
 

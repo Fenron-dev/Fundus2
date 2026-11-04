@@ -6,6 +6,8 @@ export 'src/import/abs_metadata.dart';
 export 'src/import/embedded_cover.dart';
 export 'src/import/media_areas.dart';
 export 'src/import/mediavault_metadata.dart';
+export 'src/import/plex_library.dart';
+export 'src/import/sidecar_metadata.dart';
 export 'src/import/document_importer.dart';
 export 'src/library/fundus_library.dart';
 export 'src/library/remote_catalogue.dart';

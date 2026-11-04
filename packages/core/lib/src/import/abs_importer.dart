@@ -4,7 +4,24 @@ import 'abs_metadata.dart';
 import 'media_areas.dart';
 import '../scan/library_scanner.dart';
 
-enum WorkMetadataSource { filename, embedded, abs, sidecar, online, user, fero }
+enum WorkMetadataSource {
+  filename,
+  embedded,
+  abs,
+  sidecar,
+  online,
+  user,
+  fero,
+
+  /// Kodi, Jellyfin or Emby `.nfo`.
+  nfo,
+
+  /// Calibre `metadata.opf`.
+  calibre,
+
+  /// A Plex Media Server database.
+  plex,
+}
 
 final class AbsBookIdentity {
   const AbsBookIdentity({

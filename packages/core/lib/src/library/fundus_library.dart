@@ -17,6 +17,8 @@ import '../import/document_importer.dart';
 import '../import/embedded_cover.dart';
 import '../import/media_areas.dart';
 import '../import/mediavault_metadata.dart';
+import '../import/plex_library.dart';
+import '../import/sidecar_metadata.dart';
 import '../model/device_profile.dart';
 import '../model/fundus_id.dart';
 import '../model/content_updates.dart';
@@ -2981,6 +2983,166 @@ final class FundusLibrary {
     await _writeMetadataSidecar(conflict.workId);
   }
 
+  /// Takes over what a Plex server knew about the works in this vault.
+  ///
+  /// Works are found by their files' names and sizes, so it does not matter
+  /// that Plex sees the same files under another path or on another
+  /// machine. Fields somebody set by hand or matched online are not
+  /// overwritten: they come back as conflicts to review, like a sidecar's.
+  /// With [watchState], what was watched in Plex is marked as seen, and a
+  /// position is taken only for a work Fundus has no position for yet.
+  Future<PlexImportReport> importPlexLibrary(
+    List<PlexItem> items, {
+    bool watchState = true,
+  }) async {
+    _ensureWritable();
+    final byId = {for (final item in items) item.id: item};
+    String key(String filename, int size) =>
+        '${filename.toLowerCase()}\u0000$size';
+    final byFile = <String, PlexItem>{};
+    for (final item in items) {
+      for (final file in item.files) {
+        byFile.putIfAbsent(key(file.filename, file.size), () => item);
+      }
+    }
+    PlexItem? owner(PlexItem item) => switch (item.type) {
+      PlexItem.episode => byId[byId[item.parentId]?.parentId],
+      PlexItem.track => byId[item.parentId],
+      _ => item,
+    };
+    final conflicts = <MetadataImportConflict>[];
+    var matched = 0;
+    var updated = 0;
+    var watched = 0;
+    for (final work in listWorks()) {
+      if (work.sourceId != FundusDatabase.localSourceId) continue;
+      final hits = [
+        for (final file in contentFiles(work.id))
+          if (byFile[key(file.filename, file.sizeBytes)] case final item?)
+            (fileId: file.fileId, item: item),
+      ];
+      if (hits.isEmpty) continue;
+      final described = owner(hits.first.item);
+      if (described == null) continue;
+      matched++;
+      final artist = described.type == PlexItem.album
+          ? byId[described.parentId]?.title
+          : null;
+      final incoming = <String, Object?>{
+        if (described.title.isNotEmpty) 'title': described.title,
+        'description': described.summary,
+        'published_year': described.year,
+        'genres': described.genres,
+        'publisher': described.studio,
+        if (described.type == PlexItem.movie && described.directors.isNotEmpty)
+          'authors': described.directors,
+        if (artist != null && artist.isNotEmpty) 'authors': [artist],
+        if (described.originalTitle != null &&
+            described.originalTitle != described.title)
+          'alternate_titles': [described.originalTitle!],
+      };
+      final conflict = _metadataConflict(
+        work,
+        sourcePath: work.sourcePath,
+        source: WorkMetadataSource.plex,
+        incoming: incoming,
+      );
+      if (conflict != null) conflicts.add(conflict);
+      final contested = {
+        for (final field in conflict?.fields ?? const []) field.field,
+      };
+      final current = <String, Object?>{
+        'title': work.title,
+        'description': work.description,
+        'published_year': work.publishedYear,
+        'genres': work.genres,
+        'publisher': work.publisher,
+        'authors': work.authors,
+        'alternate_titles': work.alternateTitles,
+      };
+      final fields = <String, Object?>{
+        for (final entry in incoming.entries)
+          if (!contested.contains(entry.key) &&
+              !_metadataValueIsEmpty(entry.value) &&
+              !_sameMetadataValue(current[entry.key], entry.value) &&
+              _plexMayFill(work.metadataOrigins[entry.key]?.source))
+            entry.key: entry.value,
+        if (described.externalIds.isNotEmpty)
+          'external_ids': described.externalIds,
+      };
+      if (fields.isNotEmpty) {
+        _database.recordMetadataMutation(
+          workId: work.id,
+          source: WorkMetadataSource.plex.name,
+          action: () => _database.applyImportedMetadataFields(
+            workId: work.id,
+            fields: fields,
+            source: WorkMetadataSource.plex,
+          ),
+        );
+        _database.derivePeopleFromMetadata(workId: work.id);
+        await _writeMetadataSidecar(work.id);
+        updated++;
+      }
+      if (watchState && _importPlexWatchState(work.id, hits)) watched++;
+    }
+    await persistMetadataHistory();
+    return PlexImportReport(
+      items: items.length,
+      matchedWorks: matched,
+      updatedWorks: updated,
+      watchedWorks: watched,
+      conflicts: conflicts,
+    );
+  }
+
+  /// Plex fills what came from file names, tags or another import; never
+  /// what a person decided.
+  static bool _plexMayFill(WorkMetadataSource? origin) =>
+      origin != WorkMetadataSource.user && origin != WorkMetadataSource.online;
+
+  /// Seen files are marked; a position only where Fundus has none.
+  bool _importPlexWatchState(
+    String workId,
+    List<({String fileId, PlexItem item})> hits,
+  ) {
+    var changed = false;
+    final seen = finishedFiles(workId);
+    for (final hit in hits) {
+      if (hit.item.watched && !seen.contains(hit.fileId)) {
+        setFileFinished(workId: workId, fileId: hit.fileId, finished: true);
+        changed = true;
+      }
+    }
+    if (loadProgress(workId) != null) return changed;
+    // The latest thing that was being watched, else the latest finished.
+    final candidates = [...hits]
+      ..sort(
+        (a, b) => (b.item.lastViewedAt ?? DateTime(0)).compareTo(
+          a.item.lastViewedAt ?? DateTime(0),
+        ),
+      );
+    final latest = candidates
+        .where((hit) => hit.item.viewOffset != null || hit.item.watched)
+        .firstOrNull;
+    if (latest == null) return changed;
+    saveMediaProgress(
+      workId: workId,
+      fileId: latest.fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.time,
+        numericValue:
+            (latest.item.viewOffset ?? Duration.zero).inMilliseconds / 1000,
+        fileId: latest.fileId,
+      ),
+      finished: latest.item.watched && latest.item.viewOffset == null,
+      deviceId: 'plex-import',
+      deviceName: 'Plex',
+      updatedAt: latest.item.lastViewedAt,
+    );
+    return true;
+  }
+
   Future<LibraryWorkSummary> updateWorkKind({
     required String workId,
     required String kind,
@@ -3396,7 +3558,7 @@ final class FundusLibrary {
         final conflict = _metadataConflict(
           existing,
           sourcePath: candidate.directory,
-          source: WorkMetadataSource.fero,
+          source: enriched.metadataSource,
           incoming: {
             ...imported.toDatabaseMetadata(),
             if (imported.title != null) 'title': imported.title,
@@ -3736,38 +3898,18 @@ final class FundusLibrary {
           .list(followLinks: false)
           .where((entity) => entity is File)
           .cast<File>()
-          .where((file) {
-            final name = p.basename(file.path).toLowerCase();
-            return !name.startsWith('._') &&
-                (name == 'metadata.json' ||
-                    name == 'fero.info.json' ||
-                    name.endsWith('.mediavault.yaml') ||
-                    name.endsWith('.mediavault.json'));
-          })
+          .where((file) => !p.basename(file.path).startsWith('._'))
           .toList();
       if (files.isEmpty) return candidate;
-      File selected = files.first;
       final stems = {
         for (final file in candidate.contentFiles)
           p.basenameWithoutExtension(file.filename).toLowerCase(),
       };
-      for (final file in files) {
-        final name = p.basename(file.path).toLowerCase();
-        final suffix = name == 'metadata.json' || name == 'fero.info.json'
-            ? name
-            : name.endsWith('.mediavault.json')
-            ? '.mediavault.json'
-            : '.mediavault.yaml';
-        final stem = suffix == 'metadata.json' || suffix == 'fero.info.json'
-            ? ''
-            : name.substring(0, name.length - suffix.length);
-        if (stem.isNotEmpty && stems.contains(stem)) {
-          selected = file;
-          break;
-        }
-      }
-      final metadata = await const MediaVaultMetadataReader().read(selected);
-      if (metadata == null) return candidate;
+      final found =
+          await _feroSidecar(files, stems) ??
+          await _foreignSidecar(candidate, directory, files, stems);
+      if (found == null) return candidate;
+      final metadata = found.metadata;
       final wantedCover = metadata.coverPath?.replaceAll('\\', '/');
       final selectedCover = wantedCover == null
           ? null
@@ -3783,7 +3925,7 @@ final class FundusLibrary {
         title: metadata.title ?? candidate.title,
         metadata: {...candidate.metadata, ...metadata.toDatabaseMetadata()},
         coverFile: selectedCover,
-        metadataSource: WorkMetadataSource.fero,
+        metadataSource: found.source,
         mediaVaultMetadata: metadata,
       );
     } on FileSystemException {
@@ -3791,6 +3933,96 @@ final class FundusLibrary {
     } on YamlException {
       return candidate;
     }
+  }
+
+  /// A Fero/MediaVault export, preferring the one named after a content file.
+  Future<({MediaVaultMetadata metadata, WorkMetadataSource source})?>
+  _feroSidecar(List<File> files, Set<String> stems) async {
+    final fero = files.where((file) {
+      final name = p.basename(file.path).toLowerCase();
+      return name == 'metadata.json' ||
+          name == 'fero.info.json' ||
+          name.endsWith('.mediavault.yaml') ||
+          name.endsWith('.mediavault.json');
+    }).toList();
+    if (fero.isEmpty) return null;
+    File selected = fero.first;
+    for (final file in fero) {
+      final name = p.basename(file.path).toLowerCase();
+      final suffix = name == 'metadata.json' || name == 'fero.info.json'
+          ? name
+          : name.endsWith('.mediavault.json')
+          ? '.mediavault.json'
+          : '.mediavault.yaml';
+      final stem = suffix == 'metadata.json' || suffix == 'fero.info.json'
+          ? ''
+          : name.substring(0, name.length - suffix.length);
+      if (stem.isNotEmpty && stems.contains(stem)) {
+        selected = file;
+        break;
+      }
+    }
+    final metadata = await const MediaVaultMetadataReader().read(selected);
+    return metadata == null
+        ? null
+        : (metadata: metadata, source: WorkMetadataSource.fero);
+  }
+
+  /// What Kodi, Jellyfin, Emby or Calibre left in the work's folder.
+  ///
+  /// Folder-wide names (`movie.nfo`, `tvshow.nfo`, `metadata.opf`) count
+  /// only for a work that is a folder: beside a loose file directly in a
+  /// media root they would describe every other loose file too.
+  Future<({MediaVaultMetadata metadata, WorkMetadataSource source})?>
+  _foreignSidecar(
+    DocumentImportCandidate candidate,
+    Directory directory,
+    List<File> files,
+    Set<String> stems,
+  ) async {
+    final folder = !FileSystemEntity.isFileSync(
+      _safeWorkDirectory(candidate.directory).path,
+    );
+    File? named(String name) => files
+        .where((file) => p.basename(file.path).toLowerCase() == name)
+        .firstOrNull;
+    switch (candidate.kind) {
+      case 'movie' || 'tv' || 'anime':
+        final episodic = candidate.kind != 'movie' && stems.length > 1;
+        final byStem = episodic
+            ? null
+            : files.where((file) {
+                final name = p.basename(file.path).toLowerCase();
+                return name.endsWith('.nfo') &&
+                    stems.contains(name.substring(0, name.length - 4));
+              }).firstOrNull;
+        final file =
+            byStem ??
+            (folder
+                ? (candidate.kind == 'movie'
+                      ? named('movie.nfo')
+                      : named('tvshow.nfo'))
+                : null);
+        if (file == null) return null;
+        final metadata = await const NfoMetadataReader().read(file);
+        return metadata == null
+            ? null
+            : (metadata: metadata, source: WorkMetadataSource.nfo);
+      case 'book' ||
+          'ebook' ||
+          'webnovel' ||
+          'light_novel' ||
+          'novel' ||
+          'manga' ||
+          'comic':
+        final file = folder ? named('metadata.opf') : null;
+        if (file == null) return null;
+        final metadata = await const CalibreOpfReader().read(file);
+        return metadata == null
+            ? null
+            : (metadata: metadata, source: WorkMetadataSource.calibre);
+    }
+    return null;
   }
 
   Future<void> _importMediaVaultAnnotations(
@@ -3819,11 +4051,17 @@ final class FundusLibrary {
     }
     final rating = metadata.externalRating;
     if (rating != null) {
+      // Each manager rates on its own scale, so each gets its own column.
+      final ratingName = switch (candidate.metadataSource) {
+        WorkMetadataSource.nfo => 'NFO-Wertung',
+        WorkMetadataSource.calibre => 'Calibre-Wertung',
+        _ => 'Fero-Wertung',
+      };
       final existing = _database
           .listPropertyDefinitions(mediaKind: candidate.kind)
           .where(
             (definition) =>
-                definition.name.toLowerCase() == 'fero-wertung' &&
+                definition.name.toLowerCase() == ratingName.toLowerCase() &&
                 definition.valueType == PropertyValueType.number,
           )
           .firstOrNull;
@@ -3831,14 +4069,14 @@ final class FundusLibrary {
           existing ??
           _database.savePropertyDefinition(
             mediaKind: candidate.kind,
-            name: 'Fero-Wertung',
+            name: ratingName,
             valueType: PropertyValueType.number,
           );
       _database.setWorkProperty(
         workId: workId,
         definitionId: definition.id,
         value: rating,
-        source: 'fero',
+        source: candidate.metadataSource.name,
       );
     }
   }

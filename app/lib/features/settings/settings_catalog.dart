@@ -61,7 +61,9 @@ abstract final class SettingsAreas {
       key: 'metadaten',
       label: 'Metadaten & Quellen',
       icon: FundusIcons.search,
-      description: 'Zugangsdaten für TMDB, MyAnimeList und Hardcover.',
+      description:
+          'Zugangsdaten für TMDB, MyAnimeList und Hardcover; Übernahme aus '
+          'Plex, Kodi, Jellyfin und Calibre.',
     ),
     SettingsArea(
       key: 'benachrichtigungen',

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide RepeatMode;
@@ -2372,6 +2373,9 @@ class _MetadataState extends State<_Metadata> {
               },
             ),
           ),
+        const _SidecarImportCard(),
+        if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+          const _PlexImportCard(),
         SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2391,6 +2395,154 @@ class _MetadataState extends State<_Metadata> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// What other media managers left beside the files is read on every scan.
+class _SidecarImportCard extends StatelessWidget {
+  const _SidecarImportCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SettingsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Vorhandene Metadaten', style: theme.textTheme.titleMedium),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Beim Scan liest Fundus, was andere Programme neben den Dateien '
+            'abgelegt haben: NFO-Dateien von Kodi, Jellyfin und Emby '
+            '(movie.nfo, tvshow.nfo oder wie der Film benannt) und '
+            'metadata.opf von Calibre. Eine Calibre-Bibliothek wird dabei '
+            'Buch für Buch erfasst. Was du selbst geändert hast, bleibt; '
+            'Abweichungen erscheinen zur Prüfung.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: context.fundus.textMuted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Takes over metadata and watched marks from a Plex database.
+class _PlexImportCard extends StatefulWidget {
+  const _PlexImportCard();
+
+  @override
+  State<_PlexImportCard> createState() => _PlexImportCardState();
+}
+
+class _PlexImportCardState extends State<_PlexImportCard> {
+  bool _watchState = true;
+  bool _working = false;
+  String? _result;
+
+  static String get _databaseHint => Platform.isMacOS
+      ? '~/Library/Application Support/Plex Media Server/Plug-in Support/Databases'
+      : Platform.isWindows
+      ? '%LOCALAPPDATA%\\Plex Media Server\\Plug-in Support\\Databases'
+      : '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases';
+
+  Future<void> _import() async {
+    final library = FundusScope.of(context).library;
+    final picked = await FilePicker.pickFiles(
+      dialogTitle: 'Plex-Datenbank auswählen (com.plexapp.plugins.library.db)',
+    );
+    final path = picked?.files.single.path;
+    if (path == null || !mounted) return;
+    setState(() {
+      _working = true;
+      _result = null;
+    });
+    try {
+      // Copying and reading a large database is no work for the UI thread.
+      final items = await Isolate.run(
+        () => const PlexLibraryReader().read(File(path)),
+      );
+      final report = await library.importFromPlex(
+        items,
+        watchState: _watchState,
+      );
+      if (!mounted) return;
+      setState(() {
+        _result = report == null
+            ? 'Dafür muss eine beschreibbare Bibliothek geöffnet sein.'
+            : report.matchedWorks == 0
+            ? 'Plex kennt ${report.items} Einträge, aber keinen davon an '
+                  'denselben Dateien wie diese Bibliothek. Fundus vergleicht '
+                  'Dateiname und Größe.'
+            : '${report.matchedWorks} Werke erkannt, ${report.updatedWorks} '
+                  'ergänzt'
+                  '${_watchState ? ', ${report.watchedWorks} mit Gesehen-Status' : ''}'
+                  '${report.conflicts.isEmpty ? '.' : '. ${report.conflicts.length} Abweichungen von deinen Angaben warten auf Prüfung.'}';
+      });
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _result = error.message);
+    } on FileSystemException {
+      if (mounted) {
+        setState(() => _result = 'Die Datei ließ sich nicht lesen.');
+      }
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = context.fundus;
+    return SettingsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Aus Plex übernehmen', style: theme.textTheme.titleMedium),
+          const SizedBox(height: FundusSpace.x2),
+          Text(
+            'Fundus liest eine Kopie der Plex-Datenbank und ändert an Plex '
+            'nichts. Werke werden an Dateiname und Größe erkannt, auch wenn '
+            'Plex auf einem anderen Rechner läuft. Die Datei heißt '
+            'com.plexapp.plugins.library.db und liegt meist unter: '
+            '$_databaseHint',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: tokens.textMuted,
+            ),
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Gesehen-Status übernehmen'),
+            subtitle: const Text(
+              'Gesehenes wird markiert; eine Position nur bei Werken, '
+              'für die Fundus noch keine kennt.',
+            ),
+            value: _watchState,
+            onChanged: _working
+                ? null
+                : (value) => setState(() => _watchState = value),
+          ),
+          const SizedBox(height: FundusSpace.x2),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: _working ? null : _import,
+                icon: Icon(FundusIcons.folder, size: FundusIcons.sizeSm),
+                label: Text(
+                  _working ? 'Wird übernommen …' : 'Datenbank wählen …',
+                ),
+              ),
+            ],
+          ),
+          if (_result case final result?) ...[
+            const SizedBox(height: FundusSpace.x2),
+            Text(result, style: theme.textTheme.bodyMedium),
+          ],
+        ],
+      ),
     );
   }
 }

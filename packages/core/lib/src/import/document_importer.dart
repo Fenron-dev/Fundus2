@@ -219,6 +219,7 @@ final class DocumentImporter {
 
   List<DocumentImportCandidate> group(Iterable<ScannedFile> files) {
     final grouped = <String, _DocumentGroup>{};
+    final calibreBooks = _calibreBookFolders(files);
     for (final file in files) {
       final subtitle = subtitleExtensions.contains(file.extension);
       if (!subtitle && !_extensions.contains(file.extension)) continue;
@@ -234,11 +235,20 @@ final class DocumentImporter {
           (standalone || !DocumentImportCandidate._videoKinds.contains(kind))) {
         continue;
       }
+      // A Calibre library is Autor/Titel (id)/: there the book folder is the
+      // work, not the author, or every author would become one huge work.
+      final calibreBook = standalone || !_calibreKinds.contains(kind)
+          ? null
+          : _owningCalibreBook(file.relativePath, calibreBooks);
       final sourcePath = standalone
           ? file.relativePath
-          : p.posix.join(rootPath, remainder.first);
+          : calibreBook ?? p.posix.join(rootPath, remainder.first);
       final title = standalone
           ? p.basenameWithoutExtension(file.filename)
+          : calibreBook != null
+          ? p.posix
+                .basename(calibreBook)
+                .replaceFirst(RegExp(r'\s*\(\d+\)$'), '')
           : remainder.first;
       final key = '$kind\u0000$sourcePath';
       final group = grouped.putIfAbsent(
@@ -277,6 +287,41 @@ final class DocumentImporter {
           : left.title.toLowerCase().compareTo(right.title.toLowerCase());
     });
     return candidates;
+  }
+
+  static const _calibreKinds = {'ebook', 'book', 'webnovel', 'manga'};
+
+  /// Book folders of Calibre libraries: a folder with `metadata.opf` below
+  /// a folder that holds Calibre's own `metadata.db`.
+  static Set<String> _calibreBookFolders(Iterable<ScannedFile> files) {
+    final libraries = <String>{};
+    final books = <String>[];
+    for (final file in files) {
+      final name = file.filename.toLowerCase();
+      final directory = p.posix.dirname(file.relativePath);
+      if (name == 'metadata.db') libraries.add(directory);
+      if (name == 'metadata.opf') books.add(directory);
+    }
+    if (libraries.isEmpty) return const {};
+    return {
+      for (final book in books)
+        if (libraries.any(
+          (library) =>
+              library != book &&
+              (library == '.' || p.posix.isWithin(library, book)),
+        ))
+          book,
+    };
+  }
+
+  static String? _owningCalibreBook(String path, Set<String> books) {
+    if (books.isEmpty) return null;
+    var directory = p.posix.dirname(path);
+    while (directory != '.' && directory != '/' && directory.isNotEmpty) {
+      if (books.contains(directory)) return directory;
+      directory = p.posix.dirname(directory);
+    }
+    return null;
   }
 
   /// The picture that stands for a work.

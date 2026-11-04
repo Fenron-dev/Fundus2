@@ -1966,6 +1966,7 @@ final class FundusDatabase {
       'published_year',
       'genres',
       'publication_status',
+      'external_ids',
     };
     final rows = _database.select(
       'SELECT title, metadata_json FROM works WHERE id = ?',
@@ -1982,7 +1983,22 @@ final class FundusDatabase {
       if (!allowed.contains(entry.key) || _emptyMetadataValue(entry.value)) {
         continue;
       }
-      metadata[entry.key] = entry.value;
+      if (entry.key == 'external_ids') {
+        // Ids add up: one an import does not know is not wrong, and one
+        // somebody set by hand is kept.
+        final incoming = entry.value;
+        if (incoming is! Map) continue;
+        final existing = metadata['external_ids'];
+        metadata['external_ids'] = {
+          for (final id in incoming.entries)
+            if (id.key is String && id.value is String) id.key: id.value,
+          if (existing is Map)
+            for (final id in existing.entries)
+              if (id.key is String && id.value is String) id.key: id.value,
+        };
+      } else {
+        metadata[entry.key] = entry.value;
+      }
       origins[entry.key] = WorkMetadataOrigin(
         source: source,
         updatedAt: changedAt,
@@ -2293,6 +2309,9 @@ final class FundusDatabase {
     WorkMetadataSource.sidecar => 3,
     WorkMetadataSource.abs => 3,
     WorkMetadataSource.fero => 3,
+    WorkMetadataSource.nfo => 3,
+    WorkMetadataSource.calibre => 3,
+    WorkMetadataSource.plex => 3,
     WorkMetadataSource.online => 4,
     WorkMetadataSource.user => 5,
   };
