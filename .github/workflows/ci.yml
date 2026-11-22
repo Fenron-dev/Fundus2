@@ -45,7 +45,10 @@ jobs:
 
       - name: Test core
         working-directory: packages/core
-        run: dart test
+        # SQLite/vault integration tests contend for runner I/O when the
+        # default file parallelism is high; keep their 30-second test timeout
+        # meaningful instead of timing out unrelated fixtures under load.
+        run: dart test --concurrency=2
 
       - name: Test server
         working-directory: packages/server
