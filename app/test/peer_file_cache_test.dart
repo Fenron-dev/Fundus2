@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/media/peer_file_cache.dart';
@@ -13,6 +14,7 @@ void main() {
         final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
         var version = 1;
         final ranges = <String?>[];
+        final firstBytesObserved = Completer<void>();
         upstream.listen((request) async {
           final range = request.headers.value(HttpHeaders.rangeHeader);
           ranges.add(range);
@@ -34,6 +36,14 @@ void main() {
             for (var i = start; i < length; i += 4096) {
               request.response.add(List.filled(4096, version));
               await request.response.flush();
+              // Hold the first transfer until the client has actually seen
+              // bytes. A fixed 3 ms sleep could let Linux buffer the entire
+              // response before the pause callback ran, making this flaky.
+              if (range == null && version == 1 && i == 61440) {
+                await firstBytesObserved.future.timeout(
+                  const Duration(seconds: 5),
+                );
+              }
               await Future<void>.delayed(const Duration(milliseconds: 3));
             }
             await request.response.close();
@@ -66,7 +76,12 @@ void main() {
           cache.fileFor(
             track,
             mayTransfer: () async => received < 16384,
-            onBytes: (bytes, _) => received = bytes,
+            onBytes: (bytes, _) {
+              received = bytes;
+              if (bytes >= 16384 && !firstBytesObserved.isCompleted) {
+                firstBytesObserved.complete();
+              }
+            },
           ),
           throwsA(isA<TransferPaused>()),
         );
