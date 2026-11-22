@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf.dart';
@@ -103,6 +104,67 @@ void main() {
       containsAll(<String>['Der Server-Test', 'Danach']),
     );
   });
+
+  test(
+    'catalogue index hashes match entries and change after an edit',
+    () async {
+      final path = '/v1/libraries/${firstLibrary.manifest.libraryId}';
+      Future<String> indexedHash() async {
+        final response = await _get(server, '$path/catalogue/index');
+        expect(response.statusCode, 200);
+        final rows = (await _json(response))['works'] as List<dynamic>;
+        return (rows.single as Map<String, dynamic>)['hash'] as String;
+      }
+
+      final before = await indexedHash();
+      final catalogue = await _json(await _get(server, '$path/catalogue'));
+      final entry = (catalogue['works'] as List<dynamic>).single;
+      expect(
+        before,
+        sha256
+            .convert(utf8.encode(jsonEncode(entry)))
+            .toString()
+            .substring(0, 16),
+      );
+
+      await firstLibrary.updateWorkMetadata(
+        workId: work.id,
+        title: 'Der geänderte Server-Test',
+        authors: work.authors,
+      );
+      final after = await indexedHash();
+      expect(after, isNot(before));
+      expect(await indexedHash(), after);
+    },
+  );
+
+  test(
+    'a cold catalogue index yields before finishing a large vault',
+    () async {
+      final documents = Directory('${firstLibrary.root.path}/Documents');
+      await documents.create();
+      for (var index = 0; index < 70; index++) {
+        await File('${documents.path}/Document-$index.pdf').writeAsBytes([1]);
+      }
+      await firstLibrary.index().drain<void>();
+      expect(firstLibrary.listWorks().length, greaterThan(32));
+
+      var completed = false;
+      final indexRequest =
+          _get(
+            server,
+            '/v1/libraries/${firstLibrary.manifest.libraryId}/catalogue/index',
+          ).then((response) {
+            completed = true;
+            return response;
+          });
+      await Future<void>.delayed(Duration.zero);
+      expect(completed, isFalse);
+      final response = await indexRequest;
+      expect(response.statusCode, 200);
+      expect((await _json(response))['works'], hasLength(71));
+    },
+  );
 
   test('a file added after sharing began can be fetched', () async {
     final folder = Directory(

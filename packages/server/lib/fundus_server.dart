@@ -95,6 +95,12 @@ final class SharedFundusLibrary {
 
   List<LibraryPlaybackTrack> tracksFor(String workId) {
     _ensureFresh();
+    return _tracksForCurrentSnapshot(workId);
+  }
+
+  /// A catalogue response already checked the revision once before taking
+  /// its work snapshot. Do not hit SQLite again for every file of every work.
+  List<LibraryPlaybackTrack> _tracksForCurrentSnapshot(String workId) {
     return _tracksByWork.putIfAbsent(workId, () {
       final tracks = library.playbackTracks(workId);
       final work = _worksById[workId];
@@ -680,31 +686,50 @@ final class FundusServerHandler {
   ///
   /// With `?ids=` it answers only for those works, which is how a mirror that
   /// already has most of the catalogue asks for the rest.
-  Response _catalogue(Request request, String libraryId) {
+  Future<Response> _catalogue(Request request, String libraryId) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
     final wanted = _idsParameter(request);
-    final visible = [
-      for (final work in entry.works)
-        if (_canViewWork(request, work))
-          if (wanted == null || wanted.contains(work.id)) work,
-    ];
-    // Explicit id batches are already bounded by the mirror. Cursor pages
-    // keep an initial catalogue response small without changing old clients.
-    final pageSize = wanted == null ? 100 : visible.length;
-    final cursor =
-        int.tryParse(request.url.queryParameters['cursor'] ?? '') ?? 0;
-    final start = cursor.clamp(0, visible.length).toInt();
-    final page = visible.skip(start).take(pageSize);
-    final next = start + page.length;
+    final includeProtected = _canViewAdult(request);
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final visible = [
+        for (final work in entry.works)
+          if (_canViewWork(request, work))
+            if (wanted == null || wanted.contains(work.id)) work,
+      ];
+      final revision = entry._revision;
+      // Explicit id batches are already bounded by the mirror. Cursor pages
+      // keep an initial catalogue response small without changing old clients.
+      final pageSize = wanted == null ? 100 : visible.length;
+      final cursor =
+          int.tryParse(request.url.queryParameters['cursor'] ?? '') ?? 0;
+      final start = cursor.clamp(0, visible.length).toInt();
+      final page = visible.skip(start).take(pageSize);
+      final rows = <Map<String, Object?>>[];
+      final hashes = <String, String>{};
+      for (final work in page) {
+        final value = _catalogueEntry(entry, work, includeProtected);
+        rows.add(value);
+        hashes['${work.id}:$includeProtected'] = _hashOf(value);
+        if (rows.length % 16 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+      if (entry.library.catalogueRevision == revision &&
+          entry._revision == revision) {
+        entry._catalogueHashes.addAll(hashes);
+        final next = start + rows.length;
+        return _json({
+          'library_id': libraryId,
+          'works': rows,
+          if (next < visible.length) 'next_cursor': '$next',
+        });
+      }
+      entry.invalidate();
+    }
     return _json({
-      'library_id': libraryId,
-      'works': [
-        for (final work in page)
-          _catalogueEntryAndRemember(entry, work, _canViewAdult(request)),
-      ],
-      if (next < visible.length) 'next_cursor': '$next',
-    });
+      'error': 'catalogue_changed',
+    }, statusCode: HttpStatus.serviceUnavailable);
   }
 
   /// The catalogue as a list of „this work, in this state".
@@ -714,34 +739,44 @@ final class FundusServerHandler {
   /// covers the whole record, so nothing can change without it changing —
   /// no timestamp to keep up to date, and nothing to get wrong when a field
   /// is added later.
-  Response _catalogueIndex(Request request, String libraryId) {
+  Future<Response> _catalogueIndex(Request request, String libraryId) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
+    final includeProtected = _canViewAdult(request);
+    // A cold index used to hold the UI/server isolate through the entire
+    // vault. Give player, pairing and health requests a turn between batches.
+    // This does not interrupt a single slow SQLite/SMB operation; moving the
+    // database itself to a worker is a separate architectural change.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final works = entry.works;
+      final revision = entry._revision;
+      final hashes = <String, String>{};
+      final rows = <Map<String, String>>[];
+      var processed = 0;
+      for (final work in works) {
+        if (!_canViewWork(request, work)) continue;
+        final key = '${work.id}:$includeProtected';
+        final hash =
+            entry._catalogueHashes[key] ??
+            _hashOf(_catalogueEntry(entry, work, includeProtected));
+        hashes[key] = hash;
+        rows.add({'id': work.id, 'hash': hash});
+        if (++processed % 32 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+      // A scan or edit may have run during a yield. Never publish a mixed
+      // revision or populate the cache with hashes from two catalogue states.
+      if (entry.library.catalogueRevision == revision &&
+          entry._revision == revision) {
+        entry._catalogueHashes.addAll(hashes);
+        return _json({'library_id': libraryId, 'works': rows});
+      }
+      entry.invalidate();
+    }
     return _json({
-      'library_id': libraryId,
-      'works': [
-        for (final work in entry.works)
-          if (_canViewWork(request, work))
-            {
-              'id': work.id,
-              'hash':
-                  entry._catalogueHashes['${work.id}:${_canViewAdult(request)}'] ??=
-                      _hashOf(
-                        _catalogueEntry(entry, work, _canViewAdult(request)),
-                      ),
-            },
-      ],
-    });
-  }
-
-  Map<String, Object?> _catalogueEntryAndRemember(
-    SharedFundusLibrary entry,
-    LibraryWorkSummary work,
-    bool includeProtected,
-  ) {
-    final value = _catalogueEntry(entry, work, includeProtected);
-    entry._catalogueHashes['${work.id}:$includeProtected'] = _hashOf(value);
-    return value;
+      'error': 'catalogue_changed',
+    }, statusCode: HttpStatus.serviceUnavailable);
   }
 
   Map<String, Object?> _catalogueEntry(
@@ -749,12 +784,18 @@ final class FundusServerHandler {
     LibraryWorkSummary work,
     bool includeProtected,
   ) => {
-    ..._workJson(work, visibleTags: includeProtected ? null : entry.publicTags),
+    ..._workJson(
+      work,
+      visibleTags: includeProtected ? null : entry._publicTags,
+    ),
     'properties': entry.library.exportWorkProperties(
       work.id,
       includeProtected: includeProtected,
     ),
-    'files': [for (final track in entry.tracksFor(work.id)) _trackJson(track)],
+    'files': [
+      for (final track in entry._tracksForCurrentSnapshot(work.id))
+        _trackJson(track),
+    ],
   };
 
   /// Which works were asked for, or null for „all of them".

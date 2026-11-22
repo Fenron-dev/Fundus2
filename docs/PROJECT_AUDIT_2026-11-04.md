@@ -238,9 +238,10 @@ abdecken, nicht nur das bereits bereinigte Feld `error`.
 - **Dauerbetrieb/SMB:** Recovery und revisionsabhängige Katalogcaches sind
   vorhanden. Der alte 30-Sekunden-Neuaufbau ist nicht mehr der aktuelle Stand.
   Serverhandler und synchrone SQLite-Zugriffe laufen aber weiterhin auf dem
-  UI-Isolate (`server_host.dart:864`, `fundus_server.dart:610`). Ein kalter
-  Katalogindex baut alle Werk-Hashes auf; Änderungen verwerfen den gesamten
-  Hashcache. Langsame Netz-I/O/DB-Sperren können weiterhin Oberfläche und
+  UI-Isolate. Der kalte Katalogindex gibt seit 2026-11-22 nach 32 Werken,
+  Katalogseiten nach 16 Werken den Event-Loop frei und vermeiden wiederholte
+  Revisionsabfragen je Werk. Änderungen verwerfen weiterhin den gesamten
+  Hashcache. Langsame einzelne Netz-I/O/DB-Sperren können Oberfläche und
   Server gemeinsam blockieren. Ein Dart-Timeout kann eine bereits laufende
   synchrone DB-Operation nicht unterbrechen. Worker/Prozess und lokale
   Arbeitsindizes sind der nachhaltige nächste Schritt, kein weiterer schneller
