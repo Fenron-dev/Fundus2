@@ -67,4 +67,35 @@ void main() {
     expect(authority.authorize('old-token'), isFalse);
     expect(authority.authorize('recent-token'), isTrue);
   });
+
+  test('failed revocation persistence retries the revoked snapshot', () async {
+    var failNextWrite = true;
+    final saved = <List<FundusPairedDevice>>[];
+    final authority = FundusPairingAuthority(
+      devices: [
+        FundusPairedDevice(
+          id: 'phone',
+          name: 'Phone',
+          tokenHash: FundusPairingAuthority.tokenDigest('old-token'),
+          pairedAt: DateTime.utc(2026),
+        ),
+      ],
+      onChanged: (devices) async {
+        if (failNextWrite) {
+          failNextWrite = false;
+          throw StateError('disk unavailable');
+        }
+        saved.add(devices);
+      },
+    );
+
+    await expectLater(authority.revoke('phone'), throwsStateError);
+    expect(authority.authorize('old-token'), isFalse);
+    expect(authority.hasUnpersistedChanges, isTrue);
+
+    await authority.retryPendingPersistence();
+    expect(saved, hasLength(1));
+    expect(saved.single, isEmpty);
+    expect(authority.hasUnpersistedChanges, isFalse);
+  });
 }

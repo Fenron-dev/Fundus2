@@ -4390,6 +4390,25 @@ class _PairedDeviceAccessTile extends StatelessWidget {
   final FundusPairedDevice device;
   final ServerHostController host;
 
+  void _apply(BuildContext context, Future<void> Function() change) {
+    final messenger = ScaffoldMessenger.of(context);
+    unawaited(() async {
+      try {
+        await change();
+      } on Object {
+        if (!messenger.mounted) return;
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Die Geräteänderung gilt vorläufig, konnte aber noch nicht '
+              'gespeichert werden. Fundus versucht es erneut.',
+            ),
+          ),
+        );
+      }
+    }());
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -4417,7 +4436,7 @@ class _PairedDeviceAccessTile extends StatelessWidget {
         style: theme.textTheme.labelMedium?.copyWith(color: tokens.textFaint),
       ),
       trailing: IconButton(
-        onPressed: () => host.revoke(device.id),
+        onPressed: () => _apply(context, () => host.revoke(device.id)),
         icon: Icon(FundusIcons.close, size: FundusIcons.sizeMd),
         tooltip: 'Zugang entziehen',
       ),
@@ -4429,22 +4448,30 @@ class _PairedDeviceAccessTile extends StatelessWidget {
             'Das Gerät darf hier Werke starten, anhalten und springen.',
           ),
           value: device.allowRemoteControl,
-          onChanged: (value) => host.setRemoteControlAllowed(device.id, value),
+          onChanged: (value) => _apply(
+            context,
+            () => host.setRemoteControlAllowed(device.id, value),
+          ),
         ),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           title: const Text('Alle freigegebenen Bibliotheken'),
           subtitle: const Text('Neue Bibliotheken sind automatisch sichtbar.'),
           value: allSelected,
-          onChanged: (value) =>
-              host.setDeviceLibraries(device.id, value ? null : <String>{}),
+          onChanged: (value) => _apply(
+            context,
+            () => host.setDeviceLibraries(device.id, value ? null : <String>{}),
+          ),
         ),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           title: const Text('HHH-Inhalte erlauben'),
           subtitle: const Text('Wirkt zusätzlich zur Bibliotheksauswahl.'),
           value: device.allowAdultExplicit,
-          onChanged: (value) => host.setDeviceAdultExplicit(device.id, value),
+          onChanged: (value) => _apply(
+            context,
+            () => host.setDeviceAdultExplicit(device.id, value),
+          ),
         ),
         if (!allSelected)
           for (final library in host.libraries)
@@ -4465,7 +4492,10 @@ class _PairedDeviceAccessTile extends StatelessWidget {
                   } else {
                     next.remove(library.libraryId!);
                   }
-                  host.setDeviceLibraries(device.id, next);
+                  _apply(
+                    context,
+                    () => host.setDeviceLibraries(device.id, next),
+                  );
                 },
               ),
         if (allIds.isEmpty)

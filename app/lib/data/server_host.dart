@@ -69,6 +69,7 @@ class ServerHostController extends ChangeNotifier {
   bool _disposed = false;
   Future<void>? _startingOperation;
   bool _checkingHealth = false;
+  bool _maintainingServer = false;
   final Map<String, DateTime> _recoveryAfter = {};
 
   ServerIdentityStore? _identityStore;
@@ -140,8 +141,8 @@ class ServerHostController extends ChangeNotifier {
     if (last != null && now.difference(last) < const Duration(days: 1)) {
       return;
     }
-    _lastInactiveCheck = now;
     final removed = await pairing.revokeInactive(Duration(days: days));
+    _lastInactiveCheck = now;
     if (removed.isEmpty) return;
     _unpairedForInactivity = removed;
     FundusLog.instance.info('pairing.revoked_inactive', {
@@ -340,11 +341,10 @@ class ServerHostController extends ChangeNotifier {
         await _releaseRegistry();
         return;
       }
-      _presenceTick ??= Timer.periodic(const Duration(seconds: 15), (_) {
-        unawaited(checkHealth());
-        // Guarded to once a day inside.
-        unawaited(_revokeInactive());
-      });
+      _presenceTick ??= Timer.periodic(
+        const Duration(seconds: 15),
+        (_) => unawaited(_maintainServer()),
+      );
     } on Object catch (error) {
       await _closeSocket();
       await _releaseRegistry();
@@ -842,6 +842,29 @@ class ServerHostController extends ChangeNotifier {
       }
     } finally {
       _checkingHealth = false;
+    }
+  }
+
+  Future<void> _maintainServer() async {
+    if (_disposed || !isRunning || _maintainingServer) return;
+    _maintainingServer = true;
+    try {
+      try {
+        await checkHealth();
+      } on Object catch (error) {
+        FundusLog.instance.warn('server.health', {'error': error.toString()});
+      }
+      try {
+        await _pairing?.retryPendingPersistence();
+        // Guarded to once a day inside; failed writes retry on the next tick.
+        await _revokeInactive();
+      } on Object catch (error) {
+        FundusLog.instance.warn('pairing.persistence', {
+          'error': error.toString(),
+        });
+      }
+    } finally {
+      _maintainingServer = false;
     }
   }
 

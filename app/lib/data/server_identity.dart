@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:math';
 
 import 'package:basic_utils/basic_utils.dart';
 import 'package:crypto/crypto.dart';
+import 'package:ffi/ffi.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
@@ -149,17 +151,19 @@ final class ServerIdentityStore {
   Future<void> savePairedDevices(List<FundusPairedDevice> devices) async {
     await directory.create(recursive: true);
     final data = jsonEncode([for (final device in devices) device.toJson()]);
-    final temporary = File('${_devicesFile.path}.tmp');
-    await temporary.writeAsString(data, flush: true);
+    final temporary = File('${_devicesFile.path}.${_randomValue(8)}.tmp');
     try {
-      await temporary.rename(_devicesFile.path);
-    } on FileSystemException {
-      // Windows does not consistently replace an existing rename target.
-      // Keep the old file until the complete new snapshot is ready; the
-      // authority serializes writes, so this fallback cannot restore an old
-      // grant after a later revocation.
-      if (!Platform.isWindows) rethrow;
-      await _devicesFile.writeAsString(data, flush: true);
+      await temporary.writeAsString(data, flush: true);
+      if (Platform.isWindows) {
+        // Dart's rename cannot reliably replace an existing file on Windows.
+        // A direct write here could truncate a revocation halfway through a
+        // crash, leaving a damaged device list. MoveFileExW replaces the old
+        // snapshot in one filesystem operation; on failure it stays intact.
+        _replaceFileOnWindows(temporary.path, _devicesFile.path);
+      } else {
+        await temporary.rename(_devicesFile.path);
+      }
+    } finally {
       if (await temporary.exists()) await temporary.delete();
     }
   }
@@ -220,6 +224,33 @@ final class ServerIdentityStore {
   }
 
   static final _random = Random.secure();
+
+  static void _replaceFileOnWindows(String source, String destination) {
+    final kernel = DynamicLibrary.open('kernel32.dll');
+    final move = kernel
+        .lookupFunction<
+          Int32 Function(Pointer<Utf16>, Pointer<Utf16>, Uint32),
+          int Function(Pointer<Utf16>, Pointer<Utf16>, int)
+        >('MoveFileExW');
+    final getLastError = kernel
+        .lookupFunction<Uint32 Function(), int Function()>('GetLastError');
+    const replaceExisting = 0x1;
+    const writeThrough = 0x8;
+    final result = using((arena) {
+      final moved = move(
+        source.toNativeUtf16(allocator: arena),
+        destination.toNativeUtf16(allocator: arena),
+        replaceExisting | writeThrough,
+      );
+      return (moved: moved, error: moved == 0 ? getLastError() : 0);
+    });
+    if (result.moved != 0) return;
+    throw FileSystemException(
+      'Gerätestand konnte nicht sicher gespeichert werden.',
+      destination,
+      OSError('MoveFileExW', result.error),
+    );
+  }
 
   static String _randomValue(int byteCount) => base64UrlEncode(
     List<int>.generate(byteCount, (_) => _random.nextInt(256)),

@@ -147,12 +147,22 @@ final class FundusPairingAuthority {
   final void Function(FundusPairedDevice device)? onPaired;
   final Map<String, FundusPairedDevice> _devices;
   Future<void> _pendingPersistence = Future<void>.value();
+  int _persistenceRevision = 0;
+  int _persistedRevision = 0;
   FundusPairingSession? _session;
   int _failedAttempts = 0;
 
   List<FundusPairedDevice> get devices => List.unmodifiable(
     _devices.values.toList()..sort((a, b) => a.name.compareTo(b.name)),
   );
+
+  /// A failed disk write must not silently turn a revoked token back on
+  /// after a restart. The host retries the current (already revoked) state.
+  bool get hasUnpersistedChanges => _persistedRevision < _persistenceRevision;
+
+  Future<void> retryPendingPersistence() async {
+    if (hasUnpersistedChanges) await _notifyChanged();
+  }
 
   FundusPairingSession? get activeSession {
     final session = _session;
@@ -354,8 +364,12 @@ final class FundusPairingAuthority {
   Future<void> _notifyChanged() async {
     final callback = onChanged;
     if (callback == null) return;
+    final revision = ++_persistenceRevision;
     final snapshot = devices;
-    final write = _pendingPersistence.then((_) => callback(snapshot));
+    final write = _pendingPersistence.then((_) async {
+      await callback(snapshot);
+      _persistedRevision = revision;
+    });
     // A failed presence write must not prevent a later security update from
     // persisting. Awaited mutations still receive their own write failure.
     _pendingPersistence = write.then<void>(

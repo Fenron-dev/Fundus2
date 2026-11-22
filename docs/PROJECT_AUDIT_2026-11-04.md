@@ -10,14 +10,16 @@ Die Fehlerbeschreibungen weiter unten beziehen sich ausdrücklich auf Commit
 | --- | --- | --- |
 | Windows-Player | `demuxer=auto` und ungültiger `demuxer-lavf-probesize=0` entfernt; normale Medien setzen den Demuxer auf automatische Erkennung zurück. Native Playerfehler werden als sichtbarer Wiedergabefehler behandelt. | Controller-Regression und Windows-nativer GitHub-Smoke-Test für Wiedergabe nach `rawaudio` ergänzt; echtes Video auf dem betroffenen Windows-PC und Wechsel Video → TTS → Video bleiben Geräteabnahme. |
 | Schutz-PIN | Bestehende Schutzkonfiguration lässt sich nur nach PIN-/Plattform-Authentifizierung ändern oder entfernen; gesperrte Bedienelemente sind in Einstellungen deaktiviert. | Controller-Regression vorhanden; Widget-/Geräteabnahme bleibt offen. |
-| Geräteentzug | Persistenz aller Gerätesnapshots einschließlich Präsenz ist serialisiert; Entzug wartet auf vorangegangene Schreibvorgänge. Datei wird erst vollständig als temporärer Snapshot geschrieben und auf unterstützten Plattformen ersetzt. | Verzögerter-Präsenz-Regressionstest vorhanden. Windows nutzt bei fehlgeschlagenem Ersetzen einen seriellen direkten Schreib-Fallback; Absturz mitten in diesem Fallback ist noch keine atomare Garantie. |
+| Geräteentzug | Persistenz aller Gerätesnapshots einschließlich Präsenz ist serialisiert; Entzug wartet auf vorangegangene Schreibvorgänge. Datei wird erst vollständig als temporärer Snapshot geschrieben; Windows verwendet jetzt `MoveFileExW` statt eines direkten Schreib-Fallbacks. Fehlgeschlagene Snapshots werden im Wartungstakt erneut versucht. | Verzögerter-Präsenz- und fehlgeschlagener-Entzug-Regressionstest vorhanden; Windows-nativer Replace-Test im Build-Workflow. Ein echter Stromausfall-/Dateisystemtest und mehrtägiger Betrieb stehen noch aus. |
 | TTS-Fortschritt/EOF | Keine Fortschrittsbuchung mehr aus Stoppuhr oder `playing`-Status; nur gemeldete Audioposition zählt. Vorzeitiges EOF löst den blockierten Producer, meldet einen Fehler und belässt unbestätigten Text ungelesen. Bei ausbleibender Position und vollem Puffer wird nach zehn Sekunden abgebrochen. | Erfolgs- und vorzeitiger-EOF-Test vorhanden; tatsächliche Windows-PCM-Positionsmeldungen müssen im Build/Gerät geprüft werden. |
 | Native Logs | Das Feld `message` wird zentral wie ein Fehlertext bereinigt, sodass native Pfade/Token nicht exportiert werden. | Log-Regression vorhanden. Die Bereinigung opfert Freitext-Details; Diagnosecode und Level bleiben erhalten. |
 
 Diese Korrekturen sind keine Freigabe für einen stabilen Release. Die unter
 „Verbleibende Architektur- und Sicherheitsgrenzen“ genannten größeren Arbeiten
 bleiben offen, insbesondere die Entkopplung synchroner Netzwerk-/DB-Arbeit
-vom UI-Isolate, Windows-atomare Gerätepersistenz und native Dauerlauftests.
+vom UI-Isolate und native Dauerlauftests. Die Windows-Gerätepersistenz ist
+seit dem Nachtrag vom 22.11.2026 gegen den direkten Schreib-Fallback
+abgesichert; ein nativer Abbruchtest bleibt offen.
 
 ## Prüfstand und Ergebnis
 

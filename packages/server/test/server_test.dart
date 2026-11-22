@@ -58,6 +58,21 @@ void main() {
     expect(body.containsKey('library_count'), isFalse);
   });
 
+  test('health is unavailable when the registry has no libraries', () async {
+    registry.unregister(firstLibrary.manifest.libraryId);
+    registry.unregister(secondLibrary.manifest.libraryId);
+    try {
+      final response = await server.handler(
+        Request('GET', Uri.parse('http://localhost/v1/health')),
+      );
+      expect(response.statusCode, HttpStatus.serviceUnavailable);
+      expect((await _json(response))['status'], 'unavailable');
+    } finally {
+      registry.register(firstLibrary, name: 'Hörbücher');
+      registry.register(secondLibrary, name: 'Filme und mehr');
+    }
+  });
+
   test('a work added after sharing began is served too', () async {
     // Der Fall aus dem Betrieb: die Freigabe geht an, *dann* wird gescannt.
     // Ein Abzug, der nur einmal genommen wird, teilt für immer den Stand von

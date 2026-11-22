@@ -467,8 +467,7 @@ final class FundusServerHandler {
   /// Netz erfahren muss; wer gekoppelt ist, bekommt sie ohnehin aufgezählt.
   Response _health(Request request) {
     final libraries = registry.libraries;
-    final healthy =
-        libraries.isEmpty || libraries.any((entry) => entry.isUsable);
+    final healthy = libraries.any((entry) => entry.isUsable);
     return _json({
       'status': healthy ? 'ok' : 'unavailable',
       'server_id': serverId,
