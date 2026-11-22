@@ -317,14 +317,20 @@ final class FundusDatabase {
       final reply = ReceivePort();
       final exited = ReceivePort();
       Isolate? worker;
+      var timedOut = false;
+      var exitClosed = false;
+      void closeExit() {
+        if (exitClosed) return;
+        exitClosed = true;
+        _activeHealthProbes.remove(path);
+        exited.close();
+      }
+
       // An OS call may ignore isolate cancellation until the share responds.
       // Keep the completed timeout result for this path until the old worker
       // actually exits, so a 15-second heartbeat cannot spawn an unbounded
       // number of blocked native calls.
-      exited.listen((_) {
-        _activeHealthProbes.remove(path);
-        exited.close();
-      });
+      exited.listen((_) => closeExit());
       unawaited(() async {
         try {
           worker = await Isolate.spawn(
@@ -335,15 +341,18 @@ final class FundusDatabase {
           );
           final answer = await reply.first.timeout(timeout);
           result.complete(answer == true);
+        } on TimeoutException {
+          timedOut = true;
+          result.complete(false);
         } on Object {
           result.complete(false);
         } finally {
           worker?.kill(priority: Isolate.immediate);
           reply.close();
-          if (worker == null) {
-            _activeHealthProbes.remove(path);
-            exited.close();
-          }
+          // A worker that already answered has finished its SQLite call.
+          // Closing its exit port now avoids keeping CLI/test processes alive
+          // if an OS/runtime never sends the redundant exit notification.
+          if (!timedOut || worker == null) closeExit();
         }
       }());
       return result.future;
