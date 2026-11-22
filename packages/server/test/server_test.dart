@@ -74,6 +74,33 @@ void main() {
     }
   });
 
+  test(
+    'health reports the asynchronous host probe without querying SQLite',
+    () async {
+      for (final entry in registry.libraries) {
+        entry.recordProbe(false);
+      }
+      final unavailable = await server.handler(
+        Request('GET', Uri.parse('http://localhost/v1/health')),
+      );
+      expect(unavailable.statusCode, HttpStatus.serviceUnavailable);
+      // A new connection to the database is not enough to trust an old handle
+      // that failed earlier; the host must replace that registered handle.
+      registry.lookup(firstLibrary.manifest.libraryId)!.recordProbe(true);
+      expect(
+        (await server.handler(
+          Request('GET', Uri.parse('http://localhost/v1/health')),
+        )).statusCode,
+        HttpStatus.serviceUnavailable,
+      );
+      registry.register(firstLibrary, name: 'Hörbücher');
+      final healthy = await server.handler(
+        Request('GET', Uri.parse('http://localhost/v1/health')),
+      );
+      expect(healthy.statusCode, 200);
+    },
+  );
+
   test('a work added after sharing began is served too', () async {
     // Der Fall aus dem Betrieb: die Freigabe geht an, *dann* wird gescannt.
     // Ein Abzug, der nur einmal genommen wird, teilt für immer den Stand von

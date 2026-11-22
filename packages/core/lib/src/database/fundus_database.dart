@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:sqlite3/sqlite3.dart';
 
@@ -26,6 +28,26 @@ import '../publication/publication_manifest.dart';
 import '../scan/library_scanner.dart';
 import '../scan/audio_technical_metadata.dart';
 import '../video/video_metadata.dart';
+
+void _probeFileWorker(({String path, SendPort replyTo}) request) {
+  Database? database;
+  var healthy = false;
+  try {
+    database = sqlite3.open(request.path, mode: OpenMode.readOnly);
+    database.execute('PRAGMA busy_timeout = 1000');
+    database.select('SELECT name FROM sqlite_master LIMIT 1');
+    healthy = true;
+  } on SqliteException catch (error) {
+    // A live writer may briefly hold the database lock. That is not a lost
+    // network share and must not trigger a host reopen.
+    healthy = error.resultCode == 5 || error.resultCode == 6;
+  } on Object {
+    healthy = false;
+  } finally {
+    database?.close();
+  }
+  request.replyTo.send(healthy);
+}
 
 final class LibraryWorkSummary {
   const LibraryWorkSummary({
@@ -278,6 +300,54 @@ final class FundusDatabase {
     );
     instance._initialize(readOnly: readOnly);
     return instance;
+  }
+
+  /// Probes a vault without letting an SMB/SQLite call block the UI isolate.
+  /// The worker opens the file strictly read-only and is stopped after the
+  /// deadline; it never shares a writable connection with the live library.
+  static final Map<String, Future<bool>> _activeHealthProbes = {};
+
+  static Future<bool> probeFile(
+    File file, {
+    Duration timeout = const Duration(seconds: 3),
+  }) {
+    final path = file.absolute.path;
+    return _activeHealthProbes.putIfAbsent(path, () {
+      final result = Completer<bool>();
+      final reply = ReceivePort();
+      final exited = ReceivePort();
+      Isolate? worker;
+      // An OS call may ignore isolate cancellation until the share responds.
+      // Keep the completed timeout result for this path until the old worker
+      // actually exits, so a 15-second heartbeat cannot spawn an unbounded
+      // number of blocked native calls.
+      exited.listen((_) {
+        _activeHealthProbes.remove(path);
+        exited.close();
+      });
+      unawaited(() async {
+        try {
+          worker = await Isolate.spawn(
+            _probeFileWorker,
+            (path: path, replyTo: reply.sendPort),
+            onError: reply.sendPort,
+            onExit: exited.sendPort,
+          );
+          final answer = await reply.first.timeout(timeout);
+          result.complete(answer == true);
+        } on Object {
+          result.complete(false);
+        } finally {
+          worker?.kill(priority: Isolate.immediate);
+          reply.close();
+          if (worker == null) {
+            _activeHealthProbes.remove(path);
+            exited.close();
+          }
+        }
+      }());
+      return result.future;
+    });
   }
 
   factory FundusDatabase.inMemory() {

@@ -178,6 +178,10 @@ class FundusLog extends ChangeNotifier {
   String renderJson() =>
       _entries.map((entry) => jsonEncode(entry.toJson())).join('\n');
 
+  /// Ensure a phase marker reaches disk before entering native code that may
+  /// terminate the process without a Dart exception or normal shutdown.
+  Future<void> flushPending() => _writing;
+
   /// A path shortened to what is recognisable and nothing more.
   static String where(String path) {
     final parts = p.split(path.replaceAll('\\', '/'))

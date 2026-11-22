@@ -49,8 +49,16 @@ final class SharedFundusLibrary {
   int? _revision;
   Set<String> _publicTags = const {};
   bool _failed = false;
+  bool _probeUsable = true;
   void markUnusable() {
     _failed = true;
+  }
+
+  /// Updated by the host's asynchronous, read-only probe. A request must not
+  /// issue its own synchronous SQLite health query on the UI isolate.
+  void recordProbe(bool usable) {
+    _probeUsable = usable;
+    if (!usable) _failed = true;
   }
 
   Set<String> get publicTags {
@@ -61,7 +69,7 @@ final class SharedFundusLibrary {
   String get id => library.manifest.libraryId;
 
   /// Ob die Bibliothek dahinter noch antwortet.
-  bool get isUsable => !_failed && library.isUsable;
+  bool get isUsable => !_failed && !library.isClosed && _probeUsable;
 
   List<LibraryWorkSummary> get works {
     _ensureFresh();

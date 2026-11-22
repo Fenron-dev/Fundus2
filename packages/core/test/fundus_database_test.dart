@@ -5,6 +5,21 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('read-only health probe does not create or modify a vault', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-probe-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/index.db');
+    expect(await FundusDatabase.probeFile(file), isFalse);
+    expect(await file.exists(), isFalse);
+
+    final database = FundusDatabase.openFile(file);
+    addTearDown(database.close);
+    final first = FundusDatabase.probeFile(file);
+    final second = FundusDatabase.probeFile(file);
+    expect(identical(first, second), isTrue);
+    expect(await first, isTrue);
+  });
+
   test('current schema is created atomically with FTS and session tables', () {
     final database = FundusDatabase.inMemory();
     addTearDown(database.close);

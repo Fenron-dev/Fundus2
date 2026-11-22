@@ -662,7 +662,11 @@ final class FundusLibrary {
   final FundusDatabase _database;
 
   bool get isReadOnly => openMode != LibraryOpenMode.readWrite;
+  bool get isClosed => _closed;
   int get catalogueRevision => _database.catalogueRevision;
+
+  Future<bool> probeHealth({Duration timeout = const Duration(seconds: 3)}) =>
+      FundusDatabase.probeFile(_databaseFile(root), timeout: timeout);
   List<String> missingRemoteCovers(String sourceId) =>
       _database.missingRemoteCovers(sourceId);
   bool remoteCoverStateUnknown(String sourceId) =>

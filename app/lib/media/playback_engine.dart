@@ -260,6 +260,8 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
   late final Future<void> _nativeTuning;
   Timer? _healthTimer;
   bool _healthReading = false;
+  int _openRevision = 0;
+  bool _disposed = false;
 
   /// Gives libmpv enough material ahead of the playhead without making it
   /// stop the clock merely because the cache briefly falls below a target.
@@ -383,6 +385,7 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
     List<ExternalSubtitle> subtitles = const [],
   }) async {
     await _nativeTuning;
+    final revision = ++_openRevision;
     // Streaming speech has a short, bounded producer queue. Network-file
     // read-ahead/probing must not wait for megabytes before output can start.
     final native = _player.platform;
@@ -397,7 +400,10 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
         await native.setProperty('demuxer-rawaudio-rate', '24000');
         await native.setProperty('demuxer-rawaudio-channels', '1');
       }
-      await native.setProperty('cache', speech ? 'no' : 'yes');
+      // The live PCM producer pauses while it synthesizes the next sentence.
+      // Keep mpv's read-ahead active across that gap; disabling
+      // the cache made some Android players treat a temporary underrun as EOF.
+      await native.setProperty('cache', 'yes');
       await native.setProperty(
         'stream-buffer-size',
         speech
@@ -431,19 +437,33 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
         ),
       );
     }
-    if (resume == null) return;
-    // mpv honours the start position while loading, but a container that
-    // reports its length late can ignore it. So: wait for a length, then put
-    // the position right if it did not take.
-    try {
-      await _player.stream.duration
-          .firstWhere((value) => value > Duration.zero)
-          .timeout(_readyTimeout);
-    } on TimeoutException {
-      // No length; the seek below is still worth a try.
+    if (resume != null) {
+      // An audiobook without a promptly reported duration used to hold every
+      // open for the full three-second timeout, even though mpv could already
+      // play it. Repair a missed resume asynchronously, only for this file.
+      unawaited(_repairResumeWhenLoaded(loaded, resume, revision));
     }
+  }
+
+  Future<void> _repairResumeWhenLoaded(
+    Future<Duration> loaded,
+    Duration resume,
+    int revision,
+  ) async {
+    try {
+      await loaded;
+    } on Object {
+      // No length; a later correction is still worth trying.
+    }
+    if (_disposed || revision != _openRevision) return;
     if (_player.state.position < resume - const Duration(seconds: 2)) {
-      await _player.seek(resume);
+      try {
+        await _player.seek(resume);
+      } on Object catch (error) {
+        FundusLog.instance.warn('player.resume.failed', {
+          'error': error.runtimeType.toString(),
+        });
+      }
     }
   }
 
@@ -578,7 +598,10 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
   Future<void> pause() => _player.pause();
 
   @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() {
+    _openRevision++;
+    return _player.stop();
+  }
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
@@ -630,6 +653,8 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
 
   @override
   Future<void> dispose() async {
+    _disposed = true;
+    _openRevision++;
     _healthTimer?.cancel();
     for (final subscription in _trackSubscriptions) {
       await subscription.cancel();

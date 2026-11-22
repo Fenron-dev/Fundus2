@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/media/playback_controller.dart';
 
-import 'playback_controller_test.dart' show FakeEngine;
+import 'playback_controller_test.dart' show FakeEngine, waitForPlayback;
 
 /// Kapitelbilder in einer Podcast-Folge.
 ///
@@ -45,8 +45,9 @@ void main() {
     await library.scan();
     await player.open(library.library!, library.works.single);
     // Die Kapitel werden nach dem Start gelesen, damit niemand auf ein Bild
-    // wartet — hier wird genau darauf gewartet.
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    // wartet. Auf das tatsächliche Ergebnis warten statt auf eine feste Zeit:
+    // bei parallelen Tests kann das Lesen einer Datei länger als 200 ms dauern.
+    await waitForPlayback(player, () => player.trackChapters.length == 2);
 
     expect(player.trackChapters, hasLength(2));
     // Am Anfang: kein Bild, aber ein Name.

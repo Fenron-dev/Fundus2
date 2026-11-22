@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:fundus_core/fundus_core.dart';
 
+import '../app/fundus_log.dart';
 import 'phonon_wave.dart';
 import 'speech_engine.dart';
 import 'phonon_voice_catalog.dart';
@@ -31,6 +32,7 @@ final class PhononNativeEngine implements TextSpeechEngine {
   final Map<int, Completer<Map<Object?, Object?>>> _pending = {};
   int _nextId = 0;
   bool _disposed = false;
+  bool _firstSynthesis = true;
   List<SpeechLanguage> _languages = const [];
 
   static Future<PhononNativeEngine> open({
@@ -40,6 +42,10 @@ final class PhononNativeEngine implements TextSpeechEngine {
   }) async {
     final engine = PhononNativeEngine._();
     try {
+      FundusLog.instance.info('speech.native.open.start', {
+        'language': SpeechLanguageResolver.code(language),
+      });
+      await FundusLog.instance.flushPending();
       await engine._start();
       final reply = await engine._request({
         'command': 'open',
@@ -56,8 +62,12 @@ final class PhononNativeEngine implements TextSpeechEngine {
             .toSet()
             .toList(growable: false);
       }
+      FundusLog.instance.info('speech.native.open.ready');
       return engine;
-    } on Object {
+    } on Object catch (error) {
+      FundusLog.instance.warn('speech.native.open.failed', {
+        'error': error.runtimeType.toString(),
+      });
       await engine.dispose();
       rethrow;
     }
@@ -162,6 +172,15 @@ final class PhononNativeEngine implements TextSpeechEngine {
     if (segment.text.isEmpty || segment.text.length > 1000) {
       throw ArgumentError.value(segment.text.length, 'segment.text.length');
     }
+    final firstSynthesis = _firstSynthesis;
+    if (firstSynthesis) {
+      _firstSynthesis = false;
+      FundusLog.instance.info('speech.native.first_synthesis.start', {
+        'language': SpeechLanguageResolver.code(language),
+        'characters': segment.text.length,
+      });
+      await FundusLog.instance.flushPending();
+    }
     final reply = await _request({
       'command': 'synthesize',
       'text': segment.text,
@@ -172,6 +191,9 @@ final class PhononNativeEngine implements TextSpeechEngine {
     final micros = reply['duration_us'];
     if (bytes is! Uint8List || micros is! int || micros <= 0) {
       throw const FormatException('Ungültige Phonon-Antwort.');
+    }
+    if (firstSynthesis) {
+      FundusLog.instance.info('speech.native.first_synthesis.ready');
     }
     return PhononAudio(
       wav: bytes,

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../app/fundus_log.dart';
 import '../data/work_view.dart';
 import 'phonon_native.dart';
 import 'phonon_model_store.dart';
@@ -569,6 +570,7 @@ final class TextSpeechController extends ChangeNotifier {
       }
 
       final producer = produce();
+      var confirmedSegments = 0;
       void commit(List<SpeechTextSegment> heard) {
         for (final sentence in heard) {
           if (token != _runId) return;
@@ -576,6 +578,7 @@ final class TextSpeechController extends ChangeNotifier {
             unawaited(stop());
             return;
           }
+          confirmedSegments++;
         }
       }
 
@@ -640,13 +643,26 @@ final class TextSpeechController extends ChangeNotifier {
         }
         if (token != _runId) return;
         final finishedBeforePlaybackEnded = buffer.isFinished;
+        // A native player may report EOF on a live HTTP source during a
+        // synthesis gap. Preserve only positions it actually reported, then
+        // resume from that checkpoint instead of aborting the whole book.
+        commit(buffer.heardUntil(player.position));
         if (!finishedBeforePlaybackEnded) await buffer.dispose();
         await producer;
         if (buffer.failure case final error?) throw error;
         if (stalled || !finishedBeforePlaybackEnded) {
-          throw StateError(
-            'Vorlesen wurde vorzeitig beendet; der Lesestand blieb erhalten.',
-          );
+          FundusLog.instance.warn('speech.stream.early_end', {
+            'position_ms': player.position.inMilliseconds,
+            'confirmed_segments': confirmedSegments,
+            'pending_segments': buffer.bufferedSegments,
+            'stalled': stalled,
+          });
+          if (confirmedSegments == 0) {
+            throw StateError(
+              'Vorlesen wurde vorzeitig beendet; der Lesestand blieb erhalten.',
+            );
+          }
+          continue;
         }
         // The final position event can arrive immediately before EOF, after
         // playSpeechFile has cleared its completion marker.

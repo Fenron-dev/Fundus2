@@ -61,4 +61,7 @@ jobs:
 
       - name: Test Flutter app
         working-directory: app
-        run: flutter test
+        # Several widget tests open real temporary vaults and local HTTP
+        # servers. Four concurrent test files can starve their UI timing on
+        # shared runners, while two keep the integration checks independent.
+        run: flutter test --concurrency=2

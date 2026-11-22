@@ -762,7 +762,10 @@ class ServerHostController extends ChangeNotifier {
   /// Geöffnet wird nur, was dieser Host selbst geöffnet hat. Die aktive
   /// Bibliothek gehört der Oberfläche; sie wieder aufzumachen ist deren Sache,
   /// und ein zweites Handle darauf wäre eine zweite Wahrheit.
-  Future<void> _reopenLibrary(String libraryId) async {
+  Future<void> _reopenLibrary(
+    String libraryId, {
+    bool probeSucceeded = false,
+  }) async {
     if (_disposed ||
         _reopening.contains(libraryId) ||
         DateTime.now().isBefore(_recoveryAfter[libraryId] ?? DateTime(1970))) {
@@ -773,7 +776,19 @@ class ServerHostController extends ChangeNotifier {
       final registry = _registry;
       if (registry == null) return;
       final entry = registry.lookup(libraryId);
-      if (entry == null || entry.isUsable) return;
+      if (entry == null) return;
+      if (!probeSucceeded) {
+        final available = await entry.library.probeHealth();
+        if (_disposed || _registry != registry) return;
+        entry.recordProbe(available);
+        if (!available) {
+          _recoveryAfter[libraryId] = DateTime.now().add(
+            const Duration(seconds: 30),
+          );
+          return;
+        }
+      }
+      if (entry.isUsable) return;
 
       final path = _ownedLibraries.entries
           .where((owned) => owned.value.manifest.libraryId == libraryId)
@@ -838,7 +853,17 @@ class ServerHostController extends ChangeNotifier {
       for (final entry in List<SharedFundusLibrary>.of(
         _registry?.libraries ?? const [],
       )) {
-        if (!entry.isUsable) await _reopenLibrary(entry.id);
+        final available = await entry.library.probeHealth();
+        if (_disposed || !isRunning || _registry?.lookup(entry.id) != entry) {
+          continue;
+        }
+        entry.recordProbe(available);
+        // Do not reopen on an unavailable share: opening its SQLite file on
+        // this isolate can hang just as the health query used to. Retry the
+        // read-only worker probe on the next maintenance tick instead.
+        if (available && !entry.isUsable) {
+          await _reopenLibrary(entry.id, probeSucceeded: true);
+        }
       }
     } finally {
       _checkingHealth = false;

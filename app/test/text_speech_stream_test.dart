@@ -191,4 +191,87 @@ void main() {
       );
     },
   );
+
+  test(
+    'premature EOF after heard speech resumes from the confirmed text',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-speech-retry-',
+      );
+      final folder = Directory('${root.path}/Light Novels/Test')
+        ..createSync(recursive: true);
+      writeEpub(folder, 'Book.epub', ['Chapter']);
+      final library = LibraryController();
+      final reader = TextReaderController(
+        openSource: (path, name) => FakeTextSource(name, ['Chapter']),
+      );
+      final engine = FakeEngine();
+      final player = PlaybackController(engine: engine);
+      final speech = TextSpeechController(
+        reader: reader,
+        player: player,
+        engineFactory: (directory, language) async => _SpeechEngine(),
+        tempDirectory: () async => root,
+      );
+      final client = HttpClient();
+      StreamSubscription<bool>? playing;
+      final incoming = <StreamSubscription<List<int>>>[];
+      addTearDown(() async {
+        await speech.stop();
+        await playing?.cancel();
+        for (final subscription in incoming) {
+          await subscription.cancel();
+        }
+        client.close(force: true);
+        speech.dispose();
+        reader.dispose();
+        player.dispose();
+        await library.library?.flushSidecarWrites();
+        library.dispose();
+        await root.delete(recursive: true);
+      });
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await reader.open(library.library!, library.works.first);
+      HttpClientResponse? response;
+      engine.onOpen = () async {
+        response = await (await client.getUrl(engine.opened.last)).close();
+      };
+      var playbackCount = 0;
+      playing = engine.playingStream.listen((value) {
+        if (!value) return;
+        playbackCount++;
+        final first = playbackCount == 1;
+        var bytes = 0;
+        var ended = false;
+        incoming.add(
+          response!.listen(
+            (chunk) {
+              bytes += chunk.length;
+              engine.emitPosition(
+                Duration(
+                  microseconds:
+                      bytes ~/ 2 * Duration.microsecondsPerSecond ~/ 24000,
+                ),
+              );
+              if (first && !ended) {
+                ended = true;
+                scheduleMicrotask(engine.emitCompleted);
+              }
+            },
+            onDone: () {
+              if (!first) engine.emitCompleted();
+            },
+          ),
+        );
+      });
+
+      await speech
+          .start(modelDirectory: root.path, workOverride: 'en')
+          .timeout(const Duration(seconds: 10));
+      expect(speech.failure, isNull);
+      expect(playbackCount, 2);
+      expect(reader.paragraphIndex, reader.paragraphs.length - 1);
+    },
+  );
 }
