@@ -72,10 +72,6 @@ jobs:
           FUNDUS_MAL_CLIENT_ID: ${{ secrets.FUNDUS_MAL_CLIENT_ID }}
         run: flutter test test/windows_metadata_http_test.dart --reporter expanded
 
-      - name: Test native Windows player after speech configuration
-        working-directory: app
-        run: flutter test test/windows_player_smoke_test.dart --reporter expanded
-
       # The engine is pinned, so the same inputs always give the same library.
       - name: Reuse an earlier Phonon build
         id: phonon-cache
@@ -121,6 +117,15 @@ jobs:
       - name: Build Windows release
         working-directory: app
         run: flutter build windows --release --dart-define=FUNDUS_VERSION=0.2.0 --dart-define=FUNDUS_BUILD=${{ github.run_number }} --dart-define=FUNDUS_COMMIT=$env:FUNDUS_COMMIT
+
+      # media_kit's native DLL is produced by the Windows build, not pub get.
+      - name: Test native Windows player after speech configuration
+        working-directory: app
+        shell: pwsh
+        run: |
+          $release = (Resolve-Path "build/windows/x64/runner/Release").Path
+          $env:PATH = "$release;$env:PATH"
+          flutter test test/windows_player_smoke_test.dart --reporter expanded
 
       - name: Include Phonon and the Visual C++ runtime
         working-directory: app
