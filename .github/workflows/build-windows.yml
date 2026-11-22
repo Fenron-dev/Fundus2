@@ -72,6 +72,10 @@ jobs:
           FUNDUS_MAL_CLIENT_ID: ${{ secrets.FUNDUS_MAL_CLIENT_ID }}
         run: flutter test test/windows_metadata_http_test.dart --reporter expanded
 
+      - name: Test native Windows player after speech configuration
+        working-directory: app
+        run: flutter test test/windows_player_smoke_test.dart --reporter expanded
+
       # The engine is pinned, so the same inputs always give the same library.
       - name: Reuse an earlier Phonon build
         id: phonon-cache

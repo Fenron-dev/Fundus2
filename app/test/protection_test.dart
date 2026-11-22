@@ -96,6 +96,22 @@ void main() {
     expect(settings.protectionPin, startsWith('v2:'));
   });
 
+  test('gesperrte Einstellungen brauchen die bisherige PIN', () async {
+    await protection.setMode(ProtectionMode.hide);
+    await protection.setPin('2451');
+    protection.lock();
+
+    await expectLater(protection.setMode(ProtectionMode.off), throwsStateError);
+    await expectLater(protection.setPin('9999'), throwsStateError);
+    await expectLater(protection.setPin(''), throwsStateError);
+    expect(protection.mode, ProtectionMode.hide);
+    expect(protection.hasPin, isTrue);
+
+    expect(await protection.unlock('2451'), isTrue);
+    await protection.setMode(ProtectionMode.off);
+    expect(protection.mode, ProtectionMode.off);
+  });
+
   test('fünf falsche PINs drosseln weitere Versuche', () async {
     await protection.setPin('2451');
     protection.lock();

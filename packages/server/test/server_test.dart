@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
@@ -291,6 +292,38 @@ void main() {
 
     expect(authority.devices.single.lastSeenAt!.isAfter(old), isTrue);
     expect(persisted?.single.id, 'tablet-1');
+  });
+
+  test('revocation is persisted after an older presence update', () async {
+    final firstWriteStarted = Completer<void>();
+    final releaseFirstWrite = Completer<void>();
+    List<FundusPairedDevice>? persisted;
+    final authority = FundusPairingAuthority(
+      devices: [
+        FundusPairedDevice(
+          id: 'phone',
+          name: 'Phone',
+          tokenHash: FundusPairingAuthority.tokenDigest('secret-token'),
+          pairedAt: DateTime.utc(2026),
+          lastSeenAt: DateTime.utc(2026),
+        ),
+      ],
+      onChanged: (snapshot) async {
+        if (!firstWriteStarted.isCompleted) {
+          firstWriteStarted.complete();
+          await releaseFirstWrite.future;
+        }
+        persisted = snapshot;
+      },
+    );
+
+    expect(authority.authorizeDevice('secret-token'), 'phone');
+    await firstWriteStarted.future;
+    final revocation = authority.revoke('phone');
+    releaseFirstWrite.complete();
+    await revocation;
+    expect(persisted, isEmpty);
+    expect(authority.authorizeDevice('secret-token'), isNull);
   });
 
   test('capabilities expose format versions and server features', () async {

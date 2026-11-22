@@ -40,7 +40,69 @@ final class _SpeechEngine implements TextSpeechEngine {
 
 void main() {
   test(
-    'one continuous sink keeps playing when Windows position events are absent',
+    'early audio EOF leaves the unread text at its previous position',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-speech-eof-');
+      final folder = Directory('${root.path}/Light Novels/Test')
+        ..createSync(recursive: true);
+      writeEpub(folder, 'Book.epub', ['Chapter']);
+      final library = LibraryController();
+      final reader = TextReaderController(
+        openSource: (path, name) => FakeTextSource(name, ['Chapter']),
+      );
+      final engine = FakeEngine();
+      final player = PlaybackController(engine: engine);
+      final speech = TextSpeechController(
+        reader: reader,
+        player: player,
+        engineFactory: (directory, language) async => _SpeechEngine(),
+        tempDirectory: () async => root,
+      );
+      final client = HttpClient();
+      StreamSubscription<bool>? playing;
+      StreamSubscription<List<int>>? incoming;
+      addTearDown(() async {
+        await speech.stop();
+        await playing?.cancel();
+        await incoming?.cancel();
+        client.close(force: true);
+        speech.dispose();
+        reader.dispose();
+        player.dispose();
+        await library.library?.flushSidecarWrites();
+        library.dispose();
+        await root.delete(recursive: true);
+      });
+      await library.open(root, createIfMissing: true);
+      await library.scan();
+      await reader.open(library.library!, library.works.first);
+      final startOffset = reader.innerOffset;
+      HttpClientResponse? response;
+      engine.onOpen = () async {
+        response = await (await client.getUrl(engine.opened.last)).close();
+      };
+      var listened = false;
+      playing = engine.playingStream.listen((value) {
+        if (!value || listened) return;
+        listened = true;
+        var ended = false;
+        incoming = response!.listen((_) {
+          if (ended) return;
+          ended = true;
+          engine.emitCompleted();
+        });
+      });
+
+      await speech
+          .start(modelDirectory: root.path, workOverride: 'en')
+          .timeout(const Duration(seconds: 10));
+      expect(speech.failure, isNotNull);
+      expect(reader.innerOffset, startOffset);
+    },
+  );
+
+  test(
+    'continuous sink advances only when playback reports heard audio',
     () async {
       final root = await Directory.systemTemp.createTemp(
         'fundus-speech-stream-',
@@ -84,12 +146,18 @@ void main() {
         response = await (await client.getUrl(engine.opened.last)).close();
       };
       var listened = false;
+      var receivedBytes = 0;
       playing = engine.playingStream.listen((value) {
         if (!value || listened) return;
         listened = true;
-        incoming = response!.listen((_) {
-          // Simulate the Windows raw-PCM path where mpv keeps playing but its
-          // time-pos stream does not advance for this live response.
+        incoming = response!.listen((chunk) {
+          receivedBytes += chunk.length;
+          engine.emitPosition(
+            Duration(
+              microseconds:
+                  receivedBytes ~/ 2 * Duration.microsecondsPerSecond ~/ 24000,
+            ),
+          );
         }, onDone: engine.emitCompleted);
       });
       await speech

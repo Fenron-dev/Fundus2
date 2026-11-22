@@ -148,10 +148,20 @@ final class ServerIdentityStore {
 
   Future<void> savePairedDevices(List<FundusPairedDevice> devices) async {
     await directory.create(recursive: true);
-    await _devicesFile.writeAsString(
-      jsonEncode([for (final device in devices) device.toJson()]),
-      flush: true,
-    );
+    final data = jsonEncode([for (final device in devices) device.toJson()]);
+    final temporary = File('${_devicesFile.path}.tmp');
+    await temporary.writeAsString(data, flush: true);
+    try {
+      await temporary.rename(_devicesFile.path);
+    } on FileSystemException {
+      // Windows does not consistently replace an existing rename target.
+      // Keep the old file until the complete new snapshot is ready; the
+      // authority serializes writes, so this fallback cannot restore an old
+      // grant after a later revocation.
+      if (!Platform.isWindows) rethrow;
+      await _devicesFile.writeAsString(data, flush: true);
+      if (await temporary.exists()) await temporary.delete();
+    }
   }
 
   /// Whether the device offered its library the last time it was running.

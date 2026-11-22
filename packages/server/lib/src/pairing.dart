@@ -146,6 +146,7 @@ final class FundusPairingAuthority {
   /// should not have happened.
   final void Function(FundusPairedDevice device)? onPaired;
   final Map<String, FundusPairedDevice> _devices;
+  Future<void> _pendingPersistence = Future<void>.value();
   FundusPairingSession? _session;
   int _failedAttempts = 0;
 
@@ -268,8 +269,9 @@ final class FundusPairingAuthority {
       return;
     }
     _devices[device.id] = device.copyWith(lastSeenAt: now);
-    final callback = onChanged;
-    if (callback != null) unawaited(callback(devices));
+    // Presence is best-effort, but must not race a later revocation or rights
+    // change to disk. _notifyChanged serializes every snapshot in order.
+    unawaited(_notifyChanged().catchError((Object _, StackTrace _) {}));
   }
 
   Future<void> revoke(String deviceId) async {
@@ -351,7 +353,16 @@ final class FundusPairingAuthority {
 
   Future<void> _notifyChanged() async {
     final callback = onChanged;
-    if (callback != null) await callback(devices);
+    if (callback == null) return;
+    final snapshot = devices;
+    final write = _pendingPersistence.then((_) => callback(snapshot));
+    // A failed presence write must not prevent a later security update from
+    // persisting. Awaited mutations still receive their own write failure.
+    _pendingPersistence = write.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    await write;
   }
 
   String _randomValue(int byteCount) {

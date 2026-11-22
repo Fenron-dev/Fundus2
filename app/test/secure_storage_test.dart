@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fundus/app/app_settings.dart';
 import 'package:fundus/data/server_identity.dart';
+import 'package:fundus_server/fundus_server.dart';
 
 class MemorySecureStorage extends FlutterSecureStorage {
   final values = <String, String>{};
@@ -131,6 +132,25 @@ void main() {
     expect(
       await File('${directory.path}/server-key.pem').readAsString(),
       first.privateKeyPem,
+    );
+  });
+  test('revoked pairing remains absent after identity reload', () async {
+    final directory = Directory('${root.path}/server');
+    final store = ServerIdentityStore(directory);
+    final device = FundusPairedDevice(
+      id: 'phone',
+      name: 'Phone',
+      tokenHash: FundusPairingAuthority.tokenDigest('old-token'),
+      pairedAt: DateTime.utc(2026),
+    );
+    await store.savePairedDevices([device]);
+    expect((await store.loadPairedDevices()).single.id, 'phone');
+
+    await store.savePairedDevices(const []);
+    expect(await ServerIdentityStore(directory).loadPairedDevices(), isEmpty);
+    expect(
+      await File('${directory.path}/paired-devices.json').readAsString(),
+      '[]',
     );
   });
 }

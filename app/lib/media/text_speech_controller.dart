@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../app/fundus_log.dart';
 import '../data/work_view.dart';
 import 'phonon_native.dart';
 import 'phonon_model_store.dart';
@@ -590,45 +589,38 @@ final class TextSpeechController extends ChangeNotifier {
         _state = TextSpeechState.playing;
         notifyListeners();
         final currentChapter = reader.currentChapter;
-        final playbackClock = Stopwatch();
-        var positionFallbackLogged = false;
+        var lastPosition = Duration.zero;
+        var lastAdvance = DateTime.now();
+        var stalled = false;
         void updateProgress() {
           if (token != _runId || !player.isPlayingSpeech) return;
-          if (player.isPlaying) {
-            playbackClock.start();
-          } else {
-            playbackClock.stop();
-          }
           final reported = player.position;
-          // Some Windows/libmpv combinations do not advance `time-pos` for a
-          // headerless live PCM response. Keep the four-segment queue moving
-          // from confirmed playback time, with a short safety margin so the
-          // saved text position never runs ahead of audio output.
-          final elapsedMicros =
-              (playbackClock.elapsedMicroseconds * (_lastOptions?.rate ?? rate))
-                  .round();
-          final elapsed = Duration(microseconds: elapsedMicros);
-          final estimated = elapsed > const Duration(milliseconds: 500)
-              ? elapsed - const Duration(milliseconds: 500)
-              : Duration.zero;
-          if (!positionFallbackLogged &&
-              estimated - reported > const Duration(seconds: 2)) {
-            positionFallbackLogged = true;
-            FundusLog.instance.warn('tts.position.fallback', {
-              'reported_ms': reported.inMilliseconds,
-              'estimated_ms': estimated.inMilliseconds,
-            });
+          if (reported > lastPosition) {
+            lastPosition = reported;
+            lastAdvance = DateTime.now();
           }
-          commit(
-            buffer.heardUntil(estimated > reported ? estimated : reported),
-          );
+          // A playing flag is not proof that sound was heard. Never move the
+          // shared reading position from a wall clock or from downloaded PCM.
+          commit(buffer.heardUntil(reported));
         }
 
         progressListener = updateProgress;
         player.positionListenable.addListener(progressListener);
         final progressTimer = Timer.periodic(
           const Duration(milliseconds: 250),
-          (_) => updateProgress(),
+          (_) {
+            updateProgress();
+            if (!stalled &&
+                player.isPlaying &&
+                buffer.bufferedSegments >= 4 &&
+                DateTime.now().difference(lastAdvance) >
+                    const Duration(seconds: 10)) {
+              stalled = true;
+              // Release synthesis backpressure and end the live response;
+              // otherwise producer and player can wait on each other forever.
+              unawaited(buffer.dispose());
+            }
+          },
         );
         try {
           await player.playSpeechFile(
@@ -645,12 +637,25 @@ final class TextSpeechController extends ChangeNotifier {
           );
         } finally {
           progressTimer.cancel();
-          playbackClock.stop();
         }
         if (token != _runId) return;
+        final finishedBeforePlaybackEnded = buffer.isFinished;
+        if (!finishedBeforePlaybackEnded) await buffer.dispose();
         await producer;
         if (buffer.failure case final error?) throw error;
-        commit(buffer.complete());
+        if (stalled || !finishedBeforePlaybackEnded) {
+          throw StateError(
+            'Vorlesen wurde vorzeitig beendet; der Lesestand blieb erhalten.',
+          );
+        }
+        // The final position event can arrive immediately before EOF, after
+        // playSpeechFile has cleared its completion marker.
+        commit(buffer.heardUntil(player.position));
+        if (buffer.bufferedSegments > 0) {
+          throw StateError(
+            'Vorleseposition nicht bestätigt; der Lesestand blieb erhalten.',
+          );
+        }
       } finally {
         if (progressListener case final listener?) {
           player.positionListenable.removeListener(listener);

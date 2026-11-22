@@ -1,5 +1,18 @@
 # Phonon-TTS im Textreader – Arbeitsstand
 
+## Korrektur 22.11.2026
+
+Der unten beschriebene Stoppuhr-Fallback (`tts.position.fallback`) wurde
+entfernt: `playing` kann auch bei hängender Audioausgabe wahr sein und durfte
+den gemeinsamen Buchstand nicht fortschreiben. Nur die vom Player gemeldete
+Audioposition bestätigt einen vollständig gehörten Abschnitt. Wenn Windows
+für den Roh-PCM-Stream keine Position meldet und die begrenzte Queue voll ist,
+meldet der Reader nach zehn Sekunden einen Fehler, statt hängen zu bleiben
+oder ungehörte Sätze als gelesen zu speichern. Ein vorzeitiges Stream-Ende
+wird ebenfalls als Fehler behandelt. Eine echte Windows-Abnahme muss zeigen,
+ob die PCM-Position dort nun zuverlässig geliefert wird; andernfalls braucht
+der Audio-Transport eine zusätzliche native Positionsquelle.
+
 Issue [#64](https://github.com/Fenron-dev/Fundus2/issues/64) ergänzt die
 bereits freigegebene Roadmap, ersetzt oder schließt sie aber nicht. Diese Datei
 trennt implementierte Grundlage von noch nicht ausgelieferter Sprachausgabe.

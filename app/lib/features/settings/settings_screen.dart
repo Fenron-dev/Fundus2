@@ -2709,14 +2709,17 @@ class _ProtectionState extends State<_Protection> {
               const SizedBox(height: FundusSpace.x3),
               RadioGroup<ProtectionMode>(
                 groupValue: protection.mode,
-                onChanged: (value) =>
-                    value == null ? null : protection.setMode(value),
+                onChanged: (value) {
+                  if (!protection.canChangeProtection || value == null) return;
+                  unawaited(protection.setMode(value));
+                },
                 child: Column(
                   children: [
                     for (final mode in ProtectionMode.values)
                       if (mode != ProtectionMode.blur)
                         RadioListTile<ProtectionMode>(
                           contentPadding: EdgeInsets.zero,
+                          enabled: protection.canChangeProtection,
                           value: mode,
                           title: Text(mode.label),
                           subtitle: Text(
@@ -2729,6 +2732,10 @@ class _ProtectionState extends State<_Protection> {
                   ],
                 ),
               ),
+              if (!protection.canChangeProtection)
+                const Text(
+                  'Zum Ändern zuerst unten mit der bisherigen PIN entsperren.',
+                ),
             ],
           ),
         ),
@@ -2755,6 +2762,7 @@ class _ProtectionState extends State<_Protection> {
                     width: 180,
                     child: TextField(
                       controller: _pinController,
+                      enabled: protection.canChangeProtection,
                       obscureText: true,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(labelText: 'Neue PIN'),
@@ -2762,17 +2770,21 @@ class _ProtectionState extends State<_Protection> {
                   ),
                   const SizedBox(width: FundusSpace.x4),
                   FilledButton(
-                    onPressed: () async {
-                      await protection.setPin(_pinController.text);
-                      _pinController.clear();
-                      setState(() => _complaint = null);
-                    },
+                    onPressed: !protection.canChangeProtection
+                        ? null
+                        : () async {
+                            await protection.setPin(_pinController.text);
+                            _pinController.clear();
+                            setState(() => _complaint = null);
+                          },
                     child: const Text('Übernehmen'),
                   ),
                   if (protection.hasPin) ...[
                     const SizedBox(width: FundusSpace.x3),
                     TextButton(
-                      onPressed: () => protection.setPin(''),
+                      onPressed: !protection.canChangeProtection
+                          ? null
+                          : () => unawaited(protection.setPin('')),
                       child: const Text('PIN entfernen'),
                     ),
                   ],
@@ -2781,7 +2793,7 @@ class _ProtectionState extends State<_Protection> {
             ],
           ),
         ),
-        if (protection.mode != ProtectionMode.off && protection.hasPin)
+        if (protection.hasPin)
           SettingsCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2795,9 +2807,9 @@ class _ProtectionState extends State<_Protection> {
                       ),
                     ),
                     Text(
-                      protection.isUnlocked ? 'Entsperrt' : 'Gesperrt',
+                      protection.canChangeProtection ? 'Entsperrt' : 'Gesperrt',
                       style: theme.textTheme.labelMedium?.copyWith(
-                        color: protection.isUnlocked
+                        color: protection.canChangeProtection
                             ? tokens.success
                             : tokens.textFaint,
                       ),
@@ -2812,7 +2824,7 @@ class _ProtectionState extends State<_Protection> {
                   ),
                 ),
                 const SizedBox(height: FundusSpace.x4),
-                if (protection.isUnlocked)
+                if (protection.canChangeProtection)
                   OutlinedButton.icon(
                     onPressed: protection.lock,
                     icon: Icon(FundusIcons.protected, size: FundusIcons.sizeSm),

@@ -26,11 +26,12 @@ Future<void> waitForPlayback(PlaybackController player, bool Function() ready) {
   });
 }
 
-final class FakeEngine implements PlaybackEngine {
+final class FakeEngine implements PlaybackEngine, PlaybackFailureSource {
   final _position = StreamController<Duration>.broadcast();
   final _duration = StreamController<Duration>.broadcast();
   final _playing = StreamController<bool>.broadcast();
   final _completed = StreamController<bool>.broadcast();
+  final _failures = StreamController<bool>.broadcast();
 
   final _tracks = StreamController<MediaTracks>.broadcast();
 
@@ -48,6 +49,7 @@ final class FakeEngine implements PlaybackEngine {
   void emitPosition(Duration value) => _position.add(value);
   void emitDuration(Duration value) => _duration.add(value);
   void emitCompleted() => _completed.add(true);
+  void emitFailure() => _failures.add(true);
   void emitPlaying(bool value) => _playing.add(value);
   void emitTracks(MediaTracks value) => _tracks.add(value);
 
@@ -62,6 +64,9 @@ final class FakeEngine implements PlaybackEngine {
 
   @override
   Stream<bool> get completedStream => _completed.stream;
+
+  @override
+  Stream<bool> get failureStream => _failures.stream;
 
   @override
   Stream<MediaTracks> get tracksStream => _tracks.stream;
@@ -139,6 +144,7 @@ final class FakeEngine implements PlaybackEngine {
     await _duration.close();
     await _playing.close();
     await _completed.close();
+    await _failures.close();
     await _tracks.close();
   }
 }
@@ -205,6 +211,19 @@ void main() {
     expect(subtitles.single.title, 'Deutsch (Datei)');
     expect(subtitles.single.uri.toFilePath(), endsWith('Nordwind.de.srt'));
   });
+
+  test(
+    'ein nativer Ladefehler bleibt nicht als schwarzer Player stehen',
+    () async {
+      await controller.open(library, work);
+      engine.emitFailure();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.failure, contains('nicht geladen'));
+      expect(controller.isPlaying, isFalse);
+      expect(engine.stopped, isTrue);
+    },
+  );
 
   test('TTS-Segmente nutzen den Player ohne Buchstand als Zeitdatei', () async {
     final speechFile = File('${root.path}/temporary-speech.wav');

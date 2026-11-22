@@ -72,12 +72,15 @@ void main() {
       'file': '/private/media/secret.cbz',
       'error':
           'ClientException: failed https://example.test/?api_key=secret-key',
+      'message': 'Failed opening /private/adult/secret-video.mkv?token=secret',
       'status': 500,
     });
     final line = FundusLog.instance.entries.single.line;
     expect(line, isNot(contains('Protected novel')));
     expect(line, isNot(contains('secret.cbz')));
     expect(line, isNot(contains('secret-key')));
+    expect(line, isNot(contains('secret-video.mkv')));
+    expect(line, isNot(contains('token=secret')));
     expect(line, contains('500'));
   });
 

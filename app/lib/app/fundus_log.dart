@@ -198,7 +198,11 @@ class FundusLog extends ChangeNotifier {
         'werk' ||
         'name' ||
         'library' => '[ausgeblendet]',
-        'error' || 'failure' || 'ursache' || 'cause' => _safeError(entry.value),
+        'error' ||
+        'failure' ||
+        'ursache' ||
+        'cause' ||
+        'message' => _safeError(entry.value),
         _ => entry.value,
       },
   };

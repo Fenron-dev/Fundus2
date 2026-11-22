@@ -54,6 +54,10 @@ class ProtectionController extends ChangeNotifier {
 
   bool get hasPin => settings.protectionPin.isNotEmpty;
 
+  /// Administrative changes to an existing lock require this session's PIN
+  /// (or a successful platform authentication), even if visibility is off.
+  bool get canChangeProtection => !hasPin || _unlocked;
+
   /// Whether a work must not appear at all right now.
   ///
   /// There is one answer, not two. A preview build also veiled pictures while
@@ -63,6 +67,9 @@ class ProtectionController extends ChangeNotifier {
       mode != ProtectionMode.off && work.summary.isHhh && !isUnlocked;
 
   Future<void> setMode(ProtectionMode value) async {
+    if (value != mode && !canChangeProtection) {
+      throw StateError('Schutz zuerst entsperren.');
+    }
     await settings.setProtectionMode(value);
     if (value == ProtectionMode.off) _unlocked = false;
     notifyListeners();
@@ -71,6 +78,9 @@ class ProtectionController extends ChangeNotifier {
   /// Sets or changes the PIN. An empty value removes it, which also means
   /// there is nothing left to unlock.
   Future<void> setPin(String pin) async {
+    if (!canChangeProtection) {
+      throw StateError('Schutz zuerst entsperren.');
+    }
     final digits = pin.trim();
     if (digits.isEmpty) {
       await settings.setProtectionPin('');

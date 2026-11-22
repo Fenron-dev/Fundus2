@@ -20,11 +20,13 @@ final class SpeechAudioBuffer {
   Duration _end = Duration.zero;
   bool _claimed = false;
   bool _closed = false;
+  bool _finished = false;
   Object? failure;
 
   Uri get uri =>
       Uri.parse('http://127.0.0.1:${_server.port}/$_token/speech.pcm');
   int get bufferedSegments => _markers.length;
+  bool get isFinished => _finished;
 
   static Future<SpeechAudioBuffer> open() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -116,6 +118,7 @@ final class SpeechAudioBuffer {
   List<SpeechTextSegment> complete() => heardUntil(_end);
 
   void finish([Object? error]) {
+    _finished = true;
     failure = error;
     if (!ready.isCompleted) ready.complete();
     if (!_closed) unawaited(_audio.close());

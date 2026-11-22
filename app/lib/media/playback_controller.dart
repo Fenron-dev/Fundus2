@@ -1056,6 +1056,24 @@ class PlaybackController extends ChangeNotifier {
         notifyListeners();
         _applyPreference();
       }),
+      if (_engine case final PlaybackFailureSource failures)
+        failures.failureStream.listen((_) {
+          if (_work == null || currentSource == null || _ended) return;
+          const message =
+              'Die Mediendatei konnte nicht geladen werden. '
+              'Weitere Hinweise stehen im Diagnoseprotokoll.';
+          _failure = message;
+          _playing = false;
+          _ended = true;
+          _endPlaybackRequest();
+          final completion = _speechCompletion;
+          if (completion != null && !completion.isCompleted) {
+            _speechCompletion = null;
+            completion.completeError(StateError(message));
+          }
+          unawaited(_engine.stop().catchError((Object _) {}));
+          notifyListeners();
+        }),
     ]);
   }
 

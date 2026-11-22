@@ -115,8 +115,14 @@ abstract interface class PlaybackEngine {
   Widget? videoSurface();
 }
 
+/// Optional native failure signal. It carries no third-party error text:
+/// paths, titles and signed stream URLs must not leak through player state.
+abstract interface class PlaybackFailureSource {
+  Stream<bool> get failureStream;
+}
+
 /// The real engine: libmpv through media_kit.
-final class MediaKitEngine implements PlaybackEngine {
+final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
   /// Read-ahead for libmpv's demuxer.
   ///
   /// The default is 32 MiB. That is enough for a local SSD, but a mounted
@@ -175,6 +181,7 @@ final class MediaKitEngine implements PlaybackEngine {
           }),
       _player.stream.error.listen((message) {
         FundusLog.instance.warn('player.native.error', {'message': message});
+        if (!_failures.isClosed) _failures.add(true);
       }),
     ]);
     if (_isWindows) {
@@ -346,6 +353,9 @@ final class MediaKitEngine implements PlaybackEngine {
   /// mpv reports what is available and what is selected on two separate
   /// streams; the player only ever wants both together.
   final _tracks = StreamController<MediaTracks>.broadcast();
+  final _failures = StreamController<bool>.broadcast();
+  @override
+  Stream<bool> get failureStream => _failures.stream;
   final List<StreamSubscription<Object?>> _trackSubscriptions = [];
   Tracks _available = const Tracks();
   Track _selected = const Track();
@@ -375,7 +385,9 @@ final class MediaKitEngine implements PlaybackEngine {
     if (native is NativePlayer) {
       final speech =
           uri.host == '127.0.0.1' && uri.path.endsWith('/speech.pcm');
-      await native.setProperty('demuxer', speech ? 'rawaudio' : 'auto');
+      // An empty value restores mpv's automatic format detection. "auto" is
+      // not a demuxer name and can leave the next video on a black screen.
+      await native.setProperty('demuxer', speech ? 'rawaudio' : '');
       if (speech) {
         await native.setProperty('demuxer-rawaudio-format', 's16le');
         await native.setProperty('demuxer-rawaudio-rate', '24000');
@@ -390,10 +402,8 @@ final class MediaKitEngine implements PlaybackEngine {
             ? '4MiB'
             : '128KiB',
       );
-      await native.setProperty(
-        'demuxer-lavf-probesize',
-        speech ? '32768' : '0',
-      );
+      // Do not set demuxer-lavf-probesize here: 0 is rejected by mpv and the
+      // rawaudio demuxer does not use libavformat probing in the first place.
     }
     final resume = start > Duration.zero ? start : null;
     // Listening before the file opens: its length is the sign that it has
@@ -621,6 +631,7 @@ final class MediaKitEngine implements PlaybackEngine {
       await subscription.cancel();
     }
     await _tracks.close();
+    await _failures.close();
     await _player.dispose();
   }
 }
