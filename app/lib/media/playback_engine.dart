@@ -132,7 +132,7 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
   /// streaming remain the right answer for a slow or unreliable connection.
   static const _bufferSize = 64 * 1024 * 1024;
 
-  MediaKitEngine([Player? player])
+  MediaKitEngine({Player? player, bool attachVideo = true})
     : _player =
           player ??
           Player(
@@ -143,16 +143,20 @@ final class MediaKitEngine implements PlaybackEngine, PlaybackFailureSource {
           ) {
     // The video output has to exist before the first file is opened —
     // attaching it afterwards leaves the picture black while the sound plays.
-    _video = VideoController(_player);
+    // Native playback smoke tests have no Flutter texture/plugin, so they
+    // exercise the player without a video surface.
+    if (attachVideo) _video = VideoController(_player);
     _nativeTuning = _configureNativePlayback();
     // The rect the engine actually decodes, so the frame around it can be the
     // right shape rather than a guess.
-    _video.rect.addListener(() {
-      final rect = _video.rect.value;
-      _aspect.value = rect == null || rect.width <= 0 || rect.height <= 0
-          ? null
-          : rect.width / rect.height;
-    });
+    if (attachVideo) {
+      _video.rect.addListener(() {
+        final rect = _video.rect.value;
+        _aspect.value = rect == null || rect.width <= 0 || rect.height <= 0
+            ? null
+            : rect.width / rect.height;
+      });
+    }
     _trackSubscriptions.addAll([
       _player.stream.tracks.listen((value) {
         _available = value;

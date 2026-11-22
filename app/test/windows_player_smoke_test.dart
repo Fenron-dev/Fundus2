@@ -13,7 +13,7 @@ void main() {
       MediaKit.ensureInitialized();
       final root = await Directory.systemTemp.createTemp('fundus-windows-mpv-');
       final player = Player();
-      final engine = MediaKitEngine(player);
+      final engine = MediaKitEngine(player: player, attachVideo: false);
       try {
         final tone = PhononWaveBuilder()
           ..append(Float32List.fromList(List<double>.filled(48000, 0.1)));
