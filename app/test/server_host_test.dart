@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/app/app_settings.dart';
@@ -6,6 +7,7 @@ import 'package:fundus/data/library_controller.dart';
 import 'package:fundus/data/server_host.dart';
 import 'package:fundus/data/server_identity.dart';
 import 'package:fundus/data/sync_controller.dart';
+import 'package:fundus/media/phonon_wave.dart';
 import 'package:fundus_client/fundus_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
@@ -41,12 +43,16 @@ void main() {
     ).create(recursive: true);
     final work = Directory('${root.path}/Hörbücher/Karl May/Der Schacht');
     await work.create(recursive: true);
-    await File('${work.path}/01 - Anfang.mp3').writeAsBytes(List.filled(64, 1));
+    final tone = PhononWaveBuilder()
+      ..append(Float32List.fromList(List<double>.filled(2400, 0.1)));
+    await File('${work.path}/01 - Anfang.wav').writeAsBytes(tone.finish());
     final vault = await FundusLibrary.create(root);
-    await for (final _ in vault.index()) {}
+    // A real audio header and an in-process scanner make this host/health
+    // test independent of platform-specific metadata probes in a worker.
+    await for (final _ in vault.index(scanner: LibraryScanner())) {}
     workId = vault.listWorks().single.id;
     fileId = vault.playbackTracks(workId).single.fileId;
-    vault.close();
+    await vault.shutdown();
 
     library = LibraryController();
     await library.open(root);
@@ -61,6 +67,7 @@ void main() {
   tearDown(() async {
     await host.stop(remember: false);
     host.dispose();
+    await library.library?.shutdown();
     library.dispose();
   });
 
