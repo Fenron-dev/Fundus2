@@ -234,9 +234,8 @@ void main() {
     final extra = Directory(
       '${temporary.path}/extra-${DateTime.now().microsecondsSinceEpoch}',
     );
-    addTearDown(() async {
-      if (await extra.exists()) await extra.delete(recursive: true);
-    });
+    // The shared tearDown first stops the host and releases its Windows
+    // SQLite handles. tearDownAll removes the entire temporary tree later.
     final extraWork = Directory('${extra.path}/HHH/Beispiel');
     await extraWork.create(recursive: true);
     await File(
@@ -244,7 +243,7 @@ void main() {
     ).writeAsBytes(List.filled(64, 2));
     final extraVault = await FundusLibrary.create(extra);
     await for (final _ in extraVault.index()) {}
-    extraVault.close();
+    await extraVault.shutdown();
 
     await host.addLibrary(extra.path, name: 'HHH');
     await host.start(remember: false);
