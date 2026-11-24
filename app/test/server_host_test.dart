@@ -49,16 +49,12 @@ void main() {
     final vault = await FundusLibrary.create(root);
     // A real audio header and an in-process scanner make this host/health
     // test independent of platform-specific metadata probes in a worker.
-    final scan = await LibraryScanner().scan(root).toList();
     final indexed = await vault.index(scanner: LibraryScanner()).toList();
     expect(
       vault.listWorks(),
       isNotEmpty,
       reason:
           'Fixture was not indexed on ${Platform.operatingSystem}. '
-          'Scanner: ${scan.map((event) => '${event.kind}: '
-              '${event.file?.relativePath ?? event.path} '
-              '${event.error ?? ''}').join('; ')}. '
           'Index: ${indexed.map((event) => '${event.phase}: '
               '${event.fileCount} files, ${event.workCount} works').join('; ')}',
     );

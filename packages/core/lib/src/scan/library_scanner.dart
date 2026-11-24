@@ -154,7 +154,11 @@ base class LibraryScanner {
         : Directory(
             p.normalize(p.join(rootPath, p.joinAll(p.posix.split(subtree)))),
           );
-    if (start.path != rootPath && !p.isWithin(rootPath, start.path)) {
+    // On Windows a Directory created from a path containing '/' preserves
+    // that spelling in .path, while p.normalize uses '\\'. Both refer to the
+    // same vault; comparing the raw strings rejected even a full-root scan.
+    final startPath = p.normalize(start.absolute.path);
+    if (!p.equals(startPath, rootPath) && !p.isWithin(rootPath, startPath)) {
       yield ScanEvent(
         kind: ScanEventKind.error,
         visitedFiles: 0,
@@ -162,7 +166,7 @@ base class LibraryScanner {
       );
       return;
     }
-    if (start.path != rootPath && !await start.exists()) {
+    if (!p.equals(startPath, rootPath) && !await start.exists()) {
       yield ScanEvent(kind: ScanEventKind.completed, visitedFiles: visited);
       return;
     }

@@ -5,6 +5,25 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'scanner accepts equivalent vault paths with mixed separators',
+    () async {
+      final parent = await Directory.systemTemp.createTemp('fundus-path-');
+      addTearDown(() => parent.delete(recursive: true));
+      // A Windows vault selected through the UI often has a native parent path
+      // and a forward slash added by an app-level child path.
+      final root = Directory('${parent.path}/vault');
+      await root.create();
+      await File('${root.path}/track.mp3').writeAsBytes([1, 2, 3]);
+
+      final events = await LibraryScanner().scan(root).toList();
+
+      expect(events.last.kind, ScanEventKind.completed);
+      expect(events.where((event) => event.file != null), hasLength(1));
+      expect(events.any((event) => event.kind == ScanEventKind.error), isFalse);
+    },
+  );
+
   test('scanner streams portable paths and ignores Fundus internals', () async {
     final root = await Directory.systemTemp.createTemp('fundus-scanner-');
     addTearDown(() => root.delete(recursive: true));
